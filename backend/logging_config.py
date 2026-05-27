@@ -1,0 +1,17 @@
+import logging
+import sys
+from typing import Any
+
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+
+def setup_logging(level: int = logging.INFO) -> None:
+    logging.basicConfig(
+        level=level,
+        format=LOG_FORMAT,
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    # Reduce noise from third-party libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
