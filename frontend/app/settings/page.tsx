@@ -8,7 +8,7 @@ import { getJWT } from '@/lib/auth';
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export default function SettingsPage() {
-  const { selectedModel, userPrefs, setUserPrefs } = useAppStore();
+  const { selectedModel, setUserPrefs } = useAppStore();
   const [interests, setInterests] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
