@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+
+# Logs
+npm-debug.log*
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in image)
+*.md
+docs/
+
+# Tests (not needed in image)
+**/tests/
+**/__tests__/
