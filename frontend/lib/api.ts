@@ -127,7 +127,7 @@ export function streamSearch(runId: string, onEvent: (event: AgentStep | PaperSe
     }
   });
 
-  evtSource.addEventListener('error', (e) => {
+  evtSource.addEventListener('error', (_e) => {
     if (onError) onError(new Error('SSE error'));
     evtSource.close();
   });

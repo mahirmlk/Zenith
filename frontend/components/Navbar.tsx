@@ -35,10 +35,10 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { href: '/', label: 'Home' },
-    { href: '/feed', label: 'Feed' },
-    { href: '/graph', label: 'Graph' },
-    { href: '/settings', label: 'Settings' },
+    { href: '/' as const, label: 'Home' },
+    { href: '/feed' as const, label: 'Feed' },
+    { href: '/graph' as const, label: 'Graph' },
+    { href: '/settings' as const, label: 'Settings' },
   ];
 
   const isActive = (href: string) => pathname === href;
@@ -55,7 +55,7 @@ export function Navbar() {
           {navLinks.map((link) => (
             <Link
               key={link.href}
-              href={link.href as any}
+              href={link.href}
               className={`text-sm font-medium ${
                 isActive(link.href)
                   ? 'text-primary-600'
@@ -115,7 +115,7 @@ export function Navbar() {
             {navLinks.map((link) => (
               <Link
                 key={link.href}
-                href={link.href as any}
+                href={link.href}
                 onClick={() => setMobileOpen(false)}
                 className={`text-sm font-medium ${
                   isActive(link.href)

@@ -2,20 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
-export async function GET(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path, 'GET');
+type RouteContext = { params: Promise<{ path: string[] }> };
+
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  const { path } = await params;
+  return proxy(request, path, 'GET');
 }
 
-export async function POST(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path, 'POST');
+export async function POST(request: NextRequest, { params }: RouteContext) {
+  const { path } = await params;
+  return proxy(request, path, 'POST');
 }
 
-export async function PUT(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path, 'PUT');
+export async function PUT(request: NextRequest, { params }: RouteContext) {
+  const { path } = await params;
+  return proxy(request, path, 'PUT');
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(request, params.path, 'DELETE');
+export async function DELETE(request: NextRequest, { params }: RouteContext) {
+  const { path } = await params;
+  return proxy(request, path, 'DELETE');
 }
 
 async function proxy(request: NextRequest, path: string[], method: string) {
