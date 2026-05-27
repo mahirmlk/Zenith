@@ -4,25 +4,23 @@ import './globals.css';
 import { QueryProvider } from '@/components/QueryProvider';
 import { Navbar } from '@/components/Navbar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { Footer } from '@/components/Footer';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: 'AI Paper Research Agent',
-  description: 'Discover and personalise academic papers with AI',
+  title: 'Zenith — AI-Powered Research',
+  description: 'Discover, summarise, and personalise academic research from ArXiv and HuggingFace — in seconds.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} flex min-h-screen flex-col`}>
+      <body className={`${inter.className} flex min-h-screen flex-col`} suppressHydrationWarning>
         <QueryProvider>
           <Navbar />
           <div className="flex-1">
             <ErrorBoundary>{children}</ErrorBoundary>
           </div>
-          <Footer />
         </QueryProvider>
       </body>
     </html>
