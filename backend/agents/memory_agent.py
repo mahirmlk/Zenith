@@ -1,9 +1,11 @@
 from typing import Callable, Awaitable
 import re
+import logging
 from models.schemas import AgentStep
 from services.mem0_client import get_user_profile
 from services.embeddings import embed_texts
 
+logger = logging.getLogger(__name__)
 
 _STOPWORDS = {
     "the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or", "is", "are",
@@ -24,6 +26,34 @@ def _extract_keywords(text: str) -> set[str]:
     return {w for w in words if w not in _STOPWORDS and len(w) > 2}
 
 
+async def _try_match_papers_sql(interest_text: str, papers: list[dict]) -> bool:
+    """Try to use the match_papers SQL function for scoring. Returns True if successful."""
+    try:
+        from services.supabase_client import get_supabase
+        from services.embeddings import embed_text
+
+        interest_vec = await embed_text(interest_text)
+        supabase = get_supabase()
+
+        result = supabase.rpc(
+            "match_papers",
+            {
+                "query_embedding": interest_vec,
+                "match_threshold": 0.3,
+                "match_count": len(papers),
+            },
+        ).execute()
+
+        if result.data:
+            scored_ids = {r["id"]: r["similarity"] for r in result.data}
+            for paper in papers:
+                paper["relevance_score"] = scored_ids.get(paper.get("id", ""), 0.0)
+            return True
+    except Exception as e:
+        logger.debug("match_papers SQL unavailable, falling back to Python: %s", e)
+    return False
+
+
 async def memory_agent(
     papers: list[dict],
     user_id: str,
@@ -33,7 +63,7 @@ async def memory_agent(
     await callback(AgentStep(agent="memory", status="loading_profile"))
 
     try:
-        profile = get_user_profile(user_id)
+        profile = await get_user_profile(user_id)
     except Exception:
         profile = []
 
@@ -47,6 +77,14 @@ async def memory_agent(
 
     if interests:
         interest_text = " ".join(interests)
+
+        # Try SQL-based scoring first (faster, uses pgvector)
+        sql_success = await _try_match_papers_sql(interest_text, papers)
+        if sql_success:
+            await callback(AgentStep(agent="memory", status="ranking_complete", count=len(papers)))
+            return sorted(papers, key=lambda p: p.get("relevance_score", 0), reverse=True)
+
+        # Fallback to Python-based embedding similarity
         try:
             embeddings = await embed_texts([interest_text] + [p.get("abstract", "") for p in papers])
             interest_vec = embeddings[0]
