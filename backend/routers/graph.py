@@ -1,9 +1,20 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from models.schemas import CitationGraph, GraphNode, GraphEdge
 from services.semantic_scholar import get_paper_citations
-import random
+import hashlib
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
+
+
+def _deterministic_position(paper_id: str, index: int) -> tuple[float, float, float]:
+    """Generate deterministic 3D position from paper ID and index."""
+    hash_input = f"{paper_id}:{index}".encode()
+    h = hashlib.sha256(hash_input).digest()
+    # Convert first 12 bytes to 3 floats in range [-3, 3]
+    x = (int.from_bytes(h[0:4], "big") / 0xFFFFFFFF) * 6 - 3
+    y = (int.from_bytes(h[4:8], "big") / 0xFFFFFFFF) * 6 - 3
+    z = (int.from_bytes(h[8:12], "big") / 0xFFFFFFFF) * 6 - 3
+    return x, y, z
 
 
 @router.get("/{paper_id}", response_model=CitationGraph)
@@ -28,11 +39,7 @@ async def get_graph(paper_id: str):
     refs = data.get("references", [])[:10]  # Cap at 10 for performance
     for i, ref in enumerate(refs):
         rid = ref.get("paperId", f"ref-{i}")
-        angle = (2 * 3.14159 * i) / max(len(refs), 1)
-        radius = 3 + random.random()
-        x = radius * (random.random() - 0.5) * 2
-        y = radius * (random.random() - 0.5) * 2
-        z = radius * (random.random() - 0.5) * 2
+        x, y, z = _deterministic_position(rid, i)
         nodes.append(GraphNode(id=rid, title=ref.get("title", "Related"), x=x, y=y, z=z))
         edges.append(GraphEdge(source=rid, target=paper_id))
 
