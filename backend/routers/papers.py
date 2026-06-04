@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional
 from models.schemas import Paper, SavePaperRequest
 from services.supabase_client import get_supabase
@@ -13,15 +13,48 @@ logger = logging.getLogger(__name__)
 @router.get("", response_model=list[Paper])
 async def list_papers(
     q: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
 ):
     try:
+        query = supabase.table("papers").select("*")
         if q:
-            response = await supabase.table("papers").select("*").ilike("title", f"%{q}%").limit(50).execute()
-        else:
-            response = await supabase.table("papers").select("*").order("published_at", desc=True).limit(50).execute()
+            query = query.ilike("title", f"%{q}%")
+        query = query.order("published_at", desc=True).range(offset, offset + limit - 1)
+        response = await query.execute()
         data = response.data or []
+        return [Paper.model_validate(item) for item in data]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/saved", response_model=list[Paper])
+async def list_saved_papers(
+    supabase=Depends(get_supabase),
+    user_id: str = Depends(get_user_id),
+):
+    try:
+        saved_resp = (
+            await supabase.table("user_papers")
+            .select("paper_id")
+            .eq("user_id", user_id)
+            .eq("dismissed", False)
+            .execute()
+        )
+        paper_ids = [r["paper_id"] for r in (saved_resp.data or [])]
+        if not paper_ids:
+            return []
+
+        papers_resp = (
+            await supabase.table("papers")
+            .select("*")
+            .in_("id", paper_ids)
+            .order("published_at", desc=True)
+            .execute()
+        )
+        data = papers_resp.data or []
         return [Paper.model_validate(item) for item in data]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -69,7 +102,7 @@ async def save_paper(
         content = f"{action} paper: {title}"
         if abstract_preview:
             content += f" about {abstract_preview}..."
-        add_memory(user_id, [{"role": "user", "content": content}])
+        await add_memory(user_id, [{"role": "user", "content": content}])
     except Exception:
         logger.exception("Failed to add memory for paper %s", paper_id)
 
