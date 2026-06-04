@@ -5,6 +5,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 def apply_rate_limits(app):
+    """Apply per-endpoint rate limits using slowapi decorators."""
     from fastapi.routing import APIRoute
 
     for route in app.routes:
@@ -18,6 +19,15 @@ def apply_rate_limits(app):
                 route.endpoint = limiter.limit("20/minute")(route.endpoint)
             elif route.path == "/api/health":
                 route.endpoint = limiter.exempt(route.endpoint)
+            elif route.path == "/api/auth/token":
+                route.endpoint = limiter.limit("5/minute")(route.endpoint)
+            elif (route.path.startswith("/api/papers")
+                    and route.methods
+                    and ("POST" in route.methods or "DELETE" in route.methods)):
+                route.endpoint = limiter.limit("30/minute")(route.endpoint)
+            elif (route.path.startswith("/api/prefs")
+                    and route.methods
+                    and "POST" in route.methods):
+                route.endpoint = limiter.limit("10/minute")(route.endpoint)
         except Exception:
-            # Skip routes that don't have a request parameter (slowapi requirement)
             pass
