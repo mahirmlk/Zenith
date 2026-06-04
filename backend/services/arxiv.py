@@ -14,7 +14,6 @@ async def search_arxiv(query: str, max_results: int = 20) -> list[dict]:
     )
 
     results = []
-    loop = asyncio.get_event_loop()
 
     def _fetch():
         for result in client.results(search):
@@ -29,6 +28,7 @@ async def search_arxiv(query: str, max_results: int = 20) -> list[dict]:
         return results
 
     async def _fetch_async():
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _fetch)
 
     return await async_retry(_fetch_async, max_retries=3, base_delay=1.0)
