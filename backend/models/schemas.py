@@ -65,3 +65,8 @@ class GraphEdge(BaseModel):
 class CitationGraph(BaseModel):
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+    error_code: Optional[str] = None
