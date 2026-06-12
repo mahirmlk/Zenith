@@ -1,7 +1,19 @@
-from fastapi import APIRouter
+import re
+
+from fastapi import APIRouter, HTTPException
 from models.schemas import CitationGraph, GraphNode, GraphEdge
 from services.semantic_scholar import get_paper_citations
 import hashlib
+
+_PAPER_ID_RE = re.compile(r"^[a-zA-Z0-9\-._:/]+$")
+
+
+def _validate_paper_id(paper_id: str) -> str:
+    if not paper_id or len(paper_id) > 200:
+        raise HTTPException(status_code=422, detail="Invalid paper ID format")
+    if not _PAPER_ID_RE.match(paper_id):
+        raise HTTPException(status_code=422, detail="Invalid paper ID format")
+    return paper_id
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -18,20 +30,12 @@ def _deterministic_position(paper_id: str, index: int) -> tuple[float, float, fl
 
 
 @router.get("/{paper_id}", response_model=CitationGraph)
-async def get_graph(paper_id: str):
+async def get_graph(paper_id: str) -> CitationGraph:
+    paper_id = _validate_paper_id(paper_id)
     try:
         data = await get_paper_citations(paper_id)
     except Exception:
-        # Fallback to mock data if S2 is unavailable
-        data = {
-            "paperId": paper_id,
-            "title": "Target Paper",
-            "references": [
-                {"paperId": "r1", "title": "Related Paper 1"},
-                {"paperId": "r2", "title": "Related Paper 2"},
-                {"paperId": "r3", "title": "Related Paper 3"},
-            ],
-        }
+        return CitationGraph(nodes=[], edges=[])
 
     nodes = [GraphNode(id=paper_id, title=data.get("title", "Paper"), x=0, y=0, z=0)]
     edges = []
