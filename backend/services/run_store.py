@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Optional
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ class RunState:
     query: str
     model: Optional[str] = None
     status: str = "pending"
-    results: list = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    results: list[dict] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class RunStore:
@@ -33,7 +33,7 @@ class RunStore:
     async def get(self, run_id: str) -> Optional[RunState]:
         async with self._lock:
             state = self._store.get(run_id)
-            if state and datetime.utcnow() - state.created_at > self._ttl:
+            if state and datetime.now(timezone.utc) - state.created_at > self._ttl:
                 del self._store[run_id]
                 return None
             return state
@@ -50,7 +50,7 @@ class RunStore:
 
     async def cleanup(self):
         async with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expired = [k for k, v in self._store.items() if now - v.created_at > self._ttl]
             for k in expired:
                 del self._store[k]
