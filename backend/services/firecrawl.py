@@ -15,6 +15,16 @@ def get_firecrawl_app() -> FirecrawlApp:
 
 
 def crawl_paper(url: str) -> str:
+    """Crawl a paper URL and return clean markdown content."""
     app = get_firecrawl_app()
     result = app.scrape_url(url, params={"formats": ["markdown"]})
     return result.get("markdown", "")
+
+
+def is_available() -> bool:
+    """Check if Firecrawl is configured and available."""
+    try:
+        settings = get_settings()
+        return bool(settings.firecrawl_api_key)
+    except Exception:
+        return False
