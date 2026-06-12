@@ -1,4 +1,4 @@
-import { AgentStep, Paper, PaperSearchResult } from '@/types';
+import { AgentStep, Paper, PaperSearchResult, UserPrefs } from '@/types';
 import { getJWT } from './auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -48,10 +48,11 @@ export async function searchPapers(query: string, model?: string): Promise<{ run
   return res.json();
 }
 
-export async function fetchFeed(params?: { limit?: number; offset?: number }): Promise<Paper[]> {
+export async function fetchFeed(params?: { limit?: number; offset?: number; q?: string }): Promise<Paper[]> {
   const url = new URL(`${API_BASE}/api/papers`);
   if (params?.limit !== undefined) url.searchParams.set('limit', String(params.limit));
   if (params?.offset !== undefined) url.searchParams.set('offset', String(params.offset));
+  if (params?.q) url.searchParams.set('q', params.q);
 
   const res = await fetch(url.toString(), {
     headers: await getHeaders(),
@@ -89,11 +90,70 @@ export async function savePaper(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/papers/${id}/save`, {
     method: 'POST',
     headers: await getHeaders(),
+    body: JSON.stringify({ dismissed: false }),
   });
   if (!res.ok) {
     handleAuthRedirect(res);
     throw new ApiError(await parseError(res), res.status);
   }
+}
+
+export async function unsavePaper(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/papers/${id}/save`, {
+    method: 'DELETE',
+    headers: await getHeaders(),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+}
+
+export async function dismissPaper(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/papers/${id}/save`, {
+    method: 'POST',
+    headers: await getHeaders(),
+    body: JSON.stringify({ dismissed: true }),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+}
+
+export async function fetchSavedPapers(): Promise<Paper[]> {
+  const res = await fetch(`${API_BASE}/api/papers/saved`, {
+    headers: await getHeaders(),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.json();
+}
+
+export async function fetchPrefs(): Promise<UserPrefs> {
+  const res = await fetch(`${API_BASE}/api/prefs`, {
+    headers: await getHeaders(),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.json();
+}
+
+export async function updatePrefs(prefs: UserPrefs): Promise<UserPrefs> {
+  const res = await fetch(`${API_BASE}/api/prefs`, {
+    method: 'POST',
+    headers: await getHeaders(),
+    body: JSON.stringify(prefs),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.json();
 }
 
 export async function fetchGraphData(id: string): Promise<{ nodes: unknown[]; edges: unknown[] }> {
@@ -107,8 +167,23 @@ export async function fetchGraphData(id: string): Promise<{ nodes: unknown[]; ed
   return res.json();
 }
 
-export function streamSearch(runId: string, onEvent: (event: AgentStep | PaperSearchResult) => void, onError?: (err: Error) => void) {
-  const evtSource = new EventSource(`${API_BASE}/api/stream/${runId}`);
+export async function streamSearch(runId: string, onEvent: (event: AgentStep | PaperSearchResult) => void, onError?: (err: Error) => void) {
+  const token = await getJWT();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const sessionRes = await fetch(`${API_BASE}/api/stream/session`, {
+    method: 'POST',
+    headers,
+  });
+
+  if (!sessionRes.ok) {
+    if (onError) onError(new Error('Failed to create SSE session'));
+    return () => {};
+  }
+
+  const { session_token } = await sessionRes.json();
+  const evtSource = new EventSource(`${API_BASE}/api/stream/${runId}?token=${encodeURIComponent(session_token)}`);
 
   evtSource.addEventListener('agent_step', (e) => {
     try {
