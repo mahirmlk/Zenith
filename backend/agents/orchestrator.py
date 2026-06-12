@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.constants import START
@@ -135,12 +136,10 @@ async def run_orchestrator(
         pub_at = p.get("published_at", "")
         if isinstance(pub_at, str) and pub_at:
             try:
-                from datetime import datetime, timezone
                 pub_at = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 pub_at = datetime.now(timezone.utc)
         elif not pub_at:
-            from datetime import datetime, timezone
             pub_at = datetime.now(timezone.utc)
 
         papers.append(
