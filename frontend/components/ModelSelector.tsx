@@ -20,14 +20,14 @@ export function ModelSelector() {
 
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor="model-select" className="text-sm font-medium text-gray-700">
+      <label htmlFor="model-select" className="text-[13px] font-semibold text-ink-900">
         Model
       </label>
       <select
         id="model-select"
         value={selectedModel}
         onChange={(e) => setSelectedModel(e.target.value as LLMModel)}
-        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+        className="rounded-lg border border-zenith-border bg-white px-3 py-1.5 text-[13px] text-ink-900 shadow-soft focus:border-zenith-secondary focus:outline-none focus:ring-1 focus:ring-zenith-secondary/30 transition duration-200"
       >
         {MODELS.map((m) => (
           <option key={m.value} value={m.value}>
