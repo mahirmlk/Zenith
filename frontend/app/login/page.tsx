@@ -39,17 +39,23 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (isSignUp) {
-        await signUpWithEmail(email, password);
-        setSuccess('Account created successfully. Redirecting...');
-        setTimeout(() => {
-          window.location.href = '/feed';
-        }, 1500);
+        const data = await signUpWithEmail(email, password);
+        if (data.user?.identities?.length === 0) {
+          setError('An account with this email already exists.');
+        } else {
+          setSuccess('Account created! Please check your email to verify your account before signing in.');
+        }
       } else {
         await signInWithEmail(email, password);
         window.location.href = '/feed';
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      if (message.includes('Email not confirmed')) {
+        setError('Please verify your email address before signing in. Check your inbox for the confirmation link.');
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -75,25 +81,26 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="mb-6 text-2xl font-bold text-gray-900">
+    <main className="relative flex min-h-screen items-center justify-center px-4">
+      <div className="pointer-events-none absolute inset-0 dot-grid text-ink-900" style={{ opacity: 0.02 }} />
+      <div className="relative z-10 w-full max-w-md surface-card p-8 lg:p-10">
+        <h1 className="mb-6 font-serif text-[26px] font-normal text-ink-900">
           {isSignUp ? 'Create Account' : 'Sign In'}
         </h1>
 
         {error && (
-          <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50/80 p-3 text-[13px] font-medium text-red-700">{error}</div>
         )}
 
         {success && (
-          <div className="mb-4 rounded-md bg-green-50 p-3 text-sm text-green-700">{success}</div>
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-[13px] font-medium text-emerald-700">{success}</div>
         )}
 
         <div className="mb-4 space-y-2">
           <button
             type="button"
             onClick={() => handleOAuth('google')}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-zenith-border bg-white px-4 py-2.5 text-[13px] font-semibold text-ink-900 shadow-soft transition duration-200 hover:bg-zenith-surface"
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -106,7 +113,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => handleOAuth('github')}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-zenith-border bg-white px-4 py-2.5 text-[13px] font-semibold text-ink-900 shadow-soft transition duration-200 hover:bg-zenith-surface"
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 1C5.925 1 1 5.925 1 12c0 4.86 3.152 8.983 7.523 10.437.55.101.75-.238.75-.53 0-.262-.009-.955-.014-1.872-3.06.665-3.705-1.475-3.705-1.475-.5-1.27-1.221-1.61-1.221-1.61-.998-.682.076-.668.076-.668 1.104.078 1.684 1.133 1.684 1.133.98 1.68 2.57 1.195 3.198.914.1-.71.384-1.195.698-1.47-2.442-.278-5.01-1.222-5.01-5.437 0-1.2.428-2.183 1.132-2.95-.113-.278-.49-1.397.108-2.91 0 0 .923-.296 3.025 1.127A10.51 10.51 0 0112 5.8c.935.005 1.874.126 2.756.37 2.1-1.423 3.022-1.127 3.022-1.127.6 1.513.222 2.632.11 2.91.705.767 1.13 1.75 1.13 2.95 0 4.226-2.572 5.156-5.022 5.428.395.34.747 1.01.747 2.037 0 1.47-.014 2.657-.014 3.017 0 .295.2.637.757.53C19.85 20.98 23 16.858 23 12c0-6.075-4.925-11-11-11z" />
@@ -116,14 +123,14 @@ export default function LoginPage() {
         </div>
 
         <div className="mb-4 flex items-center gap-2">
-          <div className="h-px flex-1 bg-gray-200" />
-          <span className="text-xs text-gray-400">or</span>
-          <div className="h-px flex-1 bg-gray-200" />
+          <div className="h-px flex-1 bg-zenith-border" />
+          <span className="text-[11px] text-zenith-muted-light">or</span>
+          <div className="h-px flex-1 bg-zenith-border" />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="email" className="mb-1.5 block text-[13px] font-semibold text-ink-900">
               Email
             </label>
             <input
@@ -132,11 +139,11 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="w-full rounded-xl border border-zenith-border bg-white px-4 py-2.5 text-[14px] text-ink-900 shadow-soft placeholder:text-zenith-muted-light focus:border-zenith-secondary focus:outline-none focus:ring-1 focus:ring-zenith-secondary/30 transition duration-200"
             />
           </div>
           <div>
-            <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="password" className="mb-1.5 block text-[13px] font-semibold text-ink-900">
               Password
             </label>
             <input
@@ -145,15 +152,15 @@ export default function LoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="w-full rounded-xl border border-zenith-border bg-white px-4 py-2.5 text-[14px] text-ink-900 shadow-soft placeholder:text-zenith-muted-light focus:border-zenith-secondary focus:outline-none focus:ring-1 focus:ring-zenith-secondary/30 transition duration-200"
             />
             {isSignUp && (
-              <p className="mt-1 text-xs text-gray-500">Must be at least 6 characters.</p>
+              <p className="mt-1 text-[12px] text-zenith-muted">Must be at least 6 characters.</p>
             )}
           </div>
           {isSignUp && (
             <div>
-              <label htmlFor="confirmPassword" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="confirmPassword" className="mb-1.5 block text-[13px] font-semibold text-ink-900">
                 Confirm Password
               </label>
               <input
@@ -162,31 +169,31 @@ export default function LoginPage() {
                 required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="w-full rounded-xl border border-zenith-border bg-white px-4 py-2.5 text-[14px] text-ink-900 shadow-soft placeholder:text-zenith-muted-light focus:border-zenith-secondary focus:outline-none focus:ring-1 focus:ring-zenith-secondary/30 transition duration-200"
               />
             </div>
           )}
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-primary-600 py-2.5 font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+            className="w-full rounded-xl bg-ink-900 py-2.5 font-semibold text-white shadow-button transition duration-200 hover:bg-ink-800 disabled:opacity-50"
           >
             {loading ? 'Please wait...' : isSignUp ? 'Sign Up' : 'Sign In'}
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm text-gray-600">
+        <div className="mt-6 text-center text-[13px] text-zenith-body">
           {isSignUp ? (
             <>
               Already have an account?{' '}
-              <button onClick={() => toggleMode(false)} className="text-primary-600 hover:underline">
+              <button onClick={() => toggleMode(false)} className="font-semibold text-zenith-secondary transition duration-150 hover:text-zenith-accent">
                 Sign in
               </button>
             </>
           ) : (
             <>
               Don&apos;t have an account?{' '}
-              <button onClick={() => toggleMode(true)} className="text-primary-600 hover:underline">
+              <button onClick={() => toggleMode(true)} className="font-semibold text-zenith-secondary transition duration-150 hover:text-zenith-accent">
                 Sign up
               </button>
             </>
@@ -194,7 +201,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-4 text-center">
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">
+          <Link href="/" className="text-[13px] text-zenith-muted transition duration-150 hover:text-ink-900">
             Back to home
           </Link>
         </div>
