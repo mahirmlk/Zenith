@@ -15,12 +15,12 @@ from backend.services.embeddings import embed_texts
 from backend.agents.summary_agent import summary_agent
 from backend.models.schemas import AgentStep
 from backend.config import get_settings
-from supabase import create_async_client
+from supabase import create_client
 
 
 async def main():
     settings = get_settings()
-    supabase = create_async_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
     print("Fetching ArXiv papers...")
     arxiv_papers = await fetch_latest_papers(max_results=200)
