@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[Paper])
-async def list_papers(
+async def list_papers(  # type: ignore[no-untyped-def]
     q: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
-):
+) -> list[Paper]:
     try:
         query = supabase.table("papers").select("*")
         if q:
@@ -31,10 +31,10 @@ async def list_papers(
 
 
 @router.get("/saved", response_model=list[Paper])
-async def list_saved_papers(
+async def list_saved_papers(  # type: ignore[no-untyped-def]
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
-):
+) -> list[Paper]:
     try:
         saved_resp = (
             await supabase.table("user_papers")
@@ -61,11 +61,11 @@ async def list_saved_papers(
 
 
 @router.get("/{paper_id}", response_model=Paper)
-async def get_paper(
+async def get_paper(  # type: ignore[no-untyped-def]
     paper_id: str,
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
-):
+) -> Paper:
     try:
         response = await supabase.table("papers").select("*").eq("id", paper_id).single().execute()
         if not response.data:
@@ -78,12 +78,12 @@ async def get_paper(
 
 
 @router.post("/{paper_id}/save")
-async def save_paper(
+async def save_paper(  # type: ignore[no-untyped-def]
     paper_id: str,
     req: SavePaperRequest,
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
-):
+) -> dict[str, str]:
     try:
         await supabase.table("user_papers").upsert({
             "user_id": user_id,
@@ -110,11 +110,11 @@ async def save_paper(
 
 
 @router.delete("/{paper_id}/save")
-async def unsave_paper(
+async def unsave_paper(  # type: ignore[no-untyped-def]
     paper_id: str,
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
-):
+) -> dict[str, str]:
     try:
         await supabase.table("user_papers").delete().eq("user_id", user_id).eq("paper_id", paper_id).execute()
         return {"status": "ok"}
