@@ -21,6 +21,13 @@ def test_extract_json_invalid():
         _extract_json("not json at all")
 
 
+def test_extract_json_nested():
+    text = 'Here is the result: {"tldr": "summary", "contributions": ["a", "b"], "difficulty": "expert"} done.'
+    result = _extract_json(text)
+    assert result["tldr"] == "summary"
+    assert len(result["contributions"]) == 2
+
+
 @pytest.mark.asyncio
 async def test_research_agent_runs():
     steps = []
@@ -47,3 +54,21 @@ async def test_summary_agent_runs():
     assert len(enriched) == 1
     assert "summary_tldr" in enriched[0]
     assert "difficulty" in enriched[0]
+
+
+@pytest.mark.asyncio
+async def test_summary_agent_parallel():
+    steps = []
+
+    async def cb(step: AgentStep):
+        steps.append(step)
+
+    papers = [
+        {"id": f"p{i}", "title": f"Paper {i}", "abstract": f"Abstract {i}" * 10}
+        for i in range(3)
+    ]
+    enriched = await summary_agent(papers, cb)
+    assert len(enriched) == 3
+    for p in enriched:
+        assert "summary_tldr" in p
+        assert "difficulty" in p
