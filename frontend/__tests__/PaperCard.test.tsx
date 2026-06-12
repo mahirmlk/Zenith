@@ -1,7 +1,7 @@
 /// <reference types="vitest/globals" />
 import React from 'react';
-import { render, screen } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 import { PaperCard } from '@/components/PaperCard';
 import { Paper } from '@/types';
 
@@ -31,5 +31,46 @@ describe('PaperCard', () => {
   it('renders author names', () => {
     render(<PaperCard paper={mockPaper} />);
     expect(screen.getByText('Author One, Author Two')).toBeInTheDocument();
+  });
+
+  it('renders relevance score', () => {
+    render(<PaperCard paper={mockPaper} />);
+    expect(screen.getByText(/85.*MATCH/i)).toBeInTheDocument();
+  });
+
+  it('renders difficulty badge', () => {
+    render(<PaperCard paper={mockPaper} />);
+    expect(screen.getByText(/intermediate/i)).toBeInTheDocument();
+  });
+
+  it('calls onSave when save button clicked', () => {
+    const onSave = vi.fn();
+    render(<PaperCard paper={mockPaper} onSave={onSave} />);
+    fireEvent.click(screen.getByTitle('Save'));
+    expect(onSave).toHaveBeenCalledWith('test-1');
+  });
+
+  it('calls onDismiss when dismiss button clicked', () => {
+    const onDismiss = vi.fn();
+    render(<PaperCard paper={mockPaper} onDismiss={onDismiss} />);
+    fireEvent.click(screen.getByTitle('Dismiss'));
+    expect(onDismiss).toHaveBeenCalledWith('test-1');
+  });
+
+  it('shows Unsave label when showUnsave is true', () => {
+    const onDismiss = vi.fn();
+    render(<PaperCard paper={mockPaper} onDismiss={onDismiss} showUnsave />);
+    expect(screen.getByTitle('Unsave')).toBeInTheDocument();
+  });
+
+  it('does not render save button when onSave is not provided', () => {
+    render(<PaperCard paper={mockPaper} />);
+    expect(screen.queryByTitle('Save')).not.toBeInTheDocument();
+  });
+
+  it('does not render dismiss button when onDismiss is not provided', () => {
+    render(<PaperCard paper={mockPaper} />);
+    expect(screen.getByTitle('Share')).toBeInTheDocument();
+    expect(screen.queryByTitle('Dismiss')).not.toBeInTheDocument();
   });
 });
