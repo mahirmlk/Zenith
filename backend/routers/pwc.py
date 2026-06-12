@@ -6,6 +6,6 @@ router = APIRouter(prefix="/api/papers", tags=["papers_with_code"])
 
 
 @router.get("/{paper_id}/code")
-async def get_paper_code(paper_id: str, user_id: str = Depends(get_user_id)):
+async def get_paper_code(paper_id: str, user_id: str = Depends(get_user_id)) -> dict:  # type: ignore[type-arg]
     data = await fetch_paper_repos(paper_id)
     return data
