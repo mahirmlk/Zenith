@@ -17,9 +17,9 @@ def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
     settings = get_settings()
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY not configured")
-    return ChatOpenAI(
+    return ChatOpenAI(  # type: ignore[call-arg]
         base_url="https://openrouter.ai/api/v1",
-        api_key=settings.openrouter_api_key,
+        api_key=settings.openrouter_api_key,  # type: ignore[arg-type]
         model=model,
         temperature=temperature,
         max_tokens=4096,
@@ -36,9 +36,9 @@ def get_anthropic_llm(model: str = "claude-sonnet-4-5", temperature: float = 0.3
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not configured")
-    return ChatAnthropic(
+    return ChatAnthropic(  # type: ignore[call-arg]
         model=model,
-        api_key=settings.anthropic_api_key,
+        api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
         temperature=temperature,
         max_tokens=4096,
     )
@@ -50,9 +50,9 @@ def get_openai_llm(model: str = "gpt-4o", temperature: float = 0.3) -> BaseChatM
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured")
-    return ChatOpenAI(
+    return ChatOpenAI(  # type: ignore[call-arg]
         model=model,
-        api_key=settings.openai_api_key,
+        api_key=settings.openai_api_key,  # type: ignore[arg-type]
         temperature=temperature,
         max_tokens=4096,
     )
@@ -78,7 +78,7 @@ def get_mistral_llm(model: str = "mistral-large-latest", temperature: float = 0.
     settings = get_settings()
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY not configured")
-    return ChatMistralAI(
+    return ChatMistralAI(  # type: ignore[no-any-return]
         model=model,
         api_key=settings.mistral_api_key,
         temperature=temperature,
@@ -111,4 +111,4 @@ def get_llm(
         return get_mistral_llm(model, temperature)
 
     # Final fallback: OpenAI direct with the given model name
-    return get_openai_llm(model, temperature)
+    return get_openai_llm(model, temperature)  # type: ignore[no-any-return,unused-ignore]
