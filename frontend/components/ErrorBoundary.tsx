@@ -42,11 +42,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <p className="mb-6 max-w-md text-sm text-gray-600">
             An unexpected error occurred. Please try reloading the page.
           </p>
-          {this.state.error && (
-            <pre className="mb-6 max-w-md overflow-auto rounded-md bg-gray-50 p-3 text-left text-xs text-red-700">
-              {this.state.error.message}
-            </pre>
-          )}
+          <p className="mb-6 max-w-md text-sm text-gray-500">
+            If this keeps happening, please contact support.
+          </p>
           <button
             onClick={this.handleReload}
             className="rounded-lg bg-primary-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
