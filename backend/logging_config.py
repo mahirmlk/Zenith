@@ -1,6 +1,5 @@
 import logging
 import sys
-from typing import Any
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 
