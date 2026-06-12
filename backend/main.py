@@ -1,8 +1,10 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from jose import jwt, JWTError
+import jwt
+from jwt.exceptions import DecodeError as JWTError
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from routers import health, auth, papers, search, stream, graph, prefs, pwc
@@ -14,27 +16,54 @@ from logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    # Startup
+    logger.info("Starting AI Paper Research Agent backend")
+    from services.run_store import run_store
+    import asyncio
+
+    async def _cleanup_loop() -> None:
+        while True:
+            await asyncio.sleep(300)  # every 5 minutes
+            await run_store.cleanup()  # type: ignore[no-untyped-call]
+
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    yield
+    # Shutdown
+    cleanup_task.cancel()
+    logger.info("Shutting down backend")
+
+
 app = FastAPI(
     title="AI Paper Research Agent",
     description="FastAPI backend for the AI Paper Research Agent",
     version="0.1.0",
+    lifespan=lifespan,
 )
+
+settings = get_settings()
 
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
 
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please try again later."},
     )
 
 
+cors_origins = [o.strip() for o in settings.app_url.split(",") if o.strip()]
+if not cors_origins:
+    cors_origins = ["http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,8 +72,7 @@ app.add_middleware(TimingMiddleware)
 
 
 @app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    settings = get_settings()
+async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
     token = None
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -75,19 +103,9 @@ app.include_router(graph.router)
 app.include_router(prefs.router)
 app.include_router(pwc.router)
 
-apply_rate_limits(app)
-
-
-@app.on_event("startup")
-async def startup():
-    logger.info("Starting AI Paper Research Agent backend")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    logger.info("Shutting down backend")
+apply_rate_limits(app)  # type: ignore[no-untyped-call]
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "AI Paper Research Agent API"}
