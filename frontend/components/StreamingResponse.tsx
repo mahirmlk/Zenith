@@ -19,7 +19,9 @@ export function StreamingResponse({ runId, onResult }: StreamingResponseProps) {
     setError(null);
     setDone(false);
 
-    const unsubscribe = streamSearch(
+    let unsubscribe: (() => void) | undefined;
+
+    streamSearch(
       runId,
       (event) => {
         if ('papers' in event) {
@@ -30,9 +32,13 @@ export function StreamingResponse({ runId, onResult }: StreamingResponseProps) {
         }
       },
       (err) => setError(err.message)
-    );
+    ).then((unsub) => {
+      unsubscribe = unsub;
+    });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe?.();
+    };
   }, [runId, onResult]);
 
   return (
