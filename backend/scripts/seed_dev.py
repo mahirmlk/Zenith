@@ -6,14 +6,13 @@ Run: python -m backend.scripts.seed_dev
 """
 import asyncio
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import get_settings
 from backend.services.embeddings import embed_texts
-from supabase import create_async_client
+from supabase import create_client
 
 
 SAMPLE_PAPERS = [
@@ -62,7 +61,7 @@ SAMPLE_PAPERS = [
 
 async def main():
     settings = get_settings()
-    supabase = create_async_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
     print("Checking for existing papers...")
     existing = await supabase.table("papers").select("id").execute()
