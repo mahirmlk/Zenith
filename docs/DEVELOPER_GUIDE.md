@@ -128,7 +128,7 @@ All environment variables are defined in `.env.example`. Here is what each does:
 | `SUPABASE_URL` | **Yes** | Postgres database + auth URL |
 | `SUPABASE_ANON_KEY` | **Yes** | Public Supabase key (used by frontend) |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin key (used by backend, bypasses RLS) |
-| `SUPABASE_JWT_SECRET` | **Yes** | Used by backend to validate Supabase JWTs |
+| `SUPABASE_JWT_SECRET` | No* | Legacy HS256 JWT validation; new projects use JWKS |
 
 ### App
 
@@ -137,6 +137,21 @@ All environment variables are defined in `.env.example`. Here is what each does:
 | `APP_URL` | `http://localhost:3000` | Sent as HTTP-Referer to OpenRouter |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL for frontend API calls |
 | `REDIS_URL` | (empty) | Redis connection URL; falls back to in-memory store if not set |
+| `ADMIN_API_KEY` | (empty) | Gate for `POST /api/internal/ingest` (scheduled ingestion) |
+| `MAX_SUMMARIES_PER_RUN` | `20` | Per-run summary fan-out cap |
+
+### Observability (all optional)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LANGFUSE_PUBLIC_KEY` | (empty) | Langfuse tracing public key |
+| `LANGFUSE_SECRET_KEY` | (empty) | Langfuse tracing secret key |
+| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Langfuse host |
+| `SENTRY_DSN` | (empty) | Sentry error-tracking DSN |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Sentry trace sample rate |
+| `APP_ENV` | `development` | Environment label for Sentry |
+
+\* Only needed for legacy HS256-signed Supabase projects. New projects validate asymmetric (ES256) JWTs against the project's public JWKS endpoint.
 
 The backend automatically detects the **frontend** variables prefixed with `NEXT_PUBLIC_` from the docker-compose environment blocks. `REDIS_URL` is used in production; in Docker Compose, the Redis service is automatically available at `redis://redis:6379`.
 
@@ -248,11 +263,12 @@ ai-paper-research-agent/
 │   │   ├── stream.py                 # GET /api/stream/{run_id} (SSE)
 │   │   ├── graph.py                  # GET /api/graph/{paper_id}
 │   │   ├── prefs.py                  # GET/POST /api/prefs
-│   │   └── pwc.py                    # GET /api/papers/{paper_id}/code
+│   │   ├── pwc.py                    # GET /api/papers/{paper_id}/code
+│   │   └── internal.py               # POST /api/internal/ingest (admin-key)
 │   ├── agents/                       # LangGraph multi-agent layer
 │   │   ├── orchestrator.py           # StateGraph: research → summary → memory
 │   │   ├── research_agent.py         # ArXiv + HuggingFace data fetching
-│   │   ├── summary_agent.py          # LLM-powered paper summarisation
+│   │   ├── summary_agent.py          # LLM-powered paper summarisation (capped)
 │   │   ├── memory_agent.py           # User memory scoring + ranking
 │   │   └── prompts/
 │   │       └── summary_prompt.txt    # System prompt template for summary agent
@@ -260,14 +276,18 @@ ai-paper-research-agent/
 │   │   ├── llm_router.py             # OpenRouter primary, direct provider fallbacks
 │   │   ├── arxiv.py                  # ArXiv API wrapper
 │   │   ├── huggingface.py            # HuggingFace Daily Papers API
-│   │   ├── firecrawl.py              # Firecrawl MCP for full-text extraction
+│   │   ├── firecrawl.py              # Firecrawl full-text extraction (cached)
 │   │   ├── papers_with_code.py       # Papers With Code API (GitHub repos)
 │   │   ├── semantic_scholar.py       # Semantic Scholar citation data
 │   │   ├── mem0_client.py            # Mem0 user memory client
 │   │   ├── supabase_client.py        # Supabase async client singleton
-│   │   ├── embeddings.py             # OpenAI text-embedding-3-small
+│   │   ├── embeddings.py             # OpenAI text-embedding-3-small (retried)
 │   │   ├── run_store.py              # In-memory + Redis-backed agent run state
-│   │   └── retry.py                  # Async retry with exponential backoff
+│   │   ├── retry.py                  # Async retry with exponential backoff
+│   │   ├── jwt_validator.py          # Supabase JWT: ES256 JWKS + HS256 fallback
+│   │   ├── ingestion.py              # Daily ingestion pipeline (run_daily_fetch)
+│   │   ├── citation_cache.py         # Supabase-backed citation cache (7-day TTL)
+│   │   └── observability.py          # Langfuse tracing + Sentry init
 │   ├── middleware/
 │   │   ├── rate_limit.py             # Per-endpoint rate limiting (slowapi)
 │   │   └── timing.py                 # X-Response-Time header middleware
@@ -282,18 +302,24 @@ ai-paper-research-agent/
 │   └── schema.sql                    # Database migration (tables, indexes, functions)
 │
 ├── .github/workflows/
-│   └── ci.yml                        # GitHub Actions CI pipeline
+│   ├── ci.yml                        # GitHub Actions CI pipeline
+│   └── daily_fetch.yml               # Scheduled daily ingestion trigger
 │
 ├── docker-compose.yml                # Local development stack
 ├── docker-compose.prod.yml           # Production Docker deployment
 ├── .env.example                      # Environment variable template
 ├── PLAN.md                           # Master project plan
 ├── ARCHITECTURE.md                   # Architecture documentation
+├── MEMORY.md                         # Memory subsystem deep-dive
 ├── README.md                         # Project overview
 └── docs/
     ├── API.md                        # Full API reference
+    ├── CONTEXT.md                    # Project context & constraints
     ├── DEVELOPER_GUIDE.md            # This file
-    └── DEPLOYMENT.md                 # Deployment guide
+    ├── DEPLOYMENT.md                 # Deployment guide
+    ├── FLOW.md                       # End-to-end data flows
+    ├── SCHEMA.md                     # Database schema reference
+    └── adr/                          # Architecture Decision Records
 ```
 
 ### Layer Boundaries
@@ -325,11 +351,14 @@ This creates the following tables:
 | `papers` | Paper metadata with pgvector embedding column (1536-dim) |
 | `user_papers` | Junction table for saved/dismissed papers |
 | `user_prefs` | Per-user LLM model preference and research interests |
+| `citations` | Cached Semantic Scholar citation edges (feed + graph) |
+| `crawled_content` | Cached Firecrawl full-text extractions |
 
 It also creates:
 - `match_papers()` — PostgreSQL function for vector similarity search
 - `idx_papers_embedding` — IVFFlat index on the embedding column
 - `idx_papers_published_at` — B-tree index for chronological sorting
+- `idx_user_papers_feed` — compound index for feed queries
 
 ---
 
@@ -475,7 +504,7 @@ Set `OPENROUTER_API_KEY` in your `.env` file. This is required. Get a key from [
 
 ### "JWT secret not configured"
 
-Set `SUPABASE_JWT_SECRET` in your `.env` file. Find it in your Supabase dashboard under **Project Settings > API > JWT Secret**.
+Set `SUPABASE_JWT_SECRET` in your `.env` file for legacy HS256-signed projects. Find it in your Supabase dashboard under **Project Settings > API > JWT Secret**. New Supabase projects sign tokens asymmetrically (ES256) and validate against the project's JWKS endpoint, so `SUPABASE_JWT_SECRET` is not required there — but `SUPABASE_URL` must be set.
 
 ### "Supabase connection failed"
 
