@@ -12,6 +12,8 @@
   - [papers](#papers)
   - [user_papers](#user_papers)
   - [user_prefs](#user_prefs)
+  - [citations](#citations)
+  - [crawled_content](#crawled_content)
 - [Functions](#functions)
   - [match_papers](#match_papers)
 - [Pydantic Models](#pydantic-models)
@@ -25,7 +27,7 @@
 
 ## Overview
 
-The AI Paper Research Agent uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. The schema is defined in `supabase/schema.sql` and consists of three tables plus one stored function.
+The AI Paper Research Agent uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. The schema is defined in `supabase/schema.sql` and consists of five tables plus one stored function.
 
 - **Database:** PostgreSQL (via Supabase)
 - **Vector extension:** `pgvector` — for 1536-dimensional paper embeddings
@@ -72,9 +74,26 @@ erDiagram
         timestamptz updated_at
     }
 
+    citations {
+        text paper_id PK_FK
+        text root_title
+        text cited_id PK
+        text cited_title
+        timestamptz fetched_at
+    }
+
+    crawled_content {
+        text paper_id PK_FK
+        text url
+        text content
+        timestamptz fetched_at
+    }
+
     auth_users ||--o{ user_papers : "saves"
     auth_users ||--|| user_prefs : "has"
     papers ||--o{ user_papers : "saved in"
+    papers ||--o{ citations : "references"
+    papers ||--o| crawled_content : "crawled"
 ```
 
 ASCII version:
@@ -216,6 +235,67 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 | `updated_at` | `TIMESTAMPTZ` | — | `NOW()` | Last update timestamp |
 
 **Relationship:** One-to-one with `auth.users` via the primary key foreign key.
+
+---
+
+### `citations`
+
+Caches citation-graph edges fetched from Semantic Scholar, keyed by the root paper. This is the backing table for `GET /api/graph/{paper_id}` — without it the endpoint would hit the rate-limited S2 API (~100 req/5 min unshared) on every graph load.
+
+```sql
+CREATE TABLE IF NOT EXISTS citations (
+  paper_id    TEXT REFERENCES papers(id) ON DELETE CASCADE,
+  root_title  TEXT,
+  cited_id    TEXT,
+  cited_title TEXT,
+  fetched_at  TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (paper_id, cited_id)
+);
+```
+
+**Column Details:**
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `paper_id` | `TEXT` | No (PK, FK) | — | The root paper the graph was expanded from. References `papers(id)`. |
+| `root_title` | `TEXT` | Yes | — | Title of the root paper (denormalised so the graph can render without a join). |
+| `cited_id` | `TEXT` | No (PK) | — | Cited neighbour paper ID (Semantic Scholar `paperId`). |
+| `cited_title` | `TEXT` | Yes | — | Title of the cited neighbour. |
+| `fetched_at` | `TIMESTAMPTZ` | — | `NOW()` | When the edge was fetched. Used for cache freshness (7-day TTL). |
+
+**Indexes:**
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_citations_paper_id ON citations (paper_id, fetched_at DESC);
+```
+
+The router reads `citations` first and only calls S2 on a cache miss or when the cache is stale, then upserts the fresh edges.
+
+---
+
+### `crawled_content`
+
+Caches Firecrawl full-text pulls keyed by paper ID. Popular papers get re-crawled across users, and each crawl is the most expensive external call per paper, so the markdown is stored once and served from cache thereafter.
+
+```sql
+CREATE TABLE IF NOT EXISTS crawled_content (
+  paper_id   TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+  url        TEXT,
+  content    TEXT,
+  fetched_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Column Details:**
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `paper_id` | `TEXT` | No (PK, FK) | — | Paper ID the content belongs to. |
+| `url` | `TEXT` | Yes | — | The URL that was crawled. |
+| `content` | `TEXT` | Yes | — | Clean markdown produced by Firecrawl. |
+| `fetched_at` | `TIMESTAMPTZ` | — | `NOW()` | When the crawl was stored. |
+
+Accessed via `crawl_paper_cached(paper_id, url)` in `backend/services/firecrawl.py`.
 
 ---
 
