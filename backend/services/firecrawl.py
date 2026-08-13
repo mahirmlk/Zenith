@@ -1,3 +1,4 @@
+import asyncio
 from firecrawl import FirecrawlApp
 from config import get_settings
 
@@ -19,6 +20,49 @@ def crawl_paper(url: str) -> str:
     app = get_firecrawl_app()
     result = app.scrape_url(url, params={"formats": ["markdown"]})
     return result.get("markdown", "")
+
+
+async def crawl_paper_cached(paper_id: str, url: str) -> str:
+    """Crawl a paper URL, caching the result in Supabase keyed by paper ID.
+
+    Full-text crawls are the most expensive external call per paper and
+    popular papers get re-crawled across users, so the fetched markdown is
+    stored once in the ``crawled_content`` table and served from cache on
+    subsequent requests.
+    """
+    try:
+        from services.supabase_client import get_supabase
+
+        supabase = get_supabase()
+
+        def _get_cached():
+            response = (
+                supabase.table("crawled_content")
+                .select("content")
+                .eq("paper_id", paper_id)
+                .maybe_single()
+                .execute()
+            )
+            return response.data.get("content") if response.data else None
+
+        cached = await asyncio.to_thread(_get_cached)
+        if cached:
+            return cached
+
+        content = await asyncio.to_thread(crawl_paper, url)
+
+        def _store():
+            return supabase.table("crawled_content").upsert({
+                "paper_id": paper_id,
+                "url": url,
+                "content": content,
+            }).execute()
+
+        await asyncio.to_thread(_store)
+        return content
+    except Exception:
+        # If Supabase caching is unavailable, fall back to a direct crawl.
+        return await asyncio.to_thread(crawl_paper, url)
 
 
 def is_available() -> bool:
