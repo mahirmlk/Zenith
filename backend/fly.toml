@@ -7,6 +7,15 @@ primary_region = "iad"
 [env]
   PORT = "8000"
 
+# Two process groups: the HTTP API (`app`) and the daily ingestion job (`cron`).
+# Create the scheduled cron machine once with the Fly CLI:
+#   fly m run . --region iad --process-group cron
+#   fly m update <machine-id> --schedule "daily"
+# (See docs/DEPLOYMENT.md for the full walkthrough.)
+[processes]
+  app = "uvicorn main:app --host 0.0.0.0 --port 8000"
+  cron = "python -m scripts.daily_fetch"
+
 [http_service]
   internal_port = 8000
   force_https = true
