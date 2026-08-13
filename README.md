@@ -40,9 +40,10 @@ An intelligent agent that discovers, ingests, summarises, and personalises acade
 
 ### Auth & Security
 - **Supabase Auth** — Email/password + OAuth (Google, GitHub)
-- **JWT validation** — Backend middleware validates Supabase JWTs on every request
-- **Rate limiting** — Per-endpoint limits via slowapi (10/min search, 20/min stream, 60/min default)
+- **JWT validation** — ES256 JWKS with legacy HS256 fallback, validated on every request
+- **Rate limiting** — Redis-backed per-endpoint limits via slowapi (10/min search, 20/min stream, 60/min default)
 - **CORS protection** — Whitelisted origins for the frontend domain
+- **Admin-gated ingestion** — Internal trigger protected by `X-Admin-Key`
 
 ### Papers With Code Integration
 - **GitHub repository discovery** — Fetches associated code repositories via Papers With Code API
@@ -105,10 +106,20 @@ Copy `.env.example` to `.env` and configure the following:
 | | `SUPABASE_URL` | **Yes** | Database & auth |
 | | `SUPABASE_ANON_KEY` | **Yes** | Public Supabase key |
 | | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin Supabase key |
-| | `SUPABASE_JWT_SECRET` | **Yes** | JWT validation |
+| | `SUPABASE_JWT_SECRET` | No* | JWT validation (HS256 fallback; new projects use JWKS) |
 | **App** | `APP_URL` | No | Frontend URL (sent to OpenRouter) |
 | | `NEXT_PUBLIC_API_URL` | No | Public API URL for frontend |
 | | `REDIS_URL` | No | Redis connection string (falls back to in-memory) |
+| | `ADMIN_API_KEY` | No | Gate for `POST /api/internal/ingest` |
+| | `MAX_SUMMARIES_PER_RUN` | No | Per-run summary fan-out cap (default 20) |
+| **Observability** | `LANGFUSE_PUBLIC_KEY` | No | Langfuse tracing (requires secret too) |
+| | `LANGFUSE_SECRET_KEY` | No | Langfuse tracing secret |
+| | `LANGFUSE_HOST` | No | Langfuse host (default `https://cloud.langfuse.com`) |
+| | `SENTRY_DSN` | No | Sentry error tracking |
+| | `SENTRY_TRACES_SAMPLE_RATE` | No | Sentry trace sample rate (default 0.1) |
+| | `APP_ENV` | No | Environment label for Sentry (default `development`) |
+
+\* `SUPABASE_JWT_SECRET` is only needed for legacy HS256-signed Supabase projects; new projects validate against the public JWKS endpoint.
 
 See `.env.example` for the full template.
 
@@ -147,9 +158,14 @@ For the full API reference, see **[docs/API.md](./docs/API.md)**.
 |----------|---------|
 | [README.md](./README.md) | Project overview and quick start |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture, data flow, design decisions |
+| [docs/CONTEXT.md](./docs/CONTEXT.md) | Project context, goals, and operating constraints |
+| [docs/FLOW.md](./docs/FLOW.md) | End-to-end data flows (search, ingestion, graph, auth, memory) |
 | [docs/API.md](./docs/API.md) | Complete API reference with examples |
+| [docs/SCHEMA.md](./docs/SCHEMA.md) | Database schema and PgSQL functions |
 | [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) | Setup, testing, contributing, troubleshooting |
 | [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Production deployment (Fly.io, Vercel, Docker) |
+| [docs/adr/](./docs/adr/README.md) | Architecture Decision Records |
+| [MEMORY.md](./MEMORY.md) | Memory/personalisation subsystem deep-dive |
 | [PLAN.md](./PLAN.md) | Master project plan (all 5 phases) |
 
 ---
@@ -160,9 +176,9 @@ For the full API reference, see **[docs/API.md](./docs/API.md)**.
 .
 ├── backend/          # FastAPI backend
 │   ├── main.py       # App entry point, middleware, router registration
-│   ├── routers/      # API endpoints (8 routers)
-│   ├── agents/       # LangGraph agents (research, summary, memory)
-│   ├── services/     # External integrations (12 services)
+│   ├── routers/      # API endpoints (9 routers incl. internal ingest)
+│   ├── agents/       # LangGraph agents (research, summary, memory, orchestrator)
+│   ├── services/     # External integrations + shared logic (15 services)
 │   ├── middleware/    # Rate limiting, response timing
 │   └── models/       # Pydantic schemas
 ├── frontend/         # Next.js frontend
@@ -171,8 +187,9 @@ For the full API reference, see **[docs/API.md](./docs/API.md)**.
 │   ├── lib/          # API client, auth helpers
 │   └── store/        # Zustand state management
 ├── supabase/         # Database migrations & schema
-├── docs/             # Documentation (API, developer guide, deployment guide)
-├── .github/workflows/# CI/CD (GitHub Actions)
+├── docs/             # Documentation (context, flows, API, schema, deployment)
+│   └── adr/          # Architecture Decision Records
+├── .github/workflows/# CI/CD + scheduled daily ingestion
 ├── docker-compose.yml
 └── docker-compose.prod.yml
 ```
