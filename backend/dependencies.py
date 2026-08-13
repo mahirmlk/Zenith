@@ -1,26 +1,16 @@
 from fastapi import HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
-from jwt.exceptions import DecodeError as JWTError
-from config import get_settings
+from jwt.exceptions import InvalidTokenError
+from services.jwt_validator import decode_supabase_token
 
 security = HTTPBearer(auto_error=False)
 
 
-def _decode_token(token: str) -> dict | None:
-    """Decode and validate a JWT token. Returns payload or None."""
-    settings = get_settings()
-    if not settings.supabase_jwt_secret:
-        return None
+async def _decode_token(token: str) -> dict | None:
+    """Decode and validate a Supabase JWT. Returns payload or None."""
     try:
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        return payload
-    except JWTError:
+        return await decode_supabase_token(token)
+    except InvalidTokenError:
         return None
 
 
@@ -30,7 +20,7 @@ async def get_current_user(
     if not credentials:
         raise HTTPException(status_code=401, detail="Authorization header missing")
 
-    payload = _decode_token(credentials.credentials)
+    payload = await _decode_token(credentials.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -46,7 +36,7 @@ async def get_optional_user(
     """Returns user dict if valid token is provided, None otherwise."""
     if not credentials:
         return None
-    payload = _decode_token(credentials.credentials)
+    payload = await _decode_token(credentials.credentials)
     if not payload:
         return None
     user_id = payload.get("sub")
