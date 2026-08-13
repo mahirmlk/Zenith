@@ -3,15 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import jwt
-from jwt.exceptions import DecodeError as JWTError
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from routers import health, auth, papers, search, stream, graph, prefs, pwc
+from jwt.exceptions import InvalidTokenError
+from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal
 from middleware.rate_limit import limiter, apply_rate_limits
 from middleware.timing import TimingMiddleware
 from config import get_settings
 from logging_config import setup_logging
+from services.observability import init_sentry
+from services.jwt_validator import decode_supabase_token
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Startup
+    init_sentry()
     logger.info("Starting AI Paper Research Agent backend")
     from services.run_store import run_store
     import asyncio
@@ -77,16 +79,11 @@ async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyp
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.replace("Bearer ", "")
-    if token and settings.supabase_jwt_secret:
+    if token:
         try:
-            payload = jwt.decode(
-                token,
-                settings.supabase_jwt_secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
+            payload = await decode_supabase_token(token)
             request.state.user = {"user_id": payload.get("sub"), "email": payload.get("email")}
-        except JWTError:
+        except InvalidTokenError:
             request.state.user = None
     else:
         request.state.user = None
@@ -102,6 +99,7 @@ app.include_router(stream.router)
 app.include_router(graph.router)
 app.include_router(prefs.router)
 app.include_router(pwc.router)
+app.include_router(internal.router)
 
 apply_rate_limits(app)  # type: ignore[no-untyped-call]
 
