@@ -1,8 +1,10 @@
 import re
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from models.schemas import CitationGraph, GraphNode, GraphEdge
 from services.semantic_scholar import get_paper_citations
+from services.citation_cache import get_cached_citations, store_citations
 import hashlib
 
 _PAPER_ID_RE = re.compile(r"^[a-zA-Z0-9\-._:/]+$")
@@ -29,22 +31,38 @@ def _deterministic_position(paper_id: str, index: int) -> tuple[float, float, fl
     return x, y, z
 
 
+def _build_graph(paper_id: str, root_title: str, refs: list[dict[str, Any]]) -> CitationGraph:
+    nodes = [GraphNode(id=paper_id, title=root_title, x=0, y=0, z=0)]
+    edges = []
+    for i, ref in enumerate(refs):
+        rid = str(ref.get("paperId", f"ref-{i}"))
+        x, y, z = _deterministic_position(rid, i)
+        nodes.append(GraphNode(id=rid, title=str(ref.get("title", "Related")), x=x, y=y, z=z))
+        edges.append(GraphEdge(source=rid, target=paper_id))
+    return CitationGraph(nodes=nodes, edges=edges)
+
+
 @router.get("/{paper_id}", response_model=CitationGraph)
 async def get_graph(paper_id: str) -> CitationGraph:
     paper_id = _validate_paper_id(paper_id)
+
+    # Serve from the Supabase cache first so the rate-limited S2 API is only
+    # hit once per paper (refreshed when stale).
+    cached = await get_cached_citations(paper_id)
+    if cached is not None:
+        refs = [
+            {"paperId": r["cited_id"], "title": r["cited_title"]}
+            for r in cached
+        ]
+        root_title = str(next((r.get("root_title") for r in cached if r.get("root_title")), "Paper"))
+        return _build_graph(paper_id, root_title, refs)
+
     try:
         data = await get_paper_citations(paper_id)
     except Exception:
         return CitationGraph(nodes=[], edges=[])
 
-    nodes = [GraphNode(id=paper_id, title=data.get("title", "Paper"), x=0, y=0, z=0)]
-    edges = []
-
     refs = data.get("references", [])[:10]  # Cap at 10 for performance
-    for i, ref in enumerate(refs):
-        rid = ref.get("paperId", f"ref-{i}")
-        x, y, z = _deterministic_position(rid, i)
-        nodes.append(GraphNode(id=rid, title=ref.get("title", "Related"), x=x, y=y, z=z))
-        edges.append(GraphEdge(source=rid, target=paper_id))
-
-    return CitationGraph(nodes=nodes, edges=edges)
+    root_title = str(data.get("title") or "Paper")
+    await store_citations(paper_id, root_title, refs)
+    return _build_graph(paper_id, root_title, refs)
