@@ -1,0 +1,17 @@
+name: Daily Paper Ingestion
+
+on:
+  schedule:
+    - cron: '30 4 * * *'  # 04:30 UTC daily
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily ingestion
+        run: |
+          curl -fsS -X POST \
+            "${{ secrets.BACKEND_URL }}/api/internal/ingest" \
+            -H "X-Admin-Key: ${{ secrets.ADMIN_API_KEY }}" \
+            --max-time 30
