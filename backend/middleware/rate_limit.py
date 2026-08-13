@@ -1,7 +1,20 @@
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from config import get_settings
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+# Use Redis as the shared rate-limit store so limits are global across
+# multiple backend instances. Falls back to in-memory if Redis is
+# unreachable (or not configured).
+_settings = get_settings()
+_storage_uri = _settings.redis_url or "memory://"
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["60/minute"],
+    storage_uri=_storage_uri,
+    key_prefix="rate_limit",
+    in_memory_fallback_enabled=True,
+)
 
 
 def apply_rate_limits(app):  # type: ignore[no-untyped-def]
