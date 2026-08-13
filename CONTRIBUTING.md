@@ -141,9 +141,9 @@ ai-paper-research-agent/
 │   ├── main.py              # App entry, middleware, router registration
 │   ├── config.py            # Pydantic settings (env var loading)
 │   ├── dependencies.py      # Auth dependency injection
-│   ├── routers/             # 8 API routers (health, auth, papers, search, stream, graph, prefs, pwc)
+│   ├── routers/             # 9 API routers (health, auth, papers, search, stream, graph, prefs, pwc, internal)
 │   ├── agents/              # LangGraph agents (orchestrator, research, summary, memory)
-│   ├── services/            # 12 external service integrations
+│   ├── services/            # 15 external service integrations & shared logic
 │   ├── middleware/           # Rate limiting (slowapi), response timing
 │   └── models/              # Pydantic schemas (schemas.py)
 ├── supabase/
