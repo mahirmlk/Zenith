@@ -37,6 +37,34 @@ CREATE TABLE IF NOT EXISTS user_prefs (
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Citation graph edges, cached from Semantic Scholar on first fetch.
+-- This is the backing table for GET /api/graph/{paper_id}; without it the
+-- endpoint would hit the rate-limited S2 API on every graph load.
+CREATE TABLE IF NOT EXISTS citations (
+  paper_id    TEXT REFERENCES papers(id) ON DELETE CASCADE,
+  root_title  TEXT,
+  cited_id    TEXT,
+  cited_title TEXT,
+  fetched_at  TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (paper_id, cited_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_citations_paper_id ON citations (paper_id, fetched_at DESC);
+
+-- Full-text crawl cache for Firecrawl pulls, keyed by paper ID so popular
+-- papers are crawled once instead of once per user.
+CREATE TABLE IF NOT EXISTS crawled_content (
+  paper_id   TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+  url        TEXT,
+  content    TEXT,
+  fetched_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Compound index for the personalised feed query on user_papers
+-- (user_id, dismissed, saved_at).
+CREATE INDEX IF NOT EXISTS idx_user_papers_feed
+  ON user_papers (user_id, dismissed, saved_at DESC);
+
 -- Function to search papers by vector similarity
 CREATE OR REPLACE FUNCTION match_papers(
   query_embedding VECTOR(1536),
