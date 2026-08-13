@@ -28,7 +28,7 @@ All endpoints except `GET /api/health` require a Supabase JWT token passed in th
 Authorization: Bearer <supabase-access-token>
 ```
 
-The token is obtained from Supabase Auth after the user signs in via the frontend. The backend middleware validates the token using `SUPABASE_JWT_SECRET` and attaches the user context to the request.
+The token is obtained from Supabase Auth after the user signs in via the frontend. The backend middleware validates the token using the Supabase JWKS endpoint (ES256 asymmetric signing) or, for legacy shared-secret projects, `SUPABASE_JWT_SECRET` (HS256).
 
 **Unauthenticated requests** return `401 Unauthorized`.
 
