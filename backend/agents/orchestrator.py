@@ -7,6 +7,7 @@ from agents.research_agent import research_agent
 from agents.summary_agent import summary_agent
 from agents.memory_agent import memory_agent
 from services.run_store import run_store
+from services.observability import get_langfuse_config
 
 # Module-level callback registry: run_id -> async callback
 _callbacks: dict[str, Callable[[AgentStep], Awaitable[None]]] = {}
@@ -121,7 +122,7 @@ async def run_orchestrator(
     }
 
     try:
-        final_state = await _get_graph().ainvoke(initial_state)
+        final_state = await _get_graph().ainvoke(initial_state, config=get_langfuse_config())
     except Exception as e:
         await callback(AgentStep(agent="orchestrator", status="error", message=str(e)))
         final_state = initial_state
