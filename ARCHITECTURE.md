@@ -96,10 +96,11 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
 | Framework | FastAPI |
 | Runtime | Python 3.12, Uvicorn |
 | Streaming | Server-Sent Events (sse-starlette) |
-| Auth | Supabase JWT validation (HS256) |
-| Rate Limiting | slowapi (per-endpoint limits) |
+| Auth | Supabase JWT validation (ES256 JWKS, HS256 legacy fallback) |
+| Rate Limiting | slowapi, Redis-backed (per-endpoint limits) |
 | CORS | `allow_origins=["http://localhost:3000"]` |
 | Logging | Structured logging with timestamps and module names |
+| Observability | Langfuse tracing (LangGraph) + Sentry error tracking |
 
 **Registered Routers (8 total):**
 ```
@@ -111,13 +112,14 @@ POST   /api/papers/{paper_id}/save         # Save/dismiss paper + Mem0 memory (p
 DELETE /api/papers/{paper_id}/save         # Unsave paper (papers.router)
 POST   /api/search                         # Trigger research pipeline (search.router)
 GET    /api/stream/{run_id}                # SSE stream of agent progress (stream.router)
-GET    /api/graph/{paper_id}               # Citation graph data (graph.router)
+GET    /api/graph/{paper_id}               # Citation graph data (S2, cached in Supabase) (graph.router)
 GET    /api/prefs                          # Get user preferences (prefs.router)
 POST   /api/prefs                          # Update user preferences (prefs.router)
 GET    /api/papers/{paper_id}/code         # Papers With Code repos (pwc.router)
+POST   /api/internal/ingest                # Trigger daily ingestion (internal.router, admin key)
 ```
 
-**Rate Limits:**
+**Rate Limits** (enforced by slowapi, backed by Redis when `REDIS_URL` is set so limits are global across instances):
 | Endpoint | Limit |
 |----------|-------|
 | `/api/search` | 10 req / minute |
@@ -127,9 +129,9 @@ GET    /api/papers/{paper_id}/code         # Papers With Code repos (pwc.router)
 
 **Middleware Stack:**
 1. `CORSMiddleware` — Allows frontend origin
-2. `SlowAPIMiddleware` — Rate limiting via slowapi
+2. `SlowAPIMiddleware` — Rate limiting via slowapi (Redis-backed when `REDIS_URL` set)
 3. `TimingMiddleware` — Adds `X-Response-Time` header
-4. Auth middleware — Decodes and validates Supabase JWT, attaches `request.state.user`
+4. Auth middleware — Decodes and validates Supabase JWT (ES256 via JWKS, HS256 legacy fallback), attaches `request.state.user`
 5. Rate limit exception handler — Returns 429 JSON response
 
 **SSE Events:**
@@ -164,7 +166,7 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 
 - **Research Agent** (`agents/research_agent.py`) — Discovers papers via ArXiv API (`arxiv` Python lib) and HuggingFace Daily Papers API (`httpx`). Deduplicates by paper ID. Uses async retry with exponential backoff for all API calls. Emits SSE steps for `fetching_arxiv`, `arxiv_fetched`, `fetching_huggingface`, `huggingface_fetched`, and `deduplication_complete`.
 
-- **Summary Agent** (`agents/summary_agent.py`) — Generates AI summaries using the configured LLM. Reads its system prompt from `agents/prompts/summary_prompt.txt`. Handles JSON extraction from LLM responses (supports direct JSON, markdown fences, and partial JSON). Uses `async_retry` for LLM calls. Graceful degradation: returns truncated abstract as fallback on failure.
+- **Summary Agent** (`agents/summary_agent.py`) — Generates AI summaries using the configured LLM. Reads its system prompt from `agents/prompts/summary_prompt.txt`. Wraps paper content in `<paper_content>` delimiters and instructs the model to treat it as untrusted data (prompt-injection guard). Handles JSON extraction from LLM responses (supports direct JSON, markdown fences, and partial JSON). Uses `async_retry` for LLM calls (transient API/rate-limit errors). Caps per-request LLM fan-out to `MAX_SUMMARIES_PER_RUN` (default 20); overflow papers get an abstract-preview fallback with no LLM call. Graceful degradation: returns truncated abstract as fallback on failure.
 
 - **Memory Agent** (`agents/memory_agent.py`) — Loads user profile from Mem0, computes relevance scores using embedding similarity (cosine similarity on `text-embedding-3-small` vectors). Falls back to keyword overlap matching when no Mem0 profile exists. Returns papers sorted by relevance score descending.
 
@@ -176,17 +178,24 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 |---------|------|-------------|------|-------|
 | **ArXiv API** | Paper discovery | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
 | **HuggingFace Daily Papers** | Curated highlights | REST API (`httpx`) | No | Yes (3 retries) |
-| **OpenRouter** | Primary LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | No (falls back to direct providers) |
-| **Anthropic (direct)** | Claude fallback | `langchain-anthropic` | API key | No |
-| **OpenAI (direct)** | GPT fallback + embeddings | `langchain-openai` + direct `httpx` for embeddings | API key | No |
-| **Google Gemini (direct)** | Gemini fallback | `langchain-google-genai` | API key | No |
-| **Mistral (direct)** | Mistral fallback | `langchain-mistralai` | API key | No |
-| **Firecrawl** | Full paper crawl | `firecrawl-py` SDK | API key | No |
+| **OpenRouter** | Primary LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
+| **Anthropic (direct)** | Claude fallback | `langchain-anthropic` | API key | Yes (transient errors at call site) |
+| **OpenAI (direct)** | GPT fallback + embeddings | `langchain-openai` + direct `httpx` for embeddings | API key | Yes (transient errors at call site) |
+| **Google Gemini (direct)** | Gemini fallback | `langchain-google-genai` | API key | Yes (transient errors at call site) |
+| **Mistral (direct)** | Mistral fallback | `langchain-mistralai` | API key | Yes (transient errors at call site) |
+| **Firecrawl** | Full paper crawl | `firecrawl-py` SDK | API key | No (cached in Supabase, keyed by paper ID) |
 | **Mem0** | User memory | `mem0` Python client | API key | No |
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
-| **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries) |
+| **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries), edges cached in Supabase |
 | **Papers With Code** | GitHub repos for papers | PWC REST API (`httpx`) | No | No (silent degradation) |
-| **Redis** | Agent run state persistence | `redis.asyncio` (optional) | No (optional `REDIS_URL`) | No |
+| **Redis** | Agent run state + global rate limiting | `redis.asyncio` (optional) | No (optional `REDIS_URL`) | No |
+
+Retry is kept separate from the provider fallback chain: `async_retry` handles
+same-provider transient failures (connect/read timeouts, 5xx, rate limits on
+any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
+`services/retry.py` matches transient errors by exception class (builtin +
+`httpx` errors, plus vendor SDK names such as `APIConnectionError`,
+`RateLimitError`, `InternalServerError`).
 
 ---
 
@@ -194,10 +203,15 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 
 ### Paper Ingestion Flow
 ```
-1. Daily cron (or on-demand search) triggers the pipeline
-2. Research Agent queries ArXiv + HF APIs (with async retry)
+1. Daily scheduler triggers the pipeline:
+   - Fly.io scheduled machine running `python -m scripts.daily_fetch`
+     (see backend/fly.toml), or
+   - GitHub Actions cron job (.github/workflows/daily_fetch.yml) calling
+     POST /api/internal/ingest with the X-Admin-Key header.
+2. Research fetches ArXiv + HF APIs (with async retry)
 3. New papers are deduplicated by paper ID (cross-source)
 4. Summary Agent generates TL;DR, key contributions, and difficulty via LLM
+   (capped at MAX_SUMMARIES_PER_RUN per run)
 5. Embedding pipeline chunks abstract and stores vector in Supabase (text-embedding-3-small, 1536-dim)
 6. Memory Agent scores papers against user profile (embedding similarity or keyword fallback)
 7. Orchestrator merges and ranks; results stream to frontend via SSE
@@ -280,6 +294,28 @@ CREATE FUNCTION match_papers(
   match_threshold FLOAT,
   match_count INT
 ) RETURNS TABLE(...) LANGUAGE SQL STABLE;
+
+-- Citation graph edges, cached from Semantic Scholar (backing table for
+-- GET /api/graph/{paper_id}; avoids hammering the rate-limited S2 API)
+CREATE TABLE citations (
+  paper_id    TEXT REFERENCES papers(id) ON DELETE CASCADE,
+  root_title  TEXT,
+  cited_id    TEXT,
+  cited_title TEXT,
+  fetched_at  TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (paper_id, cited_id)
+);
+
+-- Firecrawl full-text crawl cache, keyed by paper ID
+CREATE TABLE crawled_content (
+  paper_id   TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+  url        TEXT,
+  content    TEXT,
+  fetched_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Compound index for the personalised feed query
+CREATE INDEX idx_user_papers_feed ON user_papers (user_id, dismissed, saved_at DESC);
 ```
 
 ### Mem0 Memory Model
@@ -319,6 +355,9 @@ All LLM calls flow through `services/llm_router.py`.
 - `max_tokens=4096` on all LLM calls (or `max_output_tokens` for Gemini)
 - Cache embeddings and summaries in Supabase to avoid re-processing
 - Use fast/cheap models for pre-filtering (relevance scoring) before expensive models
+- `MAX_SUMMARIES_PER_RUN` (default 20) caps per-request LLM fan-out; a search
+  returning 30-50 papers only gets the top-N summarised by the LLM, the rest
+  receive an abstract-preview fallback with no LLM call
 
 **User override:** The `ModelSelector` component on the frontend lets users choose their preferred model. This is sent as `model` in `POST /api/search` and passed through the orchestrator to the summary agent.
 
@@ -381,9 +420,19 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 - `services/arxiv.py` — ArXiv API calls (3 retries)
 - `services/huggingface.py` — HuggingFace Daily Papers API (3 retries)
 - `services/semantic_scholar.py` — Semantic Scholar API (3 retries)
-- `agents/summary_agent.py` — LLM calls per paper (3 retries)
+- `agents/summary_agent.py` — LLM calls per paper (3 retries, on any OpenRouter or direct-provider SDK)
+- `services/embeddings.py` — OpenAI embedding calls (3 retries)
+- `services/ingestion.py` — Supabase upserts during daily fetch (3 retries)
 
 **Backoff schedule:** 1s → 2s → 4s (base_delay * 2^attempt)
+
+**Transient errors:** `async_retry` retries builtin `ConnectionError`/`TimeoutError`,
+any `httpx.HTTPError` (connect/read timeouts, 5xx), and vendor LLM SDK errors
+matched by class name (`APIConnectionError`, `RateLimitError`,
+`InternalServerError`, `ServiceUnavailable`, `Unavailable`, etc.). Non-transient
+errors (validation, JSON parse) are re-raised immediately. Retry is orthogonal
+to the provider fallback chain in `llm_router.py` — retry handles the same
+provider's transient failure, fallback handles provider unavailability.
 
 ---
 
@@ -393,7 +442,13 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 - Email/password + OAuth (Google, GitHub)
 - JWT returned to frontend after sign-in
 - Frontend attaches `Authorization: Bearer <token>` on every API call
-- FastAPI middleware validates JWT using `SUPABASE_JWT_SECRET` (HS256)
+- FastAPI middleware validates the JWT in `services/jwt_validator.py`:
+  - Since October 2025 new Supabase projects sign JWTs **asymmetrically (ES256)**
+    with the public key published on `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`.
+    The validator fetches and caches the JWKS (1-hour TTL), selects the key by the
+    token's `kid` header, and verifies with ES256.
+  - Legacy projects that still sign with the shared secret are verified with
+    HS256 against `SUPABASE_JWT_SECRET` (fallback only for HS256-tagged tokens).
 - `user_id` from JWT used as Mem0 key and for filtering saved papers
 
 **Rate Limiting:**
@@ -401,6 +456,9 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 - `GET /api/stream/*`: 20 req/min
 - `GET /api/health`: exempt
 - Default: 60 req/min for all other endpoints
+- slowapi's limiter is backed by Redis (`storage_uri` = `REDIS_URL`) so limits
+  are **global** across multiple backend instances; it falls back to in-memory
+  when Redis is unavailable or unconfigured
 
 **CORS:**
 - Allowed origins: `http://localhost:3000` (configurable per deployment)
@@ -452,7 +510,7 @@ ai-paper-research-agent/
 │   ├── config.py                    # Pydantic settings (env vars)
 │   ├── dependencies.py              # Auth dependency injection
 │   ├── logging_config.py            # Structured logging setup
-│   ├── routers/                     # 8 API routers
+│   ├── routers/                     # 9 API routers
 │   │   ├── __init__.py
 │   │   ├── health.py
 │   │   ├── auth.py
@@ -461,7 +519,8 @@ ai-paper-research-agent/
 │   │   ├── stream.py
 │   │   ├── graph.py
 │   │   ├── prefs.py
-│   │   └── pwc.py
+│   │   ├── pwc.py
+│   │   └── internal.py              # POST /api/internal/ingest (admin key)
 │   ├── agents/                      # LangGraph agent layer
 │   │   ├── __init__.py
 │   │   ├── orchestrator.py          # StateGraph: research → summary → memory
@@ -470,17 +529,21 @@ ai-paper-research-agent/
 │   │   ├── memory_agent.py
 │   │   └── prompts/
 │   │       └── summary_prompt.txt
-│   ├── services/                    # 12 external service integrations
+│   ├── services/                    # 17 external service integrations
 │   │   ├── __init__.py
 │   │   ├── arxiv.py
 │   │   ├── huggingface.py
-│   │   ├── firecrawl.py
+│   │   ├── firecrawl.py             # crawl_paper + crawl_paper_cached (Supabase cache)
 │   │   ├── papers_with_code.py
 │   │   ├── semantic_scholar.py
+│   │   ├── citation_cache.py        # Supabase-backed citation edge cache
+│   │   ├── jwt_validator.py         # ES256 JWKS + HS256 legacy JWT validation
 │   │   ├── mem0_client.py
 │   │   ├── supabase_client.py
 │   │   ├── llm_router.py
 │   │   ├── embeddings.py
+│   │   ├── ingestion.py             # run_daily_fetch() pipeline
+│   │   ├── observability.py         # Langfuse + Sentry initialisation
 │   │   ├── run_store.py             # Redis + in-memory run state
 │   │   └── retry.py                 # Async retry with exp backoff
 │   ├── middleware/
@@ -506,7 +569,8 @@ ai-paper-research-agent/
 │   └── DEPLOYMENT.md                # Production deployment guide
 │
 ├── .github/workflows/
-│   └── ci.yml                       # GitHub Actions CI
+│   ├── ci.yml                       # GitHub Actions CI
+│   └── daily_fetch.yml              # Scheduled daily ingestion (cron)
 │
 ├── docker-compose.yml               # Local dev stack
 ├── docker-compose.prod.yml          # Production Docker stack
@@ -526,6 +590,7 @@ ai-paper-research-agent/
 | Backend | Fly.io | Railway, Docker on cloud VM |
 | Database | Supabase (managed Postgres) | Self-hosted Postgres |
 | Redis | Fly Upstash / local Redis | In-memory (single instance only) |
+| Daily ingestion scheduler | Fly scheduled machine | GitHub Actions cron → `/api/internal/ingest` |
 | CI/CD | GitHub Actions | — |
 
 Docker Compose files are available for both local development (`docker-compose.yml`) and single-server production deployment (`docker-compose.prod.yml`).
@@ -539,5 +604,8 @@ See **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** for step-by-step deployment i
 See `.env.example` for the full list. Key categories:
 - **LLM Providers:** `OPENROUTER_API_KEY` (required), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`
 - **Data Sources:** `FIRECRAWL_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`
-- **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
-- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL`
+- **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (HS256 legacy fallback only)
+- **Scheduler:** `ADMIN_API_KEY` (authenticates `/api/internal/ingest`)
+- **Cost guardrails:** `MAX_SUMMARIES_PER_RUN`
+- **Observability:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `APP_ENV`
+- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL` (run state + global rate limiting)
