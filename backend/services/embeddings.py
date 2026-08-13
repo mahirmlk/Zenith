@@ -1,6 +1,7 @@
 import httpx
 from typing import List
 from config import get_settings
+from services.retry import async_retry
 
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 1536
@@ -17,7 +18,7 @@ def _get_client() -> httpx.AsyncClient:
     return _http_client
 
 
-async def embed_texts(texts: List[str]) -> List[List[float]]:
+async def _embed(texts: List[str]) -> List[List[float]]:
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured for embeddings")
@@ -34,6 +35,11 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
     r.raise_for_status()
     data = r.json()
     return [item["embedding"] for item in data["data"]]
+
+
+async def embed_texts(texts: List[str]) -> List[List[float]]:
+    """Embed a list of texts, retrying transient OpenAI API errors."""
+    return await async_retry(lambda: _embed(texts), max_retries=3, base_delay=1.0)
 
 
 async def embed_text(text: str) -> List[float]:
