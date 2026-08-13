@@ -27,6 +27,8 @@ dependencies = [
     "sse-starlette>=2.1.0",
     "slowapi>=0.1.9",
     "redis>=5.0.0",
+    "langfuse>=2.51.0",
+    "sentry-sdk[fastapi]>=2.20.0",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +64,8 @@ module = [
     "langchain_mistralai.*",
     "arxiv.*",
     "sse_starlette.*",
+    "langfuse.*",
+    "sentry_sdk.*",
     "backend.config",
     "backend.services.embeddings",
     "backend.services.arxiv",
@@ -83,6 +87,11 @@ module = [
     "services.papers_with_code",
     "services.firecrawl",
     "services.retry",
+    "services.jwt_validator",
+    "services.citation_cache",
+    "services.ingestion",
+    "services.observability",
+    "services.llm_router",
     "agents.*",
     "models.schemas",
     "dependencies",
