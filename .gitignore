@@ -37,3 +37,6 @@ Thumbs.db
 
 # Docker
 *.pid
+
+# Private plans (local only)
+.plans/
