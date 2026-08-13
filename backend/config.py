@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     next_public_api_url: str = "http://localhost:8000"
     redis_url: str = ""
 
+    admin_api_key: str = ""
+
+    max_summaries_per_run: int = 20
+
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
+    app_env: str = "development"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
