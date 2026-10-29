@@ -205,9 +205,10 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 ```
 1. Daily scheduler triggers the pipeline:
    - Fly.io scheduled machine running `python -m scripts.daily_fetch`
-     (see backend/fly.toml), or
-   - GitHub Actions cron job (.github/workflows/daily_fetch.yml) calling
-     POST /api/internal/ingest with the X-Admin-Key header.
+     (see backend/fly.toml) — the primary scheduler, or
+   - a manual GitHub Actions dispatch (.github/workflows/daily_fetch.yml)
+     calling POST /api/internal/ingest with the X-Admin-Key header
+     (the cron schedule is disabled to control Actions costs).
 2. Research fetches ArXiv + HF APIs (with async retry)
 3. New papers are deduplicated by paper ID (cross-source)
 4. Summary Agent generates TL;DR, key contributions, and difficulty via LLM
@@ -569,8 +570,8 @@ ai-paper-research-agent/
 │   └── DEPLOYMENT.md                # Production deployment guide
 │
 ├── .github/workflows/
-│   ├── ci.yml                       # GitHub Actions CI
-│   └── daily_fetch.yml              # Scheduled daily ingestion (cron)
+│   ├── ci.yml                       # GitHub Actions CI (manual dispatch)
+│   └── daily_fetch.yml              # Daily ingestion trigger (manual dispatch)
 │
 ├── docker-compose.yml               # Local dev stack
 ├── docker-compose.prod.yml          # Production Docker stack
@@ -590,8 +591,8 @@ ai-paper-research-agent/
 | Backend | Fly.io | Railway, Docker on cloud VM |
 | Database | Supabase (managed Postgres) | Self-hosted Postgres |
 | Redis | Fly Upstash / local Redis | In-memory (single instance only) |
-| Daily ingestion scheduler | Fly scheduled machine | GitHub Actions cron → `/api/internal/ingest` |
-| CI/CD | GitHub Actions | — |
+| Daily ingestion scheduler | Fly scheduled machine | Manual GitHub Actions dispatch → `/api/internal/ingest` |
+| CI/CD | GitHub Actions (manual dispatch) | Run lint/test/build locally |
 
 Docker Compose files are available for both local development (`docker-compose.yml`) and single-server production deployment (`docker-compose.prod.yml`).
 

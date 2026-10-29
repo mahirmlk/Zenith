@@ -52,7 +52,7 @@ An intelligent agent that discovers, ingests, summarises, and personalises acade
 
 ### Developer Experience
 - **Docker Compose** — One-command local dev environment (`docker compose up --build`)
-- **GitHub Actions CI** — Automated linting (ruff, mypy, eslint), type checking, tests, and Docker builds
+- **GitHub Actions CI (manual)** — Linting (ruff, mypy, eslint), type checking, tests, and Docker builds, run on demand to keep Actions costs down
 - **Comprehensive docs** — API reference, architecture overview, developer guide, and deployment guide
 - **Structured logging** — Timestamped, level-tagged logs for all services
 
@@ -189,7 +189,7 @@ For the full API reference, see **[docs/API.md](./docs/API.md)**.
 ├── supabase/         # Database migrations & schema
 ├── docs/             # Documentation (context, flows, API, schema, deployment)
 │   └── adr/          # Architecture Decision Records
-├── .github/workflows/# CI/CD + scheduled daily ingestion
+├── .github/workflows/# CI + daily ingestion triggers (manual dispatch)
 ├── docker-compose.yml
 └── docker-compose.prod.yml
 ```

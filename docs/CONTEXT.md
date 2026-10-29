@@ -55,7 +55,7 @@ These constraints recur in every decision in this repo and should be assumed unl
 | `frontend/` | Next.js 15 app (feed, graph, paper detail, settings, auth) |
 | `backend/` | FastAPI app: routers, LangGraph agents, services, middleware |
 | `supabase/schema.sql` | Single source of truth for the database schema |
-| `.github/workflows/` | CI pipeline + scheduled daily ingestion trigger |
+| `.github/workflows/` | CI pipeline and daily ingestion trigger (both manual dispatch only) |
 | `docs/` | API, schema, deployment, developer guide, flows, context |
 | `docs/adr/` | Architecture Decision Records |
 | `.plans/` | Execution plans from improvement reviews (private, git-ignored) |

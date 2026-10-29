@@ -302,8 +302,8 @@ ai-paper-research-agent/
 │   └── schema.sql                    # Database migration (tables, indexes, functions)
 │
 ├── .github/workflows/
-│   ├── ci.yml                        # GitHub Actions CI pipeline
-│   └── daily_fetch.yml               # Scheduled daily ingestion trigger
+│   ├── ci.yml                        # GitHub Actions CI pipeline (manual dispatch)
+│   └── daily_fetch.yml               # Daily ingestion trigger (manual dispatch)
 │
 ├── docker-compose.yml                # Local development stack
 ├── docker-compose.prod.yml           # Production Docker deployment
@@ -394,7 +394,7 @@ npm test
 
 ### CI Pipeline
 
-The full CI pipeline is defined in `.github/workflows/ci.yml` and runs on every push and PR to `main`:
+The full CI pipeline is defined in `.github/workflows/ci.yml`. Automatic push/PR runs are disabled to control GitHub Actions costs; run it on demand from the Actions tab (Actions → CI → Run workflow):
 - **Backend job:** `ruff check`, `mypy`, `pytest`
 - **Frontend job:** `npm run lint` (ESLint), `npm run typecheck` (tsc), `npm run build`
 - **Docker job:** `docker compose build`

@@ -1,8 +1,9 @@
 name: Daily Paper Ingestion
 
+# The daily schedule is disabled to avoid GitHub Actions costs.
+# Scheduled ingestion still runs on the Fly.io cron machine (see backend/fly.toml);
+# this workflow is kept for manual dispatches only.
 on:
-  schedule:
-    - cron: '30 4 * * *'  # 04:30 UTC daily
   workflow_dispatch:
 
 jobs:

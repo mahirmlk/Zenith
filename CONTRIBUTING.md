@@ -211,7 +211,7 @@ npm run lint        # ESLint
 npx tsc --noEmit    # TypeScript type-check
 ```
 
-All linters and type checks must pass before opening a PR. The CI workflow (`ci.yml`) enforces this automatically.
+All linters and type checks must pass before opening a PR. Run them locally; the CI workflow (`ci.yml`) is manual-only (`workflow_dispatch`) to control GitHub Actions costs, so it won't run automatically on push or PR.
 
 ### 5. Commit
 

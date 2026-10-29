@@ -124,7 +124,7 @@ npm audit fix   # Auto-fix non-breaking patches
 
 ### CI Integration
 
-The GitHub Actions CI workflow (`ci.yml`) runs lint and type checks on every push/PR. Dependency auditing should be added as a scheduled job or pre-release gate:
+The GitHub Actions CI workflow (`ci.yml`) is manual-only (`workflow_dispatch`) to control Actions costs, so it does not run automatically on push/PR. Trigger it from the Actions tab when you want the lint, type-check, and test checks. Dependency auditing should be added as a pre-release gate:
 
 ```yaml
 # Example addition to .github/workflows/ci.yml

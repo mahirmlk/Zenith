@@ -21,8 +21,8 @@ Extract the pipeline into `backend/services/ingestion.py` (`run_daily_fetch()`),
 
 Two scheduler options are supported and documented (`docs/DEPLOYMENT.md`):
 
-- **Fly.io scheduled machines:** a `cron` process group in `fly.toml` (`fly m run ... --process-group cron` and `fly m update <machine-id> --schedule "daily"`).
-- **GitHub Actions:** `.github/workflows/daily_fetch.yml` cron at 04:30 UTC curling the internal endpoint.
+- **Fly.io scheduled machines:** a `cron` process group in `fly.toml` (`fly m run ... --process-group cron` and `fly m update <machine-id> --schedule "daily"`). This is the active scheduler.
+- **GitHub Actions:** `.github/workflows/daily_fetch.yml` curls the internal endpoint on manual dispatch. The 04:30 UTC cron was removed to control GitHub Actions costs (2026-10-29).
 
 ## Consequences
 

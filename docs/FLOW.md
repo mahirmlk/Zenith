@@ -95,7 +95,7 @@ Details:
 
 ## Flow 2 — Daily ingestion (scheduled)
 
-Runs once daily to harvest new papers, embed, store, and summarise them. Triggered either by a Fly.io scheduled machine or GitHub Actions cron; both hit the internal admin endpoint.
+Runs once daily to harvest new papers, embed, store, and summarise them. The Fly.io scheduled machine is the active scheduler; the GitHub Actions workflow is manual-dispatch only (its cron is disabled to control Actions costs). Both hit the internal admin endpoint.
 
 ```mermaid
 sequenceDiagram
@@ -123,7 +123,8 @@ sequenceDiagram
 
 Key files:
 
-- `.github/workflows/daily_fetch.yml` and `backend/fly.toml` — schedulers
+- `backend/fly.toml` — primary scheduled ingestion (Fly cron machine)
+- `.github/workflows/daily_fetch.yml` — manual-dispatch fallback trigger
 - `backend/routers/internal.py` — admin-key-protected endpoint
 - `backend/services/ingestion.py` — the pipeline
 - `backend/services/retry.py` — retries on Supabase writes and embeddings
