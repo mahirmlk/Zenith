@@ -4,15 +4,13 @@ Both integrations are optional and only initialise when the relevant
 environment variables are configured, so local/dev runs are unaffected.
 """
 import logging
+import re
 from functools import lru_cache
 from typing import Any
 
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-
-
-import re
 
 _SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[:=]\s*\S+)", re.I)
 
