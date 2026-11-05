@@ -1,4 +1,5 @@
 import logging
+
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional
 from models.schemas import Paper, SavePaperRequest
@@ -27,7 +28,8 @@ async def list_papers(  # type: ignore[no-untyped-def]
         data = response.data or []
         return [Paper.model_validate(item) for item in data]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("papers request failed")
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @router.get("/saved", response_model=list[Paper])
@@ -57,7 +59,8 @@ async def list_saved_papers(  # type: ignore[no-untyped-def]
         data = papers_resp.data or []
         return [Paper.model_validate(item) for item in data]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("papers request failed")
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @router.get("/{paper_id}", response_model=Paper)
@@ -74,7 +77,8 @@ async def get_paper(  # type: ignore[no-untyped-def]
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("papers request failed")
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @router.post("/{paper_id}/save")
@@ -91,7 +95,8 @@ async def save_paper(  # type: ignore[no-untyped-def]
             "dismissed": req.dismissed,
         }).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("papers request failed")
+        raise HTTPException(status_code=500, detail="Internal error")
 
     try:
         paper_resp = await supabase.table("papers").select("title, abstract").eq("id", paper_id).single().execute()
@@ -119,4 +124,5 @@ async def unsave_paper(  # type: ignore[no-untyped-def]
         await supabase.table("user_papers").delete().eq("user_id", user_id).eq("paper_id", paper_id).execute()
         return {"status": "ok"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("papers request failed")
+        raise HTTPException(status_code=500, detail="Internal error")

@@ -81,8 +81,31 @@ async def decode_supabase_token(token: str) -> dict[str, Any]:
 
     alg = header.get("alg")
 
+    # Explicit alg allowlist (update.md §5.2): reject alg=none and anything
+    # not a Supabase signing algorithm. HS256 is legacy-only.
+    _ALLOWED_ASYMMETRIC = {"ES256", "RS256", "EdDSA"}
+    if alg not in _ALLOWED_ASYMMETRIC and alg != "HS256":
+        raise InvalidTokenError(f"Unsupported signing algorithm: {alg!r}")
+
+    def _check_claims(payload: dict[str, Any]) -> dict[str, Any]:
+        # iss/aud enforcement when present (Supabase issues aud=authenticated,
+        # iss={SUPABASE_URL}/auth/v1). Tokens without these claims (legacy
+        # HS256 test tokens) are still signature-checked; a token that
+        # *claims* a foreign issuer/audience is rejected.
+        iss = payload.get("iss")
+        if iss and settings.supabase_url:
+            expected = settings.supabase_url.rstrip("/") + "/auth/v1"
+            if iss != expected:
+                raise InvalidTokenError("Invalid token issuer")
+        aud = payload.get("aud")
+        if aud:
+            audiences = aud if isinstance(aud, list) else [aud]
+            if not set(audiences) & {"authenticated", "service_role"}:
+                raise InvalidTokenError("Invalid token audience")
+        return payload
+
     # Asymmetric signing (new Supabase default) — verify against JWKS public key.
-    if alg and alg != "HS256":
+    if alg in _ALLOWED_ASYMMETRIC:
         if not settings.supabase_url:
             raise InvalidTokenError("Supabase URL is not configured for JWT validation")
         try:
@@ -92,24 +115,31 @@ async def decode_supabase_token(token: str) -> dict[str, Any]:
             raise InvalidTokenError("Could not fetch signing keys") from exc
         signing_key = _find_signing_key(keys, header.get("kid"))
         if signing_key is None:
+            # Possible key rotation: refetch JWKS once before rejecting.
+            invalidate_jwks_cache()
+            try:
+                keys = await _fetch_jwks(settings.supabase_url)
+            except Exception:
+                keys = []
+            signing_key = _find_signing_key(keys, header.get("kid"))
+        if signing_key is None:
             raise InvalidTokenError("Signing key not found in JWKS")
         try:
             key = jwt.PyJWK.from_dict(signing_key)
         except Exception as exc:
             raise InvalidTokenError("Invalid signing key in JWKS") from exc
-        return jwt.decode(
-            token,
-            key,
-            algorithms=[alg],
-            options={"verify_aud": False},
+        return _check_claims(
+            jwt.decode(token, key, algorithms=[alg], options={"verify_aud": False})
         )
 
     # Legacy shared-secret signing (HS256).
     if not settings.supabase_jwt_secret:
         raise InvalidTokenError("Supabase JWT validation is not configured")
-    return jwt.decode(
-        token,
-        settings.supabase_jwt_secret,
-        algorithms=["HS256"],
-        options={"verify_aud": False},
+    return _check_claims(
+        jwt.decode(
+            token,
+            settings.supabase_jwt_secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
     )

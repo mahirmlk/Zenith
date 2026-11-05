@@ -1,9 +1,10 @@
 name: CI
 
-# Automatic CI runs are disabled to keep GitHub Actions usage (and cost) at zero.
-# The workflow is kept for on-demand use: run it manually from the Actions tab
-# (Actions → CI → Run workflow) or with `gh workflow run ci.yml`.
+# PR gate (update.md §16): lint/type/test/build on every PR and push.
+# Manual dispatch kept for on-demand full runs.
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:

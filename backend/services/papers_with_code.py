@@ -19,6 +19,16 @@ async def fetch_paper_repos(arxiv_id: str) -> dict:
             repos_url = paper.get("repositories")
             if not repos_url:
                 return {"repos": []}
+            # SSRF: only follow upstream URLs on the PWC host.
+            from services.ssrf import validate_public_url
+            from urllib.parse import urlparse
+
+            validate_public_url(repos_url)
+            if urlparse(repos_url).hostname not in (
+                "paperswithcode.com",
+                "www.paperswithcode.com",
+            ):
+                return {"repos": []}
             repos_resp = await client.get(repos_url)
             repos_resp.raise_for_status()
             repos_data = repos_resp.json()

@@ -10,6 +10,33 @@ AGENT_MODEL_MAP = {
     "memory": "openai/gpt-4o-mini",
 }
 
+# Capability registry (update.md §2/§14): the only model IDs a user may
+# request, with the agents each is allowed for. Unknown IDs are rejected
+# instead of being passed through to a provider (cost/retirement control).
+MODEL_REGISTRY: dict[str, dict] = {
+    "anthropic/claude-opus-4": {"agents": ["orchestrator", "summary_default"]},
+    "anthropic/claude-sonnet-4-5": {"agents": ["summary_default", "orchestrator"]},
+    "openai/gpt-4o": {"agents": ["summary_default", "orchestrator"]},
+    "openai/gpt-4o-mini": {"agents": ["research", "memory", "summary_fast"]},
+    "google/gemini-2.5-pro": {"agents": ["summary_default"]},
+    "google/gemini-2.0-flash": {"agents": ["summary_fast", "research"]},
+    "mistralai/mistral-large": {"agents": ["summary_default"]},
+    "meta-llama/llama-3.3-70b-instruct": {"agents": ["summary_default", "summary_fast"]},
+    "deepseek/deepseek-r1": {"agents": ["orchestrator"]},
+}
+
+
+def validate_model(model: str | None, agent: str = "summary_default") -> str | None:
+    """Return model if allowed for agent, else raise ValueError."""
+    if model is None:
+        return None
+    entry = MODEL_REGISTRY.get(model)
+    if entry is None:
+        raise ValueError(f"Model not in registry: {model}")
+    if agent not in entry["agents"]:
+        raise ValueError(f"Model {model} not allowed for agent {agent}")
+    return model
+
 
 def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
@@ -91,6 +118,8 @@ def get_llm(
     model_override: Optional[str] = None,
     temperature: float = 0.3,
 ) -> BaseChatModel:
+    if model_override is not None:
+        validate_model(model_override, agent)
     model = model_override or AGENT_MODEL_MAP.get(agent, AGENT_MODEL_MAP["summary_default"])
 
     # Try OpenRouter first for any model string that looks like an OpenRouter ID

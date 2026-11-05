@@ -24,15 +24,22 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
   return proxy(request, path, 'DELETE');
 }
 
+export async function PATCH(request: NextRequest, { params }: RouteContext) {
+  const { path } = await params;
+  return proxy(request, path, 'PATCH');
+}
+
 async function proxy(request: NextRequest, path: string[], method: string) {
   const url = new URL(`${API_BASE}/api/${path.join('/')}`);
   request.nextUrl.searchParams.forEach((value, key) => {
     url.searchParams.set(key, value);
   });
 
+  // Forward only an allowlist: never forward Cookie/host/hop-by-hop headers.
+  const FORWARDED = new Set(['authorization', 'content-type', 'idempotency-key', 'accept']);
   const headers = new Headers();
   request.headers.forEach((value, key) => {
-    if (key.toLowerCase() !== 'host') {
+    if (FORWARDED.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   });

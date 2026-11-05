@@ -17,6 +17,9 @@ def get_firecrawl_app() -> FirecrawlApp:
 
 def crawl_paper(url: str) -> str:
     """Crawl a paper URL and return clean markdown content."""
+    from services.ssrf import validate_public_url
+
+    validate_public_url(url)
     app = get_firecrawl_app()
     result = app.scrape_url(url, params={"formats": ["markdown"]})
     return result.get("markdown", "")

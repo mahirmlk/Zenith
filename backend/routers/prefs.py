@@ -33,5 +33,5 @@ async def update_prefs(  # type: ignore[no-untyped-def]
             "interests": prefs.interests,
         }).execute()
         return prefs
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal error")

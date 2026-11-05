@@ -92,6 +92,7 @@ async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyp
 
 
 app.include_router(health.router)
+app.include_router(health.ready_router)
 app.include_router(auth.router)
 app.include_router(papers.router)
 app.include_router(search.router)
