@@ -26,7 +26,8 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       # mypy strict is aspirational — track debt in docs/STATUS.md, don't gate PRs
-      - run: mypy . || echo "mypy: known strict-mode debt (non-blocking)"
+      - run: mypy .
+        continue-on-error: true
       - run: pytest
       - name: AI eval smoke (update.md §10)
         working-directory: .
