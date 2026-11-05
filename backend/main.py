@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from jwt.exceptions import InvalidTokenError
-from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal
+from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects
 from middleware.rate_limit import limiter, apply_rate_limits
 from middleware.timing import TimingMiddleware
 from config import get_settings
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Startup
     init_sentry()
-    logger.info("Starting AI Paper Research Agent backend")
+    logger.info("Starting Zenith backend")
     from services.run_store import run_store
     import asyncio
 
@@ -39,8 +39,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 
 app = FastAPI(
-    title="AI Paper Research Agent",
-    description="FastAPI backend for the AI Paper Research Agent",
+    title="Zenith",
+    description="FastAPI backend for Zenith — AI Research Intelligence & Engineering Workspace",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -101,10 +101,12 @@ app.include_router(graph.router)
 app.include_router(prefs.router)
 app.include_router(pwc.router)
 app.include_router(internal.router)
+app.include_router(runs.router)
+app.include_router(projects.router)
 
 apply_rate_limits(app)  # type: ignore[no-untyped-call]
 
 
 @app.get("/")
 async def root() -> dict[str, str]:
-    return {"message": "AI Paper Research Agent API"}
+    return {"message": "Zenith API"}
