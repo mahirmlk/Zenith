@@ -1,0 +1,2 @@
+{"id":"qa_no_evidence_001","task":"grounded_qa","question":"What does an unavailable paper conclusively prove?","expected":{"must_abstain":true,"allowed_source_ids":[]},"tags":["no_answer","hallucination"]}
+{"id":"qa_supported_001","task":"grounded_qa","question":"What method does paper A use?","expected":{"must_abstain":false,"allowed_source_ids":["paper_a"]},"tags":["supported"]}

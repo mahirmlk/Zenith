@@ -1,16 +1,24 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
+
 from agents.orchestrator import run_orchestrator
 from dependencies import get_current_user
 from models.schemas import AgentStep, PaperSearchResult
 from services.run_store import run_store
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/stream", tags=["stream"])
 
 _sse_sessions: dict[str, dict] = {}  # type: ignore[type-arg]
+# Background tasks started once per run (update.md §7.1): a disconnect or
+# reconnect must never cancel or duplicate the work.
+_running_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
 
 
 @router.post("/session")
@@ -26,7 +34,6 @@ async def create_sse_session(user: dict = Depends(get_current_user)) -> dict[str
 
 
 def _validate_sse_session(session_token: str) -> str | None:
-    """Validate SSE session token. Returns user_id or None."""
     session = _sse_sessions.get(session_token)
     if not session:
         return None
@@ -36,45 +43,53 @@ def _validate_sse_session(session_token: str) -> str | None:
     return session["user_id"]  # type: ignore[no-any-return]
 
 
-async def event_generator(  # type: ignore[no-untyped-def]
-    run_id: str, query: str, user_id: str, model: str | None
-):
-    queue: asyncio.Queue[dict] = asyncio.Queue()  # type: ignore[type-arg]
-
+async def _run_once(run_id: str, query: str, user_id: str, model: str | None) -> None:
+    """Run the orchestrator exactly once per run_id (start-once guard)."""
     async def callback(step: AgentStep) -> None:
-        await queue.put({"event": "agent_step", "data": step.model_dump()})
-
-    task = asyncio.create_task(run_orchestrator(run_id, query, callback, user_id=user_id, model=model))
+        await run_store.add_event(run_id, "agent_step", step.model_dump())
 
     try:
-        while True:
-            if task.done():
-                if task.exception() is None:
-                    result = task.result()
-                    if isinstance(result, PaperSearchResult):
-                        yield {"event": "result", "data": result.model_dump()}
-                    else:
-                        yield {"event": "result", "data": {"papers": [], "run_id": run_id}}
-                else:
-                    exc = task.exception()
-                    yield {"event": "error", "data": {"message": str(exc)}}
-                break
-
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
-                yield item
-                if item.get("event") in ("result", "error"):
-                    break
-            except asyncio.TimeoutError:
-                yield {"event": "error", "data": {"message": "Stream timeout"}}
-                break
+        result = await run_orchestrator(run_id, query, callback, user_id=user_id, model=model)
+        await run_store.add_event(run_id, "result", result.model_dump())
+    except Exception as exc:  # noqa: BLE001 - record safe error class only
+        logger.exception("Run %s failed", run_id)
+        await run_store.update(run_id, status="failed")
+        await run_store.add_event(run_id, "error", {"error_code": "run_failed", "message": "Run failed"})
     finally:
-        if not task.done():
-            task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        _running_tasks.pop(run_id, None)
+
+
+async def event_generator(run_id: str, query: str, user_id: str, model: str | None):
+    # Replay persisted events first (reconnect safety, update.md §7.1).
+    for evt in await run_store.get_events(run_id):
+        yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
+
+    state = await run_store.get(run_id)
+    if state and state.status == "complete" and state.results:
+        yield {"event": "result", "data": {"papers": state.results, "run_id": run_id}}
+        return
+
+    # Start work only once; other subscribers just wait for events.
+    if await run_store.try_start(run_id):
+        task = asyncio.create_task(_run_once(run_id, query, user_id, model))
+        _running_tasks[run_id] = task
+
+    # Poll persisted events until terminal state; disconnect does NOT cancel.
+    seen = len(await run_store.get_events(run_id))
+    deadline = datetime.now(timezone.utc) + timedelta(minutes=10)
+    while datetime.now(timezone.utc) < deadline:
+        await asyncio.sleep(0.5)
+        events = await run_store.get_events(run_id)
+        for evt in events[seen:]:
+            yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
+        seen = len(events)
+        if events and events[-1]["event"] in ("result", "error"):
+            break
+        state = await run_store.get(run_id)
+        if state and state.status in ("complete", "failed"):
+            if state.status == "complete" and state.results:
+                yield {"event": "result", "data": {"papers": state.results, "run_id": run_id}}
+            break
 
 
 @router.get("/{run_id}")
@@ -88,5 +103,9 @@ async def stream(
 
     state = await run_store.get(run_id)
     if not state:
+        raise HTTPException(status_code=404, detail="Run not found or expired")
+    # Ownership (update.md §5.2): a run bound to a user is only streamable
+    # by that user. 404 (not 403) avoids leaking existence.
+    if getattr(state, "user_id", None) and state.user_id != user_id:
         raise HTTPException(status_code=404, detail="Run not found or expired")
     return EventSourceResponse(event_generator(run_id, state.query, user_id, state.model))  # type: ignore[arg-type,unused-ignore]
