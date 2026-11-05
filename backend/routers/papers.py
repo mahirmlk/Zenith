@@ -27,7 +27,7 @@ async def list_papers(  # type: ignore[no-untyped-def]
         response = await query.execute()
         data = response.data or []
         return [Paper.model_validate(item) for item in data]
-    except Exception as e:
+    except Exception:
         logger.exception("papers request failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
@@ -58,7 +58,7 @@ async def list_saved_papers(  # type: ignore[no-untyped-def]
         )
         data = papers_resp.data or []
         return [Paper.model_validate(item) for item in data]
-    except Exception as e:
+    except Exception:
         logger.exception("papers request failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
@@ -76,7 +76,7 @@ async def get_paper(  # type: ignore[no-untyped-def]
         return Paper.model_validate(response.data)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("papers request failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
@@ -94,7 +94,7 @@ async def save_paper(  # type: ignore[no-untyped-def]
             "paper_id": paper_id,
             "dismissed": req.dismissed,
         }).execute()
-    except Exception as e:
+    except Exception:
         logger.exception("papers request failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
@@ -123,6 +123,6 @@ async def unsave_paper(  # type: ignore[no-untyped-def]
     try:
         await supabase.table("user_papers").delete().eq("user_id", user_id).eq("paper_id", paper_id).execute()
         return {"status": "ok"}
-    except Exception as e:
+    except Exception:
         logger.exception("papers request failed")
         raise HTTPException(status_code=500, detail="Internal error")
