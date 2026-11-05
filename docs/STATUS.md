@@ -1,13 +1,16 @@
-# Status Matrix (update.md §18) — updated 2026-11-05
+# Status Matrix (update.md §18) — updated 2026-11-05 (shipping)
 
-| Feature | State | Source | Tests | Limitations / Next PR |
-|---|---|---|---|---|
-| Paper feed/search/SSE | Working, hardened | `routers/search.py,stream.py,runs.py` | `test_search.py` | Durable queue + checkpointer next |
-| Auth (Supabase JWT) | Working | `services/jwt_validator.py` | `test_jwt_validator.py`, `test_security.py` | Strict aud enforcement next |
-| RLS/tenancy | Migration drafted (0001–0002), **not applied to live DB** | `supabase/migrations/` | staging test matrix TBD | Apply to staging + verify |
-| Guardrails | Working (policy layer) | `backend/security/`, `backend/guardrails/` | `test_guardrails.py` | Durable approval store (Postgres) next |
-| Research projects | API + list page | `routers/projects.py`, `app/projects/page.tsx` | policy tests | Sources/import/export next |
-| Evals | Smoke harness | `evals/` | `run_evals.py` 3/3 | Full golden suite next |
-| Paper-to-code / monitoring / MCP | Not started | — | — | Phases P3+, after sandbox review |
+| Feature | State | Source | Tests |
+|---|---|---|---|
+| Feed/search/SSE/runs | Working | `routers/search,stream,runs.py`, `services/job_queue.py` | 57+ passing |
+| Auth/JWT/RLS | Working (migrations drafted, apply to staging) | `jwt_validator.py`, `supabase/migrations/0001-0003` | `test_security.py` |
+| Guardrails | Working | `backend/security/`, `backend/guardrails/` | `test_guardrails.py` |
+| Projects/notes/members | Working API + page | `routers/projects.py`, `app/projects/` | policy tests |
+| Hybrid retrieval/evidence | Working | `services/retrieval.py`, `evidence_store.py` | `test_retrieval.py` |
+| Deep research/compare | Working | `agents/research_types.py`, `routers/research.py` | `test_research.py` |
+| Paper-to-code | Plan/export only (no exec) | `agents/implementation_planner.py` | `test_implementation.py` |
+| Watchlists | Working API | `routers/watchlists.py` | — |
+| Connectors | Registry (all disabled) | `services/connectors.py` | `test_connectors.py` |
+| Evals/CI | Smoke + PR gate | `evals/`, `.github/workflows/ci.yml` | 3/3 PASS |
 
-Infra identifiers (`ai-paper-agent-backend` Fly app / service id / package name) are **kept as compatibility** (update.md §17): renaming the Fly app would orphan the deployment. User-visible titles now say Zenith.
+Infra IDs (`ai-paper-agent-backend`) kept for deployment compatibility (update.md §17).

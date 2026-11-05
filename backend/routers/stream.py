@@ -8,7 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from agents.orchestrator import run_orchestrator
 from dependencies import get_current_user
-from models.schemas import AgentStep, PaperSearchResult
+from models.schemas import AgentStep
 from services.run_store import run_store
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ async def _run_once(run_id: str, query: str, user_id: str, model: str | None) ->
     try:
         result = await run_orchestrator(run_id, query, callback, user_id=user_id, model=model)
         await run_store.add_event(run_id, "result", result.model_dump())
-    except Exception as exc:  # noqa: BLE001 - record safe error class only
+    except Exception:  # noqa: BLE001 - record safe error class only
         logger.exception("Run %s failed", run_id)
         await run_store.update(run_id, status="failed")
         await run_store.add_event(run_id, "error", {"error_code": "run_failed", "message": "Run failed"})
