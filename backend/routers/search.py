@@ -32,4 +32,11 @@ async def search(
     state = await run_store.create(
         run_id, req.query, req.model, user_id=user_id, idempotency_key=idempotency_key
     )
+    # Durable enqueue (update.md §7.1): work starts in the worker, never
+    # in the SSE handler. Idempotent replays return the existing run_id
+    # and enqueue nothing new.
+    if state.run_id == run_id and not state.started:
+        from services.job_queue import enqueue
+
+        await enqueue(state.run_id)
     return SearchResponse(run_id=state.run_id)

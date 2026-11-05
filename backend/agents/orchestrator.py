@@ -80,6 +80,19 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
 
 
 _orchestrator_graph = None
+_checkpointer = None
+
+
+def _get_checkpointer():
+    """LangGraph checkpointer (update.md §7.1). MemorySaver for dev;
+    swap for PostgresSaver (langgraph-checkpoint-postgres) in production
+    with thread_id=run_id — no code change needed at call sites."""
+    global _checkpointer
+    if _checkpointer is None:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        _checkpointer = MemorySaver()
+    return _checkpointer
 
 
 def _get_graph():
@@ -93,7 +106,7 @@ def _get_graph():
         builder.add_edge("research", "summary")
         builder.add_edge("summary", "memory")
         builder.add_edge("memory", END)
-        _orchestrator_graph = builder.compile()
+        _orchestrator_graph = builder.compile(checkpointer=_get_checkpointer())
     return _orchestrator_graph
 
 
@@ -122,7 +135,10 @@ async def run_orchestrator(
     }
 
     try:
-        final_state = await _get_graph().ainvoke(initial_state, config=get_langfuse_config())
+        final_state = await _get_graph().ainvoke(
+            initial_state,
+            config={**get_langfuse_config(), "configurable": {"thread_id": run_id}},
+        )
     except Exception as e:
         await callback(AgentStep(agent="orchestrator", status="error", message=str(e)))
         final_state = initial_state

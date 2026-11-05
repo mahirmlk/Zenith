@@ -32,9 +32,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             await run_store.cleanup()  # type: ignore[no-untyped-call]
 
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    from services.job_queue import start_worker, stop_worker
+
+    start_worker()
     yield
     # Shutdown
     cleanup_task.cancel()
+    stop_worker()
     logger.info("Shutting down backend")
 
 
