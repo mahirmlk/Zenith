@@ -1,0 +1,75 @@
+"""Watchlists / topic monitoring (update.md §12, §15).
+
+In-app alerts only (no email until consent/unsubscribe infra exists).
+Cadence daily|weekly; dedupe by (watch_id, paper_id) via seen set.
+"""
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from dependencies import get_current_user
+from services.supabase_client import get_supabase
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
+
+
+class WatchCreate(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+    project_id: Optional[str] = None
+    cadence: str = Field(default="daily", pattern="^(daily|weekly)$")
+
+
+class WatchUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    cadence: Optional[str] = Field(default=None, pattern="^(daily|weekly)$")
+
+
+@router.post("")
+async def create_watch(body: WatchCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    try:
+        resp = await supabase.table("watchlists").insert({
+            "user_id": user["user_id"], "query": body.query,
+            "project_id": body.project_id, "cadence": body.cadence,
+        }).execute()
+        return resp.data
+    except Exception:
+        logger.exception("create_watch failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.get("")
+async def list_watches(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    try:
+        resp = await supabase.table("watchlists").select("*").eq("user_id", user["user_id"]).execute()
+        return resp.data or []
+    except Exception:
+        logger.exception("list_watches failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.patch("/{watch_id}")
+async def update_watch(watch_id: str, body: WatchUpdate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        resp = await supabase.table("watchlists").update(patch).eq("id", watch_id).eq("user_id", user["user_id"]).execute()
+        if not resp.data:
+            raise HTTPException(status_code=404, detail="Watchlist not found")
+        return resp.data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("update_watch failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.delete("/{watch_id}")
+async def delete_watch(watch_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    try:
+        await supabase.table("watchlists").delete().eq("id", watch_id).eq("user_id", user["user_id"]).execute()
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("delete_watch failed")
+        raise HTTPException(status_code=500, detail="Internal error")

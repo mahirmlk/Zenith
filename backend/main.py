@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from jwt.exceptions import InvalidTokenError
-from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects, retrieval, research, implementations
+from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects, retrieval, research, implementations, watchlists
 from middleware.rate_limit import limiter, apply_rate_limits
 from middleware.timing import TimingMiddleware
 from config import get_settings
@@ -110,6 +110,7 @@ app.include_router(projects.router)
 app.include_router(retrieval.router)
 app.include_router(research.router)
 app.include_router(implementations.router)
+app.include_router(watchlists.router)
 
 apply_rate_limits(app)  # type: ignore[no-untyped-call]
 
