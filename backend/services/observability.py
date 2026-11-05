@@ -12,6 +12,24 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 
+import re
+
+_SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[:=]\s*\S+)", re.I)
+
+
+def mask_sensitive(value: Any) -> Any:
+    """Langfuse mask: redact secrets, truncate long texts (paper full
+    text is not traced verbatim — update.md §7.2)."""
+    if isinstance(value, str):
+        value = _SECRET_RE.sub("[REDACTED]", value)
+        return value[:2000] + ("…[truncated]" if len(value) > 2000 else "")
+    if isinstance(value, dict):
+        return {k: mask_sensitive(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mask_sensitive(v) for v in value]
+    return value
+
+
 @lru_cache
 def get_langfuse_handler() -> Any | None:
     """Return a Langfuse callback handler for LangChain/LangGraph runs.
@@ -25,11 +43,23 @@ def get_langfuse_handler() -> Any | None:
     try:
         from langfuse.callback import CallbackHandler
 
-        return CallbackHandler(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
-        )
+        try:
+            return CallbackHandler(
+                public_key=settings.langfuse_public_key,
+                secret_key=settings.langfuse_secret_key,
+                host=settings.langfuse_host,
+                mask=mask_sensitive,
+            )
+        except TypeError:
+            # Older langfuse without mask support: trace without secrets
+            # by keeping prompts out of metadata (handler still redacts
+            # nothing — documented limitation, upgrade langfuse).
+            logger.warning("Langfuse mask unsupported by installed version")
+            return CallbackHandler(
+                public_key=settings.langfuse_public_key,
+                secret_key=settings.langfuse_secret_key,
+                host=settings.langfuse_host,
+            )
     except Exception as exc:
         logger.warning("Langfuse initialisation failed, tracing disabled: %s", exc)
         return None
@@ -56,6 +86,7 @@ def init_sentry() -> None:
             traces_sample_rate=settings.sentry_traces_sample_rate,
             environment=settings.app_env,
             release="ai-paper-agent-backend",
+            send_default_pii=False,
         )
         logger.info("Sentry initialised")
     except Exception as exc:

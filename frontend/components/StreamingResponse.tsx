@@ -19,27 +19,47 @@ export function StreamingResponse({ runId, onResult }: StreamingResponseProps) {
     setError(null);
     setDone(false);
 
+    let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retries = 0;
+    const MAX_RETRIES = 3;
 
-    streamSearch(
-      runId,
-      (event) => {
-        if ('papers' in event) {
-          setDone(true);
-          onResult?.(event as PaperSearchResult);
-        } else {
-          setSteps((prev) => [...prev, event as AgentStep]);
+    const connect = () => {
+      streamSearch(
+        runId,
+        (event) => {
+          if ('papers' in event) {
+            setDone(true);
+            onResult?.(event as PaperSearchResult);
+          } else {
+            setSteps((prev) => [...prev, event as AgentStep]);
+          }
+        },
+        (err) => {
+          // Backend replays persisted events on reconnect (update.md
+          // §7.1), so safe to re-subscribe. Retry with backoff.
+          if (cancelled || done) return;
+          if (retries < MAX_RETRIES) {
+            retries += 1;
+            retryTimer = setTimeout(connect, 1000 * retries);
+          } else {
+            setError(err.message);
+          }
         }
-      },
-      (err) => setError(err.message)
-    ).then((unsub) => {
-      unsubscribe = unsub;
-    });
+      ).then((unsub) => {
+        unsubscribe = unsub;
+      });
+    };
+    connect();
 
     return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       unsubscribe?.();
     };
-  }, [runId, onResult]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">

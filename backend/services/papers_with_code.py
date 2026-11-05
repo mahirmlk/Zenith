@@ -1,4 +1,8 @@
+import logging
+
 import httpx
+
+logger = logging.getLogger(__name__)
 
 PWC_API_URL = "https://paperswithcode.com/api/v1"
 
@@ -39,7 +43,12 @@ async def fetch_paper_repos(arxiv_id: str) -> dict:
                     "stars": r.get("stars", 0),
                 })
             return {"repos": repos}
-    except httpx.HTTPStatusError:
-        return {"repos": []}
-    except Exception:
-        return {"repos": []}
+    except httpx.HTTPStatusError as exc:
+        # Liveness signal (update.md §8.3): a dead PWC API must be
+        # visible in logs/metrics, not silently indistinguishable
+        # from "no repositories".
+        logger.warning("PWC API HTTP %s for %s — repos unavailable", exc.response.status_code, arxiv_id)
+        return {"repos": [], "source_error": f"http_{exc.response.status_code}"}
+    except Exception as exc:
+        logger.warning("PWC API failed for %s: %s", arxiv_id, type(exc).__name__)
+        return {"repos": [], "source_error": "unavailable"}
