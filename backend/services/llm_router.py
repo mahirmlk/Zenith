@@ -52,7 +52,7 @@ def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
         max_tokens=4096,
         default_headers={
             "HTTP-Referer": settings.app_url,
-            "X-Title": "AI Paper Research Agent",
+            "X-Title": "Zenith",
         },
     )
 

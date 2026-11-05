@@ -27,6 +27,9 @@ jobs:
       - run: ruff check .
       - run: mypy .
       - run: pytest
+      - name: AI eval smoke (update.md §10)
+        working-directory: .
+        run: python evals/runners/run_evals.py
 
   frontend:
     runs-on: ubuntu-latest
