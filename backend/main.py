@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from jwt.exceptions import InvalidTokenError
-from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects, retrieval, research, implementations, watchlists
+from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects, retrieval, research, implementations, watchlists, notifications, account, models
 from middleware.rate_limit import limiter, apply_rate_limits
 from middleware.timing import TimingMiddleware
 from config import get_settings
@@ -71,10 +71,21 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "Accept"],
 )
 app.add_middleware(TimingMiddleware)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.app_env == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 
 @app.middleware("http")
@@ -111,6 +122,9 @@ app.include_router(retrieval.router)
 app.include_router(research.router)
 app.include_router(implementations.router)
 app.include_router(watchlists.router)
+app.include_router(notifications.router)
+app.include_router(account.router)
+app.include_router(models.router)
 
 apply_rate_limits(app)  # type: ignore[no-untyped-call]
 
