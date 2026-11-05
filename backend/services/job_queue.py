@@ -64,31 +64,52 @@ async def _dequeue() -> str:
     return await asyncio.wait_for(_get_queue().get(), timeout=5)
 
 
-async def worker_loop() -> None:
-    """Consume run_ids and execute each exactly once."""
+_semaphore: asyncio.Semaphore | None = None
+
+
+async def _execute_run(run_id: str) -> None:
     from routers.stream import _run_once  # local import: avoid cycle
+
+    try:
+        from services.run_store import run_store
+
+        state = await run_store.get(run_id)
+        if state is None:
+            logger.warning("Queue: unknown run %s, skipping", run_id)
+            return
+        if not await run_store.try_start(run_id):
+            logger.info("Queue: run %s already started, skipping duplicate", run_id)
+            return
+        await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
+    except Exception:
+        logger.exception("Queue worker failed on run %s", run_id)
+        try:
+            from services.run_store import run_store
+
+            await run_store.update(run_id, status="failed")
+        except Exception:
+            pass
+
+
+async def worker_loop() -> None:
+    """Consume run_ids, executing with bounded concurrency (4) so one
+    long LLM run cannot starve the queue head (bug-hunt P1)."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(4)
+
+    async def _bounded(run_id: str):
+        async with _semaphore:
+            await _execute_run(run_id)
+            if not _use_redis():
+                _get_queue().task_done()
 
     while True:
         try:
             run_id = await _dequeue()
         except asyncio.TimeoutError:
             continue
-        try:
-            from services.run_store import run_store
-
-            state = await run_store.get(run_id)
-            if state is None:
-                logger.warning("Queue: unknown run %s, skipping", run_id)
-                continue
-            if not await run_store.try_start(run_id):
-                logger.info("Queue: run %s already started, skipping duplicate", run_id)
-                continue
-            await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
-        except Exception:
-            logger.exception("Queue worker failed on run %s", run_id)
-        finally:
-            if not _use_redis():
-                _get_queue().task_done()
+        asyncio.create_task(_bounded(run_id))
 
 
 def start_worker() -> None:

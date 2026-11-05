@@ -36,32 +36,26 @@ async def crawl_paper_cached(paper_id: str, url: str) -> str:
     try:
         from services.supabase_client import get_supabase
 
-        supabase = get_supabase()
+        supabase = await get_supabase()
 
-        def _get_cached():
-            response = (
-                supabase.table("crawled_content")
-                .select("content")
-                .eq("paper_id", paper_id)
-                .maybe_single()
-                .execute()
-            )
-            return response.data.get("content") if response.data else None
-
-        cached = await asyncio.to_thread(_get_cached)
+        response = (
+            await supabase.table("crawled_content")
+            .select("content")
+            .eq("paper_id", paper_id)
+            .maybe_single()
+            .execute()
+        )
+        cached = response.data.get("content") if response.data else None
         if cached:
             return cached
 
         content = await asyncio.to_thread(crawl_paper, url)
 
-        def _store():
-            return supabase.table("crawled_content").upsert({
-                "paper_id": paper_id,
-                "url": url,
-                "content": content,
-            }).execute()
-
-        await asyncio.to_thread(_store)
+        await supabase.table("crawled_content").upsert({
+            "paper_id": paper_id,
+            "url": url,
+            "content": content,
+        }).execute()
         return content
     except Exception:
         # If Supabase caching is unavailable, fall back to a direct crawl.

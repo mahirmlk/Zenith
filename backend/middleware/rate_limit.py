@@ -42,5 +42,13 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
                     and route.methods
                     and "POST" in route.methods):
                 route.endpoint = limiter.limit("10/minute")(route.endpoint)
+            elif route.path.startswith("/api/research") or route.path.startswith("/api/retrieval"):
+                route.endpoint = limiter.limit("10/minute")(route.endpoint)
+            elif route.path.startswith("/api/internal"):
+                route.endpoint = limiter.limit("5/minute")(route.endpoint)
+            elif route.path.startswith("/api/account"):
+                route.endpoint = limiter.limit("10/minute")(route.endpoint)
+            elif route.path.startswith("/api/implementations"):
+                route.endpoint = limiter.limit("10/minute")(route.endpoint)
         except Exception:
             pass

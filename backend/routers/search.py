@@ -31,17 +31,19 @@ async def search(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     user_id = user["user_id"]
-    # Daily spend budget (update.md §5.4): in-memory counter per user/day.
-    from config import get_settings
-
-    from services import budget
-
-    if not budget.consume(user_id, get_settings().max_searches_per_day_per_user):
-        raise HTTPException(status_code=429, detail="Daily search budget exceeded")
     run_id = str(uuid.uuid4())
     state = await run_store.create(
         run_id, req.query, req.model, user_id=user_id, idempotency_key=idempotency_key
     )
+    # Daily budget: consume ONLY for genuinely new runs — idempotent
+    # replays must not burn budget (bug-hunt P1).
+    if state.run_id == run_id:
+        from config import get_settings
+
+        from services import budget
+
+        if not budget.consume(user_id, get_settings().max_searches_per_day_per_user):
+            raise HTTPException(status_code=429, detail="Daily search budget exceeded")
     # Durable enqueue (update.md §7.1): work starts in the worker, never
     # in the SSE handler. Idempotent replays return the existing run_id
     # and enqueue nothing new.

@@ -22,8 +22,8 @@ async def verify_supabase_token(token: str) -> dict:  # type: ignore[type-arg]
         raise HTTPException(status_code=500, detail="JWT validation not configured")
     try:
         return await decode_supabase_token(token)
-    except InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    except InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @router.post("/token", response_model=TokenResponse)

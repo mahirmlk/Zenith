@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// Server-side only URL (P0 #4): inside Docker/Fly this must be the
+// internal backend address (e.g. http://backend:8000), NOT the public
+// NEXT_PUBLIC_API_URL which browsers use.
+const API_BASE = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 

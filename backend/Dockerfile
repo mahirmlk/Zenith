@@ -10,7 +10,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+# Prod image: runtime deps only, no [dev] (P1 #2 — dev tools stay out)
+RUN pip install --no-cache-dir .
 
 # Production stage
 FROM python:3.12-slim AS production
@@ -24,6 +25,9 @@ COPY --from=base /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.
 COPY --from=base /usr/local/bin /usr/local/bin
 
 COPY . .
+
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8000
 

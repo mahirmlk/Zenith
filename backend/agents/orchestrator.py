@@ -41,8 +41,8 @@ async def _research_node(state: OrchestratorState) -> OrchestratorState:
     try:
         await _emit(run_id, state, AgentStep(agent="research", status="started"))
         state["raw_papers"] = await research_agent(state["query"], cb)
-    except Exception as e:
-        await _emit(run_id, state, AgentStep(agent="research", status="error", message=str(e)))
+    except Exception:
+        await _emit(run_id, state, AgentStep(agent="research", status="error", message="Step failed"))
         state["raw_papers"] = []
     return state
 
@@ -57,8 +57,8 @@ async def _summary_node(state: OrchestratorState) -> OrchestratorState:
         state["enriched_papers"] = await summary_agent(
             state["raw_papers"], cb, model_override=state.get("model")
         )
-    except Exception as e:
-        await _emit(run_id, state, AgentStep(agent="summary", status="error", message=str(e)))
+    except Exception:
+        await _emit(run_id, state, AgentStep(agent="summary", status="error", message="Step failed"))
         state["enriched_papers"] = state["raw_papers"]
     return state
 
@@ -73,8 +73,8 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
         state["ranked_papers"] = await memory_agent(
             state["enriched_papers"], state["user_id"], state["query"], cb
         )
-    except Exception as e:
-        await _emit(run_id, state, AgentStep(agent="memory", status="error", message=str(e)))
+    except Exception:
+        await _emit(run_id, state, AgentStep(agent="memory", status="error", message="Step failed"))
         state["ranked_papers"] = state["enriched_papers"]
     return state
 
@@ -153,8 +153,8 @@ async def run_orchestrator(
             initial_state,
             config={**get_langfuse_config(), "configurable": {"thread_id": run_id}},
         )
-    except Exception as e:
-        await callback(AgentStep(agent="orchestrator", status="error", message=str(e)))
+    except Exception:
+        await callback(AgentStep(agent="orchestrator", status="error", message="Step failed"))
         final_state = initial_state
     finally:
         _callbacks.pop(run_id, None)

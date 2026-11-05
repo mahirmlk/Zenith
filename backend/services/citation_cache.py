@@ -5,7 +5,6 @@ per 5 minutes unshared). Caching citation edges in the ``citations`` table
 means the citation graph only hits S2 once per paper, then serves cached
 edges until they go stale (7 days).
 """
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -31,18 +30,10 @@ async def get_cached_citations(paper_id: str) -> list[dict] | None:
     try:
         from services.supabase_client import get_supabase
 
-        supabase = get_supabase()
+        supabase = await get_supabase()
 
-        def _fetch():
-            response = (
-                supabase.table("citations")
-                .select("*")
-                .eq("paper_id", paper_id)
-                .execute()
-            )
-            return response.data or []
-
-        rows = await asyncio.to_thread(_fetch)
+        response = await supabase.table("citations").select("*").eq("paper_id", paper_id).execute()
+        rows = response.data or []
         if not rows:
             return None
 
@@ -60,7 +51,7 @@ async def store_citations(paper_id: str, root_title: str, references: list[dict]
     try:
         from services.supabase_client import get_supabase
 
-        supabase = get_supabase()
+        supabase = await get_supabase()
         rows = [
             {
                 "paper_id": paper_id,
@@ -73,9 +64,6 @@ async def store_citations(paper_id: str, root_title: str, references: list[dict]
         if not rows:
             return
 
-        def _upsert():
-            return supabase.table("citations").upsert(rows).execute()
-
-        await asyncio.to_thread(_upsert)
+        await supabase.table("citations").upsert(rows).execute()
     except Exception as exc:
         logger.warning("Citation cache write failed for %s: %s", paper_id, exc)

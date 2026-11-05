@@ -5,12 +5,20 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* are baked at build time (Dockerfile ARGs)
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     ports:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - API_URL=http://backend:8000
+    depends_on:
+      - backend
     restart: unless-stopped
 
   backend:
@@ -33,6 +41,19 @@ services:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
       - MEM0_API_KEY=${MEM0_API_KEY}
       - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY:-}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+      - REDIS_URL=${REDIS_URL:-}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      - MAX_SUMMARIES_PER_RUN=${MAX_SUMMARIES_PER_RUN:-20}
+      - MAX_SEARCHES_PER_DAY_PER_USER=${MAX_SEARCHES_PER_DAY_PER_USER:-100}
+      - SANDBOX_ENABLED=${SANDBOX_ENABLED:-false}
+      - DATABASE_URL=${DATABASE_URL:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - APP_ENV=production
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]

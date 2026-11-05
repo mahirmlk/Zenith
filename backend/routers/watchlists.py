@@ -29,6 +29,13 @@ class WatchUpdate(BaseModel):
 
 @router.post("")
 async def create_watch(body: WatchCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    if body.project_id:
+        # H5: project must be owned by (or shared with) the caller.
+        proj = await supabase.table("projects").select("owner_id").eq("id", body.project_id).maybe_single().execute()
+        if not proj.data or proj.data.get("owner_id") != user["user_id"]:
+            members = await supabase.table("project_members").select("user_id").eq("project_id", body.project_id).eq("user_id", user["user_id"]).execute()
+            if not (members.data or []):
+                raise HTTPException(status_code=404, detail="Project not found")
     try:
         resp = await supabase.table("watchlists").insert({
             "user_id": user["user_id"], "query": body.query,

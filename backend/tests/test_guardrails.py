@@ -11,7 +11,7 @@ from security.prompt_injection import scan_untrusted
 def test_run_ownership():
     assert can_access_run("u1", "u1")
     assert not can_access_run("u1", "u2")
-    assert can_access_run(None, "anyone")  # legacy anonymous runs
+    assert not can_access_run(None, "anyone")  # deny by default (C1)
 
 
 def test_project_roles():

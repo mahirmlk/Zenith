@@ -38,7 +38,7 @@ def _validate_sse_session(session_token: str) -> str | None:
     if not session:
         return None
     if datetime.now(timezone.utc) > session["expires_at"]:
-        del _sse_sessions[session_token]
+        _sse_sessions.pop(session_token, None)  # guard: concurrent expiry
         return None
     return session["user_id"]  # type: ignore[no-any-return]
 
@@ -61,8 +61,13 @@ async def _run_once(run_id: str, query: str, user_id: str, model: str | None) ->
 
 async def event_generator(run_id: str, query: str, user_id: str, model: str | None):
     # Replay persisted events first (reconnect safety, update.md §7.1).
-    for evt in await run_store.get_events(run_id):
+    # Track by max sequence (not len) to avoid missing events appended
+    # between the replay read and the poll loop (bug-hunt P1).
+    replayed = await run_store.get_events(run_id)
+    for evt in replayed:
         yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
+    if replayed and replayed[-1]["event"] in ("result", "error"):
+        return  # Terminal event already replayed — no duplicate result.
 
     state = await run_store.get(run_id)
     if state and state.status == "complete" and state.results:
@@ -74,22 +79,22 @@ async def event_generator(run_id: str, query: str, user_id: str, model: str | No
         task = asyncio.create_task(_run_once(run_id, query, user_id, model))
         _running_tasks[run_id] = task
 
-    # Poll persisted events until terminal state; disconnect does NOT cancel.
-    seen = len(await run_store.get_events(run_id))
+    seen_seq = max((e["sequence"] for e in replayed), default=0)
     deadline = datetime.now(timezone.utc) + timedelta(minutes=10)
     while datetime.now(timezone.utc) < deadline:
         await asyncio.sleep(0.5)
         events = await run_store.get_events(run_id)
-        for evt in events[seen:]:
-            yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
-        seen = len(events)
-        if events and events[-1]["event"] in ("result", "error"):
-            break
+        for evt in events:
+            if evt["sequence"] > seen_seq:
+                yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
+                seen_seq = evt["sequence"]
+                if evt["event"] in ("result", "error"):
+                    return
         state = await run_store.get(run_id)
         if state and state.status in ("complete", "failed"):
             if state.status == "complete" and state.results:
                 yield {"event": "result", "data": {"papers": state.results, "run_id": run_id}}
-            break
+            return
 
 
 @router.get("/{run_id}")

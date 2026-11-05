@@ -10,9 +10,9 @@ ROLES = ("owner", "editor", "viewer")
 
 
 def can_access_run(run_owner: Optional[str], requester: str) -> bool:
-    """Anonymous-created runs (no owner) are streamable by any authed user
-    for backwards compatibility; owned runs only by their owner."""
-    return run_owner is None or run_owner == requester
+    """Deny by default: ownerless runs (anonymous-era or orphaned by
+    account deletion) are NOT accessible. Owned runs only by owner."""
+    return run_owner is not None and run_owner == requester
 
 
 def can_access_project(owner_id: str, member_roles: dict[str, str], requester: str) -> bool:
