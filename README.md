@@ -1,6 +1,6 @@
-# AI Paper Research Agent
+# Zenith — AI Research Intelligence & Engineering Workspace
 
-> **Project Status:** Phase 1–5 Complete — All features implemented and ready for production
+> **Project Status:** Evolving from paper feed to research workspace (see [update.md](update.md) + [docs/STATUS.md](docs/STATUS.md)). Previously named "AI Paper Research Agent"; infra identifiers (`ai-paper-agent-backend`) are kept for deployment compatibility.
 
 An intelligent agent that discovers, ingests, summarises, and personalises academic papers from ArXiv and HuggingFace Daily Papers. It uses a multi-agent LangGraph orchestration layer to continuously feed you research that matters to you.
 
