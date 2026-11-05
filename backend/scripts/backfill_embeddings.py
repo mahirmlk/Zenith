@@ -11,7 +11,7 @@ from services.supabase_client import get_supabase
 
 
 async def main(limit: int = 100) -> int:
-    supabase = get_supabase()
+    supabase = await get_supabase()
     resp = await supabase.table("papers").select("id,title,abstract").is_("embedding", "null").range(0, limit - 1).execute()
     rows = resp.data or []
     if not rows:

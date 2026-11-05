@@ -1,5 +1,4 @@
 from typing import Callable, Awaitable
-import asyncio
 import re
 import logging
 from models.schemas import AgentStep
@@ -34,19 +33,16 @@ async def _try_match_papers_sql(interest_text: str, papers: list[dict]) -> bool:
         from services.embeddings import embed_text
 
         interest_vec = await embed_text(interest_text)
-        supabase = get_supabase()
+        supabase = await get_supabase()
 
-        def _blocking_rpc():
-            return supabase.rpc(
-                "match_papers",
-                {
-                    "query_embedding": interest_vec,
-                    "match_threshold": 0.3,
-                    "match_count": len(papers),
-                },
-            ).execute()
-
-        result = await asyncio.to_thread(_blocking_rpc)
+        result = await supabase.rpc(
+            "match_papers",
+            {
+                "query_embedding": interest_vec,
+                "match_threshold": 0.3,
+                "match_count": len(papers),
+            },
+        ).execute()
 
         if result.data:
             scored_ids = {r["id"]: r["similarity"] for r in result.data}

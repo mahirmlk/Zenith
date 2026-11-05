@@ -29,9 +29,13 @@ def _get_summary_prompt() -> str:
 
 
 def _wrap_content(paper: dict) -> str:
-    """Wrap crawled/untrusted paper text in explicit delimiters."""
-    title = paper.get("title", "")
-    abstract = paper.get("abstract", "")
+    """Wrap crawled/untrusted paper text in explicit delimiters.
+
+    Closing tags in the untrusted text are escaped so a malicious
+    title/abstract cannot break out of the delimiter (M3).
+    """
+    title = (paper.get("title", "") or "").replace("</paper_content>", "<\\/paper_content>")
+    abstract = (paper.get("abstract", "") or "").replace("</paper_content>", "<\\/paper_content>")
     body = f"Title: {title}\n\nAbstract: {abstract}"
     return f"{_CONTENT_OPEN}\n{body}\n{_CONTENT_CLOSE}"
 

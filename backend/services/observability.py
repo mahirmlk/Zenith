@@ -12,7 +12,12 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|api[_-]?key\s*[:=]\s*\S+)", re.I)
+_SECRET_RE = re.compile(
+    r"(sk-[A-Za-z0-9_\-]{8,}|sk-ant-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}"
+    r"|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
+    r"|Bearer\s+\S+|api[_-]?key\s*[:=]\s*\S+|sb_secret_[A-Za-z0-9_\-]+)",
+    re.I,
+)
 
 
 def mask_sensitive(value: Any) -> Any:

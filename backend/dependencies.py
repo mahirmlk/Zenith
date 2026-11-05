@@ -24,24 +24,19 @@ async def get_current_user(
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    # Reject service_role tokens (H3): they must never authenticate as
+    # a user. When aud is present it must be "authenticated".
+    aud = payload.get("aud")
+    if aud:
+        audiences = aud if isinstance(aud, list) else [aud]
+        if "service_role" in audiences or "authenticated" not in audiences:
+            raise HTTPException(status_code=401, detail="Invalid token audience")
+    if payload.get("role") == "service_role":
+        raise HTTPException(status_code=401, detail="Service role tokens are not user sessions")
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: no subject")
-    return {"user_id": user_id, "email": payload.get("email")}
-
-
-async def get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> dict | None:
-    """Returns user dict if valid token is provided, None otherwise."""
-    if not credentials:
-        return None
-    payload = await _decode_token(credentials.credentials)
-    if not payload:
-        return None
-    user_id = payload.get("sub")
-    if not user_id:
-        return None
     return {"user_id": user_id, "email": payload.get("email")}
 
 

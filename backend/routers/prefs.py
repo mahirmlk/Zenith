@@ -26,6 +26,12 @@ async def update_prefs(  # type: ignore[no-untyped-def]
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),
 ) -> UserPrefs:
+    from services.llm_router import validate_model
+
+    try:
+        validate_model(prefs.preferred_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     try:
         await supabase.table("user_prefs").upsert({
             "user_id": user_id,

@@ -33,7 +33,7 @@ async def run_daily_fetch(
     from agents.summary_agent import summary_agent
 
     cb = callback or _noop_callback
-    supabase = get_supabase()
+    supabase = await get_supabase()
 
     logger.info("Fetching ArXiv papers...")
     arxiv_papers = await fetch_latest_papers(max_results=max_results)
@@ -50,11 +50,8 @@ async def run_daily_fetch(
     deduped = {p["id"]: p for p in arxiv_papers + hf_papers}
     papers = list(deduped.values())
 
-    def _existing_ids():
-        response = supabase.table("papers").select("id").execute()
-        return {row["id"] for row in (response.data or [])}
-
-    existing_ids = await asyncio.to_thread(_existing_ids)
+    response = await supabase.table("papers").select("id").execute()
+    existing_ids = {row["id"] for row in (response.data or [])}
     new_papers = [p for p in papers if p["id"] not in existing_ids]
     logger.info("%s new papers to insert", len(new_papers))
 
@@ -82,11 +79,11 @@ async def run_daily_fetch(
 
     for i in range(0, len(rows), MAX_EMBED_BATCH):
         batch = rows[i:i + MAX_EMBED_BATCH]
-        await async_retry(
-            lambda b=batch: asyncio.to_thread(lambda: supabase.table("papers").upsert(b).execute()),
-            max_retries=3,
-            base_delay=1.0,
-        )
+
+        async def _upsert(b=batch):
+            return await supabase.table("papers").upsert(b).execute()
+
+        await async_retry(_upsert, max_retries=3, base_delay=1.0)
         logger.info("Inserted batch %s", i // MAX_EMBED_BATCH + 1)
 
     summarised = 0
@@ -101,19 +98,13 @@ async def run_daily_fetch(
             for paper in enriched:
                 if paper.get("summary_tldr"):
                     summarised += 1
-                await async_retry(
-                    lambda p=paper: asyncio.to_thread(
-                        lambda: supabase.table("papers")
-                        .update({
-                            "summary_tldr": p.get("summary_tldr"),
-                            "difficulty": p.get("difficulty", "intermediate"),
-                        })
-                        .eq("id", p["id"])
-                        .execute()
-                    ),
-                    max_retries=3,
-                    base_delay=1.0,
-                )
+                async def _update(p=paper):
+                    return await supabase.table("papers").update({
+                        "summary_tldr": p.get("summary_tldr"),
+                        "difficulty": p.get("difficulty", "intermediate"),
+                    }).eq("id", p["id"]).execute()
+
+                await async_retry(_update, max_retries=3, base_delay=1.0)
             logger.info("Summarised batch %s", i // SUMMARY_BATCH_SIZE + 1)
             if i + SUMMARY_BATCH_SIZE < len(new_papers):
                 await asyncio.sleep(2)

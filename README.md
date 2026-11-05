@@ -1,201 +1,210 @@
-# Zenith — AI Research Intelligence & Engineering Workspace
+<div align="center">
 
-> **Project Status:** Evolving from paper feed to research workspace (see [update.md](update.md) + [docs/STATUS.md](docs/STATUS.md)). Previously named "AI Paper Research Agent"; infra identifiers (`ai-paper-agent-backend`) are kept for deployment compatibility.
+# ✨ Zenith
 
-An intelligent agent that discovers, ingests, summarises, and personalises academic papers from ArXiv and HuggingFace Daily Papers. It uses a multi-agent LangGraph orchestration layer to continuously feed you research that matters to you.
+### AI Research Intelligence & Engineering Workspace
 
-**Core value proposition:** Zero effort from "paper exists" to "here's why it matters to you."
+**From "a paper exists" to "here's why it matters to you" — with evidence.**
 
----
+[![CI](https://github.com/mahirmlk/Zenith/actions/workflows/ci.yml/badge.svg)](https://github.com/mahirmlk/Zenith/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](backend/pyproject.toml)
+[![Next.js](https://img.shields.io/badge/next.js-15-black?style=flat-square&logo=next.js&logoColor=white)](frontend/package.json)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/main.py)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-1C3C3C?style=flat-square)](backend/agents/orchestrator.py)
+[![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=black)](supabase/schema.sql)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-## Features
+[Features](#-features) · [Architecture](#-architecture) · [Quick Start](#-quick-start) · [API](#-api) · [Security](#-security) · [Roadmap](#-roadmap)
 
-### Paper Discovery & Ingestion
-- **Multi-source discovery** — Fetches papers from ArXiv (official API) and HuggingFace Daily Papers (community-curated highlights)
-- **Automatic deduplication** — Cross-references by paper ID to prevent duplicates across sources
-- **Daily cron ingestion** — `daily_fetch.py` script for scheduled paper harvesting with batching and embeddings
-- **Dev data seeding** — `seed_dev.py` for quick local development with 5 sample papers
-
-### AI-Powered Summarisation
-- **LLM-generated summaries** — Each paper gets a TL;DR, 3 key contributions, and a difficulty rating (introductory/intermediate/expert)
-- **Multi-model support** — Route through OpenRouter (primary) with direct provider fallbacks to Anthropic, OpenAI, Google Gemini, and Mistral
-- **Cost guardrails** — Token limits per agent role, summary caching in Supabase, tiered model pricing
-
-### Personalisation Engine
-- **Mem0 user memory** — Learns user interests from saves, dismissals, and browsing behaviour
-- **Relevance scoring** — Ranks papers against user profile using embedding similarity (text-embedding-3-small)
-- **Interest-based keyword matching** — Falls back to keyword overlap when no Mem0 profile exists
-
-### Live Streaming
-- **SSE-powered agent progress** — Watch the Research Agent, Summary Agent, and Memory Agent work in real time via Server-Sent Events
-- **Event-driven UI** — Frontend `StreamingResponse` component renders live status updates
-- **Timeout handling** — 30-second inactivity timeout with graceful error messaging
-
-### Interactive UI
-- **Paper feed** — Scrollable personalised feed with save, dismiss, and share actions
-- **Paper detail** — Full abstract, AI summary, key contributions, difficulty badge, and code links
-- **3-D Citation Graph** — Three.js force-directed graph (React Three Fiber) powered by Semantic Scholar API
-- **Model selector** — Dropdown to choose from 9 LLM models (Claude, GPT-4o, Gemini, Mistral, Llama, DeepSeek, etc.)
-- **Responsive design** — Tailwind CSS, loading skeletons, error boundaries, empty states
-
-### Auth & Security
-- **Supabase Auth** — Email/password + OAuth (Google, GitHub)
-- **JWT validation** — ES256 JWKS with legacy HS256 fallback, validated on every request
-- **Rate limiting** — Redis-backed per-endpoint limits via slowapi (10/min search, 20/min stream, 60/min default)
-- **CORS protection** — Whitelisted origins for the frontend domain
-- **Admin-gated ingestion** — Internal trigger protected by `X-Admin-Key`
-
-### Papers With Code Integration
-- **GitHub repository discovery** — Fetches associated code repositories via Papers With Code API
-- **Star counts** — Displays GitHub stars for each repository
-- **Built into paper detail** — Code repositories shown on the paper detail page
-
-### Developer Experience
-- **Docker Compose** — One-command local dev environment (`docker compose up --build`)
-- **GitHub Actions CI (manual)** — Linting (ruff, mypy, eslint), type checking, tests, and Docker builds, run on demand to keep Actions costs down
-- **Comprehensive docs** — API reference, architecture overview, developer guide, and deployment guide
-- **Structured logging** — Timestamped, level-tagged logs for all services
+</div>
 
 ---
 
-## Quick Start
+## 📖 Overview
 
-The easiest way to run the full stack locally is with Docker Compose:
+Zenith discovers papers from **arXiv** and **Hugging Face Daily Papers**, enriches them with **LLM summaries** and **citation graphs**, and ranks them against **your personal memory profile** — then lets you organise them into **research projects** with grounded, cited answers.
+
+> **Status:** Shipping (`zenith-v0.3-final`). Previously *"AI Paper Research Agent"* — infra IDs (`ai-paper-agent-backend`) are kept for deployment compatibility.
+
+## ✨ Features
+
+| Area | What you get |
+|---|---|
+| 🔍 **Discovery** | Multi-source fetch (arXiv + HF) with dedup, embedding backfill, hybrid BM25 + vector retrieval |
+| 🧠 **Personalisation** | Mem0 memory + pgvector similarity rank papers for *you* |
+| 💬 **Streaming** | SSE with start-once durable runs, event replay, reconnect-safe, cancel |
+| 📊 **Citation graph** | Cached Semantic Scholar edges, deterministic layout |
+| 🗂️ **Projects** | CRUD, notes, sources, members (owner/editor/viewer), soft-delete |
+| 🔬 **Deep research** | Task routing (feed/explain/compare/deep), comparison tables, abstaining grounded answers |
+| 💻 **Paper-to-code** | Implementation plans + Markdown export; sandbox execution **off by default** (gated) |
+| 👀 **Monitoring** | Watchlists (daily/weekly) + in-app notifications |
+| 🛡️ **Guardrails** | Deny-by-default tool policy, backend approvals, citation validation, SSRF defence |
+| 🔐 **Security** | JWT allowlist + iss/aud, RLS migrations, ownership on every endpoint, rate limits + daily budget |
+
+## 🛠 Tech Stack
+
+<div align="center">
+
+| Layer | Technologies |
+|---|---|
+| **Frontend** | ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=next.js&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white) |
+| **Backend** | ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white) ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white) ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=flat-square) |
+| **AI** | ![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=flat-square) ![OpenRouter](https://img.shields.io/badge/OpenRouter-FF6B35?style=flat-square) |
+| **Data** | ![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=black) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white) ![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white) |
+| **Infra** | ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white) |
+
+</div>
+
+## 🏗 Architecture
+
+Four layers — boundaries are enforced in code, not just documented:
+
+```mermaid
+flowchart TB
+    Browser[Next.js 15 · TypeScript · Tailwind] -->|HTTPS / SSE| API[FastAPI · JWT auth · rate limits]
+    API -->|enqueue| Queue[(Redis / in-process queue)]
+    Queue -->|worker| Orchestrator[LangGraph orchestrator]
+    Orchestrator --> Research[Research Agent · discover]
+    Orchestrator --> Summary[Summary Agent · simplify]
+    Orchestrator --> Memory[Memory Agent · personalise]
+    Orchestrator --> Events[(Persisted run events)]
+    Events -->|replay| API
+    API --> DB[(Supabase · Postgres + pgvector · RLS)]
+    Research --> ArXiv[(arXiv API)]
+    Research --> HF[(Hugging Face API)]
+    Summary --> OpenRouter[OpenRouter · model registry]
+    Summary --> Firecrawl[Firecrawl · SSRF-validated]
+    Memory --> Mem0[(Mem0 memory)]
+    Memory --> DB
+```
+
+### Request flow (search → stream)
+
+```mermaid
+sequenceDiagram
+    participant U as User (JWT)
+    participant API as FastAPI
+    participant Q as Job queue
+    participant W as Worker + LangGraph
+    participant S as SSE stream
+    U->>API: POST /api/search {query}
+    API->>API: auth + model registry + daily budget
+    API->>Q: enqueue(run_id) (Idempotency-Key dedupes)
+    API-->>U: { run_id }
+    U->>S: GET /api/stream/{run_id} (session token)
+    W->>W: try_start (exactly once) → Research → Summary → Memory
+    W->>S: agent_step events (persisted + replayed)
+    W->>S: result (citations validated, no fabrication)
+    Note over W: Refresh/reconnect replays events — never restarts work
+```
+
+## 🚀 Quick Start
+
+**Prerequisites:** Node 20 · Python 3.12+ · Docker (optional)
 
 ```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd ai-paper-research-agent
+git clone https://github.com/mahirmlk/Zenith.git && cd Zenith
+cp .env.example .env            # fill keys (see table below)
+cp frontend/.env.local.example frontend/.env.local
 
-# 2. Copy environment variables
-cp .env.example .env
-# Edit .env and fill in your API keys (at minimum: OPENROUTER_API_KEY, SUPABASE_*)
+# Backend
+cd backend && pip install -e ".[dev]" && uvicorn main:app --reload --port 8000
 
-# 3. Set up Supabase
-# - Create a project at supabase.com
-# - Run supabase/schema.sql in the SQL Editor
-# - Copy credentials to .env
-
-# 4. Start all services
-docker compose up --build
+# Frontend (new terminal)
+cd frontend && npm ci && npm run dev   # http://localhost:3000
 ```
 
-- **Frontend:** http://localhost:3000
-- **Backend API:** http://localhost:8000
-- **API Docs (Swagger):** http://localhost:8000/docs
-- **Redis:** localhost:6379
+**Or full stack:** `docker compose up --build` (frontend :3000 · backend :8000 · redis :6379)
 
-See the **[Developer Guide](./docs/DEVELOPER_GUIDE.md)** for detailed setup instructions, prerequisites, and troubleshooting.
+### Environment variables
 
----
+| Variable | Required | Purpose |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes (LLM) | Primary LLM routing |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Yes | DB + vector store |
+| `SUPABASE_JWT_SECRET` | Legacy only | HS256 fallback (new projects use JWKS) |
+| `FIRECRAWL_API_KEY` | Optional | Full-text crawling |
+| `MEM0_API_KEY` | Optional | User memory |
+| `REDIS_URL` | Prod | Shared queue + rate limits |
+| `ADMIN_API_KEY` | Scheduler | `POST /api/internal/ingest` |
+| `SANDBOX_ENABLED` | No (default `false`) | Paper-code execution (gated) |
+| `MAX_SEARCHES_PER_DAY_PER_USER` | No (default `100`) | Spend budget |
 
-## Environment Variables
+> ⚠️ **Before production:** apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001–0005` to staging, verify RLS, then production.
 
-Copy `.env.example` to `.env` and configure the following:
+## 🔌 API
 
-| Category | Variable | Required | Description |
-|----------|----------|----------|-------------|
-| **LLM Providers** | `OPENROUTER_API_KEY` | **Yes** | Primary LLM gateway |
-| | `ANTHROPIC_API_KEY` | No | Claude direct fallback |
-| | `OPENAI_API_KEY` | No | GPT fallback + embeddings |
-| | `GOOGLE_API_KEY` | No | Gemini fallback |
-| | `MISTRAL_API_KEY` | No | Mistral fallback |
-| **Data Sources** | `FIRECRAWL_API_KEY` | No | Full paper crawling |
-| | `SEMANTIC_SCHOLAR_API_KEY` | No | Citation graph (higher rate limits) |
-| **Memory & Storage** | `MEM0_API_KEY` | No | User memory personalisation |
-| | `SUPABASE_URL` | **Yes** | Database & auth |
-| | `SUPABASE_ANON_KEY` | **Yes** | Public Supabase key |
-| | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Admin Supabase key |
-| | `SUPABASE_JWT_SECRET` | No* | JWT validation (HS256 fallback; new projects use JWKS) |
-| **App** | `APP_URL` | No | Frontend URL (sent to OpenRouter) |
-| | `NEXT_PUBLIC_API_URL` | No | Public API URL for frontend |
-| | `REDIS_URL` | No | Redis connection string (falls back to in-memory) |
-| | `ADMIN_API_KEY` | No | Gate for `POST /api/internal/ingest` |
-| | `MAX_SUMMARIES_PER_RUN` | No | Per-run summary fan-out cap (default 20) |
-| **Observability** | `LANGFUSE_PUBLIC_KEY` | No | Langfuse tracing (requires secret too) |
-| | `LANGFUSE_SECRET_KEY` | No | Langfuse tracing secret |
-| | `LANGFUSE_HOST` | No | Langfuse host (default `https://cloud.langfuse.com`) |
-| | `SENTRY_DSN` | No | Sentry error tracking |
-| | `SENTRY_TRACES_SAMPLE_RATE` | No | Sentry trace sample rate (default 0.1) |
-| | `APP_ENV` | No | Environment label for Sentry (default `development`) |
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /api/search` | JWT | Create run (idempotent) |
+| `GET /api/stream/{run_id}` | SSE token | Stream agent steps + result (replay) |
+| `GET /api/runs/{id}` · `/events` · `POST /cancel` | JWT (owner) | Run status / replay / cancel |
+| `GET /api/papers` · `/saved` · `/{id}` · `POST /{id}/save` | JWT | Papers + personal library |
+| `GET /api/graph/{id}` | JWT | Citation graph (cached) |
+| `POST /api/retrieval/search` | JWT | Hybrid (BM25 + vector), project-scoped |
+| `POST /api/research/{plan,compare,answer}` | JWT | Deep research, grounded answers |
+| `GET /api/implementations/{id}/{plan,export}` | JWT | Paper-to-code plan (no execution) |
+| `/api/projects` · `/notes` · `/members` | JWT (owner/member) | Research workspace |
+| `/api/watchlists` · `/notifications` | JWT | Monitoring + in-app alerts |
+| `GET /api/account/export` · `DELETE /api/account` | JWT | GDPR export / deletion |
+| `GET /api/models` | Public | Model registry |
+| `GET /api/health` · `/api/ready` | Public | Liveness / readiness |
 
-\* `SUPABASE_JWT_SECRET` is only needed for legacy HS256-signed Supabase projects; new projects validate against the public JWKS endpoint.
+Full contracts: [docs/API.md](docs/API.md).
 
-See `.env.example` for the full template.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | Next.js 15, TypeScript, Tailwind CSS, Three.js (React Three Fiber), React Query, Zustand |
-| **Backend** | FastAPI, Python 3.12, Uvicorn, SSE (sse-starlette), slowapi |
-| **AI Orchestration** | LangGraph 0.2+, LangChain |
-| **Memory & Storage** | Supabase (Postgres + pgvector), Mem0, Redis |
-| **External APIs** | OpenRouter, Firecrawl, ArXiv, HuggingFace, Semantic Scholar, Papers With Code |
-| **DevOps** | Docker, Docker Compose, GitHub Actions |
-
----
-
-## Architecture
-
-The system follows a four-layer architecture:
+## 🗂 Project structure
 
 ```
-Next.js Frontend → FastAPI Backend → LangGraph Orchestration → External Services
+Zenith/
+├── frontend/          Next.js 15 (App Router) · app/ · components/ · lib/
+├── backend/
+│   ├── agents/        LangGraph orchestrator + research/summary/memory
+│   ├── routers/       papers · search · stream · runs · projects · research …
+│   ├── services/      llm_router (registry) · retrieval · job_queue · ssrf …
+│   ├── security/      authorization · policies · input/output validation
+│   ├── guardrails/    pipeline · action approvals
+│   └── tests/         pytest (security · guardrails · retrieval · research)
+├── supabase/migrations/  0001–0005 (RLS, projects, watchlists, notifications)
+├── evals/             deterministic eval harness (CI smoke)
+└── docs/              API · architecture · security · runbooks · STATUS
 ```
 
-For a detailed breakdown of the architecture, data model, LLM routing strategy, and deployment options, see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
+## 🛡 Security
 
-For the full API reference, see **[docs/API.md](./docs/API.md)**.
+- **JWT:** alg allowlist (ES256/RS256/EdDSA + legacy HS256), iss/aud checks, JWKS rotation refetch, `service_role` tokens rejected as user sessions
+- **Isolation:** RLS on all 13 tables + server-side ownership on every endpoint; deny-by-default (ownerless runs are inaccessible)
+- **Guardrails:** trusted Python policy layer — tool allowlist, backend-recorded approvals for high-risk actions, fabricated-citation rejection
+- **SSRF:** scheme/IP validation before every server-side fetch; PWC repo URLs host-allowlisted
+- **Budgets:** per-user daily search cap + rate limits on expensive endpoints + model registry (no arbitrary model IDs)
+- **Hygiene:** generic client errors (no `str(e)` leaks), security headers, Langfuse/Sentry redaction
 
----
+Threat model & test plan: [docs/security/](docs/security/THREAT_MODEL.md).
 
-## Documentation
+## 🧪 Testing & CI
 
-| Document | Purpose |
-|----------|---------|
-| [README.md](./README.md) | Project overview and quick start |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture, data flow, design decisions |
-| [docs/CONTEXT.md](./docs/CONTEXT.md) | Project context, goals, and operating constraints |
-| [docs/FLOW.md](./docs/FLOW.md) | End-to-end data flows (search, ingestion, graph, auth, memory) |
-| [docs/API.md](./docs/API.md) | Complete API reference with examples |
-| [docs/SCHEMA.md](./docs/SCHEMA.md) | Database schema and PgSQL functions |
-| [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) | Setup, testing, contributing, troubleshooting |
-| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Production deployment (Fly.io, Vercel, Docker) |
-| [docs/adr/](./docs/adr/README.md) | Architecture Decision Records |
-| [MEMORY.md](./MEMORY.md) | Memory/personalisation subsystem deep-dive |
-| [PLAN.md](./PLAN.md) | Master project plan (all 5 phases) |
-
----
-
-## Project Structure
-
-```
-.
-├── backend/          # FastAPI backend
-│   ├── main.py       # App entry point, middleware, router registration
-│   ├── routers/      # API endpoints (9 routers incl. internal ingest)
-│   ├── agents/       # LangGraph agents (research, summary, memory, orchestrator)
-│   ├── services/     # External integrations + shared logic (15 services)
-│   ├── middleware/    # Rate limiting, response timing
-│   └── models/       # Pydantic schemas
-├── frontend/         # Next.js frontend
-│   ├── app/          # App Router pages (feed, graph, paper, settings, login)
-│   ├── components/   # Reusable UI components
-│   ├── lib/          # API client, auth helpers
-│   └── store/        # Zustand state management
-├── supabase/         # Database migrations & schema
-├── docs/             # Documentation (context, flows, API, schema, deployment)
-│   └── adr/          # Architecture Decision Records
-├── .github/workflows/# CI + daily ingestion triggers (manual dispatch)
-├── docker-compose.yml
-└── docker-compose.prod.yml
+```bash
+cd backend && pytest            # 78 passed · 5 env-dependent (need OPENAI/Supabase)
+cd frontend && npm run typecheck && npm test
+python evals/runners/run_evals.py   # deterministic eval smoke (CI gate)
 ```
 
----
+GitHub Actions run on every PR/push: lint · typecheck · tests · eval smoke · Docker build.
 
-## License
+## 🗺 Roadmap
 
-[MIT](LICENSE)
+| Phase | Status |
+|---|---|
+| Security, guardrails, durable runs, evals | ✅ Shipped |
+| Research workspaces, hybrid retrieval, deep research | ✅ Shipped |
+| Paper-to-code (plan/export) · monitoring · collaboration | ✅ Shipped (execution gated) |
+| Multi-instance Postgres checkpointer · full eval golden suite | 🔜 Next |
+
+Live status matrix: [docs/STATUS.md](docs/STATUS.md) · Full plan: [update.md](update.md).
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md). One branch per phase, tests + docs in the same PR, never edit `main` directly, keep merged branches.
+
+## 📄 License
+
+[MIT](LICENSE) © Zenith contributors.

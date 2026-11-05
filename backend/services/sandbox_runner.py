@@ -29,7 +29,9 @@ def run_in_sandbox(paper_id: str = "", code: str = "", timeout_seconds: int = 12
     cmd = [
         "docker", "run", "--rm", "--network", "none", "--read-only",
         "--memory", "1g", "--cpus", "1", "--user", "65534:65534",
-        "--pids-limit", "64", "-i", "python:3.12-slim",
+        "--pids-limit", "64", "--cap-drop=ALL",
+        "--security-opt", "no-new-privileges",
+        "-i", "python:3.12-slim",
         "python", "-c", code,
     ]
     try:

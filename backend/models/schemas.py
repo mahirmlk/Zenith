@@ -28,8 +28,17 @@ class SearchRequest(BaseModel):
 
 
 class UserPrefs(BaseModel):
-    preferred_model: str = "anthropic/claude-sonnet-4-5"
-    interests: list[str] = Field(default_factory=list)
+    preferred_model: str = Field(default="anthropic/claude-sonnet-4-5", max_length=100)
+    interests: list[str] = Field(default_factory=list, max_length=50)
+
+    from pydantic import field_validator
+
+    @field_validator("interests")
+    @classmethod
+    def _cap_interest_len(cls, v: list[str]) -> list[str]:
+        if any(len(s) > 200 for s in v):
+            raise ValueError("Each interest must be <= 200 chars")
+        return v
 
 
 class AgentStep(BaseModel):

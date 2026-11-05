@@ -1,7 +1,13 @@
+import os
+
 import pytest
 from agents.research_agent import research_agent
 from agents.summary_agent import summary_agent, _extract_json
 from models.schemas import AgentStep
+
+needs_llm = pytest.mark.skipif(
+    not os.environ.get("OPENROUTER_API_KEY"), reason="needs live LLM key"
+)
 
 
 def test_extract_json_direct():
@@ -41,6 +47,7 @@ async def test_research_agent_runs():
 
 
 @pytest.mark.asyncio
+@needs_llm
 async def test_summary_agent_runs():
     steps = []
 
@@ -57,6 +64,7 @@ async def test_summary_agent_runs():
 
 
 @pytest.mark.asyncio
+@needs_llm
 async def test_summary_agent_parallel():
     steps = []
 

@@ -1,13 +1,15 @@
 import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from dependencies import get_current_user
 from models.schemas import CitationGraph, GraphNode, GraphEdge
 from services.semantic_scholar import get_paper_citations
 from services.citation_cache import get_cached_citations, store_citations
 import hashlib
 
-_PAPER_ID_RE = re.compile(r"^[a-zA-Z0-9\-._:/]+$")
+# No "/" or ".." — paper IDs go into an S2 API path (M2 traversal fix).
+_PAPER_ID_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
 
 
 def _validate_paper_id(paper_id: str) -> str:
@@ -43,7 +45,7 @@ def _build_graph(paper_id: str, root_title: str, refs: list[dict[str, Any]]) -> 
 
 
 @router.get("/{paper_id}", response_model=CitationGraph)
-async def get_graph(paper_id: str) -> CitationGraph:
+async def get_graph(paper_id: str, user: dict = Depends(get_current_user)) -> CitationGraph:  # type: ignore[type-arg]
     paper_id = _validate_paper_id(paper_id)
 
     # Serve from the Supabase cache first so the rate-limited S2 API is only

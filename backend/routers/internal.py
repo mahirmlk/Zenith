@@ -1,4 +1,5 @@
 import logging
+import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi import BackgroundTasks
@@ -20,7 +21,7 @@ def _require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
     settings = get_settings()
     if not settings.admin_api_key:
         raise HTTPException(status_code=503, detail="Admin endpoint not configured")
-    if x_admin_key != settings.admin_api_key:
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="Invalid admin key")
 
 

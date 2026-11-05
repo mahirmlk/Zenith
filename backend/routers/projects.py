@@ -32,12 +32,17 @@ class NoteCreate(BaseModel):
 
 
 async def _owned_project(supabase, project_id: str, user_id: str) -> dict:
-    resp = await supabase.table("projects").select("*").eq("id", project_id).single().execute()
+    """Owner OR member access (H2 fix: members were locked out)."""
+    from security.authorization import can_access_project
+
+    resp = await supabase.table("projects").select("*").eq("id", project_id).maybe_single().execute()
     if not resp.data:
         raise HTTPException(status_code=404, detail="Project not found")
-    if resp.data.get("owner_id") != user_id:
-        # Membership lookup would go here (project_members); owners only
-        # until sharing is enabled (Phase P4).
+    if resp.data.get("owner_id") == user_id:
+        return resp.data
+    members = await supabase.table("project_members").select("user_id,role").eq("project_id", project_id).execute()
+    member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
+    if not can_access_project(resp.data["owner_id"], member_roles, user_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return resp.data
 
@@ -71,10 +76,11 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user), s
 
 @router.patch("/{project_id}")
 async def update_project(project_id: str, body: ProjectUpdate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
-    await _owned_project(supabase, project_id, user["user_id"])
+    project = await _owned_project(supabase, project_id, user["user_id"])
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
-        resp = await supabase.table("projects").update(patch).eq("id", project_id).execute()
+        # C3: bind the mutation to the owner as defence-in-depth.
+        resp = await supabase.table("projects").update(patch).eq("id", project_id).eq("owner_id", project["owner_id"]).execute()
         return resp.data
     except Exception:
         logger.exception("update_project failed")
@@ -96,22 +102,20 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=500, detail="Internal error")
 
 
-@router.post("/{project_id}/members")
-async def add_member(project_id: str, body: dict, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
-    """Invite a member (owner-only). Role changes are audited.
+class MemberInvite(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(..., pattern="^(viewer|editor)$")
 
-    Body: {"user_id": "...", "role": "viewer|editor"} — the invited
-    user's id is data, the *authorizer* is always the JWT owner.
-    """
+
+@router.post("/{project_id}/members")
+async def add_member(project_id: str, body: MemberInvite, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    """Invite a member (owner-only). Role changes are audited."""
     await _owned_project(supabase, project_id, user["user_id"])
-    role = body.get("role")
-    if role not in ("viewer", "editor"):
-        raise HTTPException(status_code=422, detail="Role must be viewer or editor")
     try:
         from security.audit import audit
         audit(user["user_id"], "project:invite", "allowed", project_id)
         resp = await supabase.table("project_members").upsert({
-            "project_id": project_id, "user_id": body.get("user_id"), "role": role,
+            "project_id": project_id, "user_id": body.user_id, "role": body.role,
         }).execute()
         return resp.data
     except HTTPException:
@@ -124,6 +128,11 @@ async def add_member(project_id: str, body: dict, user: dict = Depends(get_curre
 @router.post("/{project_id}/notes")
 async def create_note(project_id: str, body: NoteCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     await _owned_project(supabase, project_id, user["user_id"])
+    if body.source_id:
+        # H5: source must belong to this project.
+        src = await supabase.table("project_sources").select("id").eq("id", body.source_id).eq("project_id", project_id).maybe_single().execute()
+        if not src.data:
+            raise HTTPException(status_code=422, detail="Source does not belong to this project")
     try:
         resp = await supabase.table("notes").insert({
             "project_id": project_id, "created_by": user["user_id"],
