@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from dependencies import get_optional_user
+from dependencies import get_current_user
 from models.schemas import SearchRequest
 from services.llm_router import validate_model
 from services.run_store import run_store
@@ -18,16 +18,26 @@ class SearchResponse(BaseModel):
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
-    user: dict | None = Depends(get_optional_user),  # type: ignore[type-arg]
+    user: dict = Depends(get_current_user),  # type: ignore[type-arg]
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> SearchResponse:
+    """Authenticated only (update.md §5.2): anonymous callers must not
+    trigger the LLM pipeline. Frontend already sends the Supabase JWT
+    via `Authorization: Bearer` (lib/api.ts getHeaders)."""
     # Model registry gate (update.md §14): reject unknown/expensive models.
     if req.model is not None:
         try:
             validate_model(req.model)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    user_id = user["user_id"] if user else None
+    user_id = user["user_id"]
+    # Daily spend budget (update.md §5.4): in-memory counter per user/day.
+    from config import get_settings
+
+    from services import budget
+
+    if not budget.consume(user_id, get_settings().max_searches_per_day_per_user):
+        raise HTTPException(status_code=429, detail="Daily search budget exceeded")
     run_id = str(uuid.uuid4())
     state = await run_store.create(
         run_id, req.query, req.model, user_id=user_id, idempotency_key=idempotency_key
