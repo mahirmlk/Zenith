@@ -96,6 +96,31 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=500, detail="Internal error")
 
 
+@router.post("/{project_id}/members")
+async def add_member(project_id: str, body: dict, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+    """Invite a member (owner-only). Role changes are audited.
+
+    Body: {"user_id": "...", "role": "viewer|editor"} — the invited
+    user's id is data, the *authorizer* is always the JWT owner.
+    """
+    await _owned_project(supabase, project_id, user["user_id"])
+    role = body.get("role")
+    if role not in ("viewer", "editor"):
+        raise HTTPException(status_code=422, detail="Role must be viewer or editor")
+    try:
+        from security.audit import audit
+        audit(user["user_id"], "project:invite", "allowed", project_id)
+        resp = await supabase.table("project_members").upsert({
+            "project_id": project_id, "user_id": body.get("user_id"), "role": role,
+        }).execute()
+        return resp.data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("add_member failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
 @router.post("/{project_id}/notes")
 async def create_note(project_id: str, body: NoteCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     await _owned_project(supabase, project_id, user["user_id"])
