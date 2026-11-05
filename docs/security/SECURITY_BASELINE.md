@@ -1,0 +1,3 @@
+# Security Baseline
+
+Controls (owner, evidence, cadence): JWT signature+alg allowlist+iss/aud-when-present (`services/jwt_validator.py`, unit tests, per-PR); run ownership + start-once SSE (`routers/stream.py`, `services/run_store.py`, tests); RLS migrations (`supabase/migrations/`, policy test matrix, per migration); SSRF validator (`services/ssrf.py`); model registry (`services/llm_router.py:MODEL_REGISTRY`); generic client errors + correlation IDs (`routers/papers.py`, `prefs.py`); rate limits (SlowAPI, IP+user follow-up); secret scan + SCA in CI (Phase P0-C). No critical/high exploitable findings in changed paths is the release gate (update.md §5.5).

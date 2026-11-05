@@ -1,0 +1,3 @@
+# Data Handling
+
+Public corpus (arXiv/HF metadata) is world-readable; `user_papers`/`user_prefs`/Mem0 are per-user; uploaded PDFs (future) are project-scoped. Retention: runs TTL 1h in Redis/in-memory (Postgres `research_runs` in migration will define retention); crawled text cached per paper. Deletion: unsave deletes `user_papers` row; full account deletion must cover Postgres + storage + Redis + Mem0 (endpoint TBD, Phase P1). Provider sharing: prompts/abstracts go to OpenRouter/direct providers; full crawled text must be redacted from Langfuse traces (pending). Licenses: respect arXiv/HF terms; don't republish full text.
