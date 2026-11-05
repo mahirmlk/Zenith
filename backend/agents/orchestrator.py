@@ -84,11 +84,25 @@ _checkpointer = None
 
 
 def _get_checkpointer():
-    """LangGraph checkpointer (update.md §7.1). MemorySaver for dev;
-    swap for PostgresSaver (langgraph-checkpoint-postgres) in production
-    with thread_id=run_id — no code change needed at call sites."""
+    """LangGraph checkpointer (update.md §7.1).
+
+    PostgresSaver when `DATABASE_URL` is set AND the
+    `langgraph-checkpoint-postgres` package is installed; otherwise
+    MemorySaver (dev). thread_id=run_id at call sites either way.
+    """
     global _checkpointer
     if _checkpointer is None:
+        import os
+
+        database_url = os.environ.get("DATABASE_URL", "")
+        if database_url:
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+
+                _checkpointer = PostgresSaver.from_conn_string(database_url)
+                return _checkpointer
+            except ImportError:
+                pass  # package not installed: fall back to MemorySaver
         from langgraph.checkpoint.memory import MemorySaver
 
         _checkpointer = MemorySaver()

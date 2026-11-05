@@ -1,8 +1,10 @@
 """Durable-run job queue (update.md §7.1).
 
-Stdlib asyncio queue + background worker for single-process deploys.
-For multi-instance production, swap `enqueue`/`worker_loop` for arq/
-Dramatiq backed by Redis — the run_id/event contract stays identical.
+Two backends, same run_id/event contract:
+- In-process asyncio queue (dev/single-process, default).
+- Redis list (multi-instance production) when `REDIS_URL` is set:
+  producers LPUSH, workers BRPOP — any instance can run any run, and
+  `try_start` in the run store prevents duplicate execution.
 Postgres remains canonical for run metadata (migration 0001).
 """
 import asyncio
@@ -12,6 +14,25 @@ logger = logging.getLogger(__name__)
 
 _queue: asyncio.Queue | None = None
 _worker_task: asyncio.Task | None = None  # type: ignore[type-arg]
+_redis = None
+QUEUE_KEY = "zenith:runs:queue"
+
+
+def _use_redis() -> bool:
+    from config import get_settings
+
+    return bool(get_settings().redis_url)
+
+
+async def _redis_client():
+    global _redis
+    if _redis is None:
+        import redis.asyncio as redis_mod
+
+        from config import get_settings
+
+        _redis = redis_mod.from_url(get_settings().redis_url, decode_responses=True)
+    return _redis
 
 
 def _get_queue() -> asyncio.Queue:  # type: ignore[type-arg]
@@ -22,6 +43,10 @@ def _get_queue() -> asyncio.Queue:  # type: ignore[type-arg]
 
 
 async def enqueue(run_id: str) -> None:
+    if _use_redis():
+        client = await _redis_client()
+        await client.lpush(QUEUE_KEY, run_id)
+        return
     await _get_queue().put(run_id)
 
 
@@ -29,12 +54,25 @@ def queue_depth() -> int:
     return _get_queue().qsize() if _queue else 0
 
 
+async def _dequeue() -> str:
+    if _use_redis():
+        client = await _redis_client()
+        item = await client.brpop(QUEUE_KEY, timeout=5)
+        if item is None:
+            raise asyncio.TimeoutError
+        return item[1]
+    return await asyncio.wait_for(_get_queue().get(), timeout=5)
+
+
 async def worker_loop() -> None:
     """Consume run_ids and execute each exactly once."""
     from routers.stream import _run_once  # local import: avoid cycle
 
     while True:
-        run_id = await _get_queue().get()
+        try:
+            run_id = await _dequeue()
+        except asyncio.TimeoutError:
+            continue
         try:
             from services.run_store import run_store
 
@@ -49,14 +87,15 @@ async def worker_loop() -> None:
         except Exception:
             logger.exception("Queue worker failed on run %s", run_id)
         finally:
-            _get_queue().task_done()
+            if not _use_redis():
+                _get_queue().task_done()
 
 
 def start_worker() -> None:
     global _worker_task
     if _worker_task is None:
         _worker_task = asyncio.create_task(worker_loop())
-        logger.info("Job queue worker started")
+        logger.info("Job queue worker started (redis=%s)", _use_redis())
 
 
 def stop_worker() -> None:
