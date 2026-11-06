@@ -111,4 +111,36 @@ async def run_daily_fetch(
     except Exception as exc:
         logger.warning("Summary generation failed: %s", exc)
 
-    return {"fetched": len(papers), "inserted": len(new_papers), "summarised": summarised}
+    # Watchlist → notification producer (gap audit P0-2): match newly
+    # inserted papers against active watchlists and create in-app
+    # notifications. Best-effort; never fails the ingestion.
+    notified = 0
+    try:
+        from services.supabase_client import get_supabase
+
+        sb = await get_supabase()
+        watches = await sb.table("watchlists").select("id,user_id,query").execute()
+        for w in watches.data or []:
+            q = (w.get("query") or "").lower()
+            matches = [
+                p for p in new_papers
+                if q and q in (p.get("title", "") or "").lower()
+            ]
+            if matches:
+                await sb.table("notifications").insert({
+                    "user_id": w["user_id"],
+                    "type": "watchlist_match",
+                    "title": f"{len(matches)} new paper(s) for '{w.get('query')}'",
+                    "body": matches[0].get("title", "")[:200],
+                    "data": {"watchlist_id": w["id"], "paper_ids": [p["id"] for p in matches[:5]]},
+                }).execute()
+                notified += 1
+    except Exception as exc:
+        logger.warning("Watchlist notification pass failed: %s", exc)
+
+    return {
+        "fetched": len(papers),
+        "inserted": len(new_papers),
+        "summarised": summarised,
+        "watchlists_notified": notified,
+    }

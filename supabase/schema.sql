@@ -1,3 +1,7 @@
+-- NOTE: migrations/ (0001-0006) are the source of truth for production installs.
+-- This file is the legacy baseline for fresh single-file installs; it is kept
+-- for reference and should be regenerated from migrations. See
+-- docs/MIGRATIONS_RUNBOOK.md.
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 

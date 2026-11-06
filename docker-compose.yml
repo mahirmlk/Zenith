@@ -18,6 +18,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    # Dev override: volume masks the standalone server.js, so run dev server
+    command: npm run dev
     restart: unless-stopped
 
   backend:

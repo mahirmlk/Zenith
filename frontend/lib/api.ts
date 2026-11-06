@@ -45,7 +45,9 @@ export async function searchPapers(query: string, model?: string): Promise<{ run
     handleAuthRedirect(res);
     throw new ApiError(await parseError(res), res.status);
   }
-  return res.json();
+  // Backend returns snake_case { run_id }; expose camelCase to callers.
+  const data = await res.json();
+  return { runId: data.run_id ?? data.runId };
 }
 
 export async function fetchFeed(params?: { limit?: number; offset?: number; q?: string }): Promise<Paper[]> {
