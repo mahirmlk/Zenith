@@ -5,7 +5,9 @@ FROM node:20-alpine AS base
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-COPY package.json package-lock.json* ./
+# Match the workspace install settings (including legacy peer resolution) so
+# clean Docker builds resolve the same dependency tree as `npm ci` in CI.
+COPY package.json package-lock.json* .npmrc ./
 RUN npm ci --no-audit --no-fund
 
 # Build — NEXT_PUBLIC_* are baked in at build time (P0 #3)
