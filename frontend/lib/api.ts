@@ -50,6 +50,18 @@ export async function searchPapers(query: string, model?: string): Promise<{ run
   return { runId: data.run_id ?? data.runId };
 }
 
+export async function cancelRun(runId: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    headers: await getHeaders(),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.json();
+}
+
 export async function fetchFeed(params?: { limit?: number; offset?: number; q?: string }): Promise<Paper[]> {
   const url = new URL(`${API_BASE}/api/papers`);
   if (params?.limit !== undefined) url.searchParams.set('limit', String(params.limit));
@@ -169,7 +181,11 @@ export async function fetchGraphData(id: string): Promise<{ nodes: unknown[]; ed
   return res.json();
 }
 
-export async function streamSearch(runId: string, onEvent: (event: AgentStep | PaperSearchResult) => void, onError?: (err: Error) => void) {
+export async function streamSearch(
+  runId: string,
+  onEvent: (event: AgentStep | PaperSearchResult, eventId?: string) => void,
+  onError?: (err: Error) => void
+) {
   const token = await getJWT();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -187,32 +203,41 @@ export async function streamSearch(runId: string, onEvent: (event: AgentStep | P
   const { session_token } = await sessionRes.json();
   const evtSource = new EventSource(`${API_BASE}/api/stream/${runId}?token=${encodeURIComponent(session_token)}`);
 
-  evtSource.addEventListener('agent_step', (e) => {
+  evtSource.addEventListener('agent_step', (e: MessageEvent<string>) => {
     try {
-      onEvent(JSON.parse(e.data));
+      onEvent(JSON.parse(e.data), e.lastEventId || undefined);
     } catch {
       // ignore parse errors
     }
   });
 
-  evtSource.addEventListener('result', (e) => {
+  evtSource.addEventListener('result', (e: MessageEvent<string>) => {
     try {
-      onEvent(JSON.parse(e.data));
+      onEvent(JSON.parse(e.data), e.lastEventId || undefined);
       evtSource.close();
     } catch {
       // ignore parse errors
     }
   });
 
-  evtSource.addEventListener('error', (_e) => {
-    if (onError) onError(new Error('SSE error'));
+  evtSource.addEventListener('error', (event: Event) => {
+    const e = event as MessageEvent<string>;
+    // The server uses an SSE `error` event for a terminal run failure; native
+    // EventSource connection errors have no data. Handle both in one place so
+    // a named server error cannot schedule two reconnects.
+    if (!e.data) {
+      onError?.(new Error('SSE connection error'));
+      evtSource.close();
+      return;
+    }
+    try {
+      const payload = JSON.parse(e.data) as { message?: string };
+      onError?.(new Error(payload.message ?? 'Research run failed'));
+    } catch {
+      onError?.(new Error('Research run failed'));
+    }
     evtSource.close();
   });
-
-  evtSource.onerror = () => {
-    if (onError) onError(new Error('SSE connection error'));
-    evtSource.close();
-  };
 
   return () => evtSource.close();
 }
