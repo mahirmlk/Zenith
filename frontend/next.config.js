@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: __dirname,
   typedRoutes: true,
   async rewrites() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
