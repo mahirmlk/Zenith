@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional, Protocol
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 import asyncio
@@ -24,6 +24,42 @@ class RunState:
     idempotency_key: Optional[str] = None
     started: bool = False
     events: list[dict] = field(default_factory=list)
+
+
+class RunStoreProtocol(Protocol):
+    """Typed async contract shared by development and production stores."""
+
+    async def create(
+        self,
+        run_id: str,
+        query: str,
+        model: Optional[str] = None,
+        user_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> RunState: ...
+
+    async def get(self, run_id: str) -> Optional[RunState]: ...
+
+    async def find_idempotent(self, user_id: str, idempotency_key: str) -> Optional[RunState]: ...
+
+    async def update(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        results: Optional[list[dict[str, Any]]] = None,
+    ) -> None: ...
+
+    async def try_start(self, run_id: str) -> bool: ...
+
+    async def heartbeat(self, run_id: str) -> bool: ...
+
+    async def release(self, run_id: str) -> None: ...
+
+    async def add_event(self, run_id: str, event: str, data: dict[str, Any]) -> None: ...
+
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    async def cleanup(self) -> None: ...
 
 
 class RunStore:
@@ -602,7 +638,7 @@ class PostgresRunStore(RedisRunStore):
         )
 
 
-async def _create_run_store():
+async def _create_run_store() -> RunStoreProtocol:
     from config import get_settings
 
     settings = get_settings()
@@ -639,7 +675,7 @@ _instance = None
 _instance_lock: Optional[asyncio.Lock] = None
 
 
-async def get_run_store():
+async def get_run_store() -> RunStoreProtocol:
     global _instance, _instance_lock
     if _instance is None:
         if _instance_lock is None:
@@ -651,46 +687,58 @@ async def get_run_store():
 
 
 class _RunStoreProxy:
-    async def _store(self):
+    async def _store(self) -> RunStoreProtocol:
         return await get_run_store()
 
-    async def create(self, run_id, query, model=None, user_id=None, idempotency_key=None):
+    async def create(
+        self,
+        run_id: str,
+        query: str,
+        model: Optional[str] = None,
+        user_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> RunState:
         store = await self._store()
         return await store.create(run_id, query, model, user_id=user_id, idempotency_key=idempotency_key)
 
-    async def get(self, run_id):
+    async def get(self, run_id: str) -> Optional[RunState]:
         store = await self._store()
         return await store.get(run_id)
 
-    async def find_idempotent(self, user_id, idempotency_key):
+    async def find_idempotent(self, user_id: str, idempotency_key: str) -> Optional[RunState]:
         store = await self._store()
         return await store.find_idempotent(user_id, idempotency_key)
 
-    async def update(self, run_id, status=None, results=None):
+    async def update(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        results: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         store = await self._store()
         await store.update(run_id, status, results)
 
-    async def try_start(self, run_id):
+    async def try_start(self, run_id: str) -> bool:
         store = await self._store()
         return await store.try_start(run_id)
 
-    async def heartbeat(self, run_id):
+    async def heartbeat(self, run_id: str) -> bool:
         store = await self._store()
         return await store.heartbeat(run_id)
 
-    async def release(self, run_id):
+    async def release(self, run_id: str) -> None:
         store = await self._store()
         await store.release(run_id)
 
-    async def add_event(self, run_id, event, data):
+    async def add_event(self, run_id: str, event: str, data: dict[str, Any]) -> None:
         store = await self._store()
         await store.add_event(run_id, event, data)
 
-    async def get_events(self, run_id):
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         store = await self._store()
         return await store.get_events(run_id)
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         store = await self._store()
         await store.cleanup()
 
