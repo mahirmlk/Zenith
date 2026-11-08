@@ -11,7 +11,7 @@ import logging
 import secrets
 from datetime import date, datetime, time, timezone
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ async def _redis_client() -> Any:
         url = get_settings().redis_url
         if not url:
             raise RuntimeError("REDIS_URL is required for scheduled ingestion")
-        # redis-py exposes this module factory without a usable return stub.
-        _redis = redis_mod.from_url(  # type: ignore[no-untyped-call]
+        factory = cast(Any, redis_mod.from_url)
+        _redis = factory(
             url,
             decode_responses=True,
             socket_connect_timeout=3,
@@ -341,5 +341,8 @@ async def stop_daily_scheduler() -> None:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     if _redis is not None:
-        await _redis.aclose()
+        close = getattr(_redis, "aclose", None)
+        if close is None:
+            close = getattr(_redis, "close")
+        await close()
         _redis = None

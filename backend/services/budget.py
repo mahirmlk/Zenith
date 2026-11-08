@@ -8,7 +8,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from config import get_settings
 
@@ -38,8 +38,8 @@ async def _get_redis_client(redis_url: str) -> Any:
     if _redis is None or _redis_url != redis_url:
         import redis.asyncio as redis_mod
 
-        # redis-py exposes this module factory without a usable return stub.
-        _redis = redis_mod.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
+        factory = cast(Any, redis_mod.from_url)
+        _redis = factory(redis_url, decode_responses=True)
         _redis_url = redis_url
     return _redis
 

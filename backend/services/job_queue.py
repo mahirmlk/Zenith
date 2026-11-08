@@ -11,7 +11,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +44,8 @@ async def _redis_client() -> Any:
 
         from config import get_settings
 
-        # redis-py exposes this module factory without a usable return stub.
-        _redis = redis_mod.from_url(  # type: ignore[no-untyped-call]
+        factory = cast(Any, redis_mod.from_url)
+        _redis = factory(
             get_settings().redis_url,
             decode_responses=True,
         )
