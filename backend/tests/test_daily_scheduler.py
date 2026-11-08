@@ -13,6 +13,8 @@ class FakeRedis:
         self.values = {}
         self.expirations = {}
         self.closed = False
+        self.lose_renewal = False
+        self.fail_renewal = False
 
     async def get(self, key):
         return self.values.get(key)
@@ -33,6 +35,15 @@ class FakeRedis:
         self.closed = True
 
     async def eval(self, script, numkeys, *args):
+        if script == daily_scheduler._MARK_COMPLETE:
+            assert numkeys == 2
+            lock_key, complete_key, owner, ttl = args
+            if self.values.get(lock_key) != owner:
+                return 0
+            self.values[complete_key] = "1"
+            self.expirations[complete_key] = int(ttl)
+            return 1
+
         assert numkeys == 1
         key = args[0]
         if script == daily_scheduler._INCREMENT_ATTEMPT:
@@ -40,14 +51,18 @@ class FakeRedis:
             self.expirations[key] = int(args[1])
             return int(self.values[key])
         owner = args[1]
+        if script == daily_scheduler._RENEW_LOCK:
+            if self.fail_renewal:
+                raise ConnectionError("Redis heartbeat unavailable")
+            if self.lose_renewal:
+                return 0
+            if self.values.get(key) == owner:
+                self.expirations[key] = int(args[2])
+                return 1
+            return 0
         if script == daily_scheduler._RELEASE_LOCK:
             if self.values.get(key) == owner:
                 self.values.pop(key)
-                return 1
-            return 0
-        if script == daily_scheduler._RENEW_LOCK:
-            if self.values.get(key) == owner:
-                self.expirations[key] = int(args[2])
                 return 1
             return 0
         raise AssertionError("unexpected Redis script")
@@ -73,6 +88,25 @@ async def test_daily_ingest_runs_once_per_utc_day(due_time):
     assert redis.values[attempts_key] == "1"
     assert redis.values[complete_key] == "1"
     assert lock_key not in redis.values
+
+
+@pytest.mark.asyncio
+async def test_admin_manual_run_does_not_mark_scheduled_day_complete():
+    redis = FakeRedis()
+
+    async def runner():
+        return {"fetched": 0}
+
+    result = await daily_scheduler.run_with_ingestion_lease(
+        runner,
+        source="admin",
+        redis=redis,
+    )
+
+    today = datetime.now(timezone.utc).date()
+    _, _, _, complete_key = daily_scheduler._day_keys(today)
+    assert result.acquired
+    assert complete_key not in redis.values
 
 
 @pytest.mark.asyncio
@@ -111,6 +145,103 @@ async def test_daily_ingest_uses_shared_lease_to_prevent_parallel_runs(due_time)
 
     assert await first
     assert second is False
+
+
+@pytest.mark.parametrize("source", ["admin", "fly-cron"])
+@pytest.mark.asyncio
+async def test_manual_and_cron_triggers_cannot_overlap_scheduled_run(due_time, source):
+    redis = FakeRedis()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    maximum_active = 0
+
+    async def scheduled_runner():
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        started.set()
+        try:
+            await release.wait()
+        finally:
+            active -= 1
+
+    async def competing_runner():
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        active -= 1
+
+    scheduled = asyncio.create_task(
+        daily_scheduler.run_due_once(
+            now=due_time,
+            redis=redis,
+            runner=scheduled_runner,
+        )
+    )
+    await started.wait()
+    competing = await daily_scheduler.run_with_ingestion_lease(
+        competing_runner,
+        source=source,
+        redis=redis,
+    )
+    release.set()
+
+    assert not competing.acquired
+    assert await scheduled
+    assert maximum_active == 1
+
+
+@pytest.mark.parametrize("heartbeat_failure", ["lost", "error"])
+@pytest.mark.asyncio
+async def test_lease_loss_cancels_active_fetch(monkeypatch, heartbeat_failure):
+    redis = FakeRedis()
+    redis.lose_renewal = heartbeat_failure == "lost"
+    redis.fail_renewal = heartbeat_failure == "error"
+    monkeypatch.setattr(daily_scheduler, "LOCK_RENEW_SECONDS", 0.01)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def blocked_fetch():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    with pytest.raises(daily_scheduler.IngestionLeaseLost):
+        await daily_scheduler.run_with_ingestion_lease(
+            blocked_fetch,
+            source="test",
+            redis=redis,
+        )
+
+    assert started.is_set()
+    assert cancelled.is_set()
+    assert daily_scheduler.GLOBAL_INGESTION_LOCK_KEY not in redis.values
+
+
+@pytest.mark.asyncio
+async def test_fetch_timeout_cancels_runner_and_releases_lease(monkeypatch):
+    redis = FakeRedis()
+    monkeypatch.setattr(daily_scheduler, "MAX_RUN_SECONDS", 0.01)
+    cancelled = asyncio.Event()
+
+    async def blocked_fetch():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    with pytest.raises(TimeoutError):
+        await daily_scheduler.run_with_ingestion_lease(
+            blocked_fetch,
+            source="timeout-test",
+            redis=redis,
+        )
+
+    assert cancelled.is_set()
+    assert daily_scheduler.GLOBAL_INGESTION_LOCK_KEY not in redis.values
 
 
 @pytest.mark.asyncio
@@ -184,3 +315,23 @@ async def test_scheduler_shutdown_cancels_polling_task_and_closes_redis():
     assert redis.closed
     assert daily_scheduler._scheduler_task is None
     assert daily_scheduler._redis is None
+
+
+@pytest.mark.asyncio
+async def test_fly_cron_entrypoint_uses_shared_ingestion_lease(monkeypatch):
+    from scripts import daily_fetch
+
+    calls = []
+
+    async def fake_leased_run(source):
+        calls.append(source)
+        return daily_scheduler.LeaseResult(
+            acquired=True,
+            result={"fetched": 1, "inserted": 1, "summarised": 1},
+        )
+
+    monkeypatch.setattr(daily_fetch, "run_daily_fetch_with_lease", fake_leased_run)
+
+    await daily_fetch.main()
+
+    assert calls == ["fly-cron"]

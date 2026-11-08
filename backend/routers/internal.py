@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks
 from pydantic import BaseModel
 
 from config import get_settings
-from services.ingestion import run_daily_fetch
+from services.daily_scheduler import run_daily_fetch_with_lease
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,6 @@ async def trigger_daily_ingest(request: Request, background_tasks: BackgroundTas
     Actions cron job). Requires the ``X-Admin-Key`` header to match
     ``ADMIN_API_KEY``.
     """
-    background_tasks.add_task(run_daily_fetch)
+    background_tasks.add_task(run_daily_fetch_with_lease, "admin")
     logger.info("Daily ingestion job queued")
     return IngestResponse(status="started")
