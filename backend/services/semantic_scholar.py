@@ -1,6 +1,7 @@
 import httpx
 from config import get_settings
 from services.retry import async_retry
+from typing import Any
 
 S2_API_URL = "https://api.semanticscholar.org/graph/v1"
 
@@ -15,13 +16,13 @@ def _get_client() -> httpx.AsyncClient:
     return _http_client
 
 
-async def get_paper_citations(paper_id: str, limit: int = 20) -> dict:
+async def get_paper_citations(paper_id: str, limit: int = 20) -> dict[str, Any]:
     settings = get_settings()
-    headers = {}
+    headers: dict[str, str] = {}
     if settings.semantic_scholar_api_key:
         headers["x-api-key"] = settings.semantic_scholar_api_key
 
-    async def _fetch():
+    async def _fetch() -> Any:
         client = _get_client()
         r = await client.get(
             f"{S2_API_URL}/paper/{paper_id}",

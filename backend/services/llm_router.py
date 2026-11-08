@@ -17,7 +17,7 @@ AGENT_MODEL_MAP = {
 # Capability registry (update.md §2/§14): the only model IDs a user may
 # request, with the agents each is allowed for. Unknown IDs are rejected
 # instead of being passed through to a provider (cost/retirement control).
-MODEL_REGISTRY: dict[str, dict] = {
+MODEL_REGISTRY: dict[str, dict[str, list[str]]] = {
     "anthropic/claude-opus-4": {"agents": ["orchestrator", "summary_default"]},
     "anthropic/claude-sonnet-4-5": {"agents": ["summary_default", "orchestrator"]},
     "openai/gpt-4o": {"agents": ["summary_default", "orchestrator"]},
@@ -105,13 +105,14 @@ def get_gemini_llm(model: str = "gemini-2.0-flash", temperature: float = 0.3) ->
 
 def get_mistral_llm(model: str = "mistral-large-latest", temperature: float = 0.3) -> BaseChatModel:
     from langchain_mistralai import ChatMistralAI
+    from pydantic import SecretStr
 
     settings = get_settings()
     if not settings.mistral_api_key:
         raise RuntimeError("MISTRAL_API_KEY not configured")
-    return ChatMistralAI(  # type: ignore[no-any-return]
-        model=model,
-        api_key=settings.mistral_api_key,
+    return ChatMistralAI(
+        model_name=model,
+        api_key=SecretStr(settings.mistral_api_key),
         temperature=temperature,
         max_tokens=4096,
     )

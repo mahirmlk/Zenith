@@ -31,7 +31,7 @@ def _as_utc(value: Any) -> datetime | None:
     return None
 
 
-def _watchlist_matches(query: str, paper: dict) -> bool:
+def _watchlist_matches(query: str, paper: dict[str, Any]) -> bool:
     normalized_query = " ".join(_TOKEN_RE.findall(query.lower()))
     if not normalized_query:
         return False
@@ -50,8 +50,8 @@ def _watchlist_matches(query: str, paper: dict) -> bool:
 
 
 async def _notify_watchlists(
-    supabase,
-    papers: list[dict],
+    supabase: Any,
+    papers: list[dict[str, Any]],
     *,
     now: datetime | None = None,
     sources_complete: bool = True,
@@ -183,8 +183,9 @@ async def run_daily_fetch(
         }
 
     texts = [f"{p['title']}\n{p['abstract']}" for p in new_papers]
+    embeddings: list[list[float] | None] = []
     try:
-        embeddings = await embed_texts(texts)
+        embeddings.extend(await embed_texts(texts))
     except Exception as exc:
         logger.warning("Embedding failed: %s", exc)
         embeddings = [None] * len(new_papers)
@@ -204,7 +205,7 @@ async def run_daily_fetch(
     for i in range(0, len(rows), MAX_EMBED_BATCH):
         batch = rows[i:i + MAX_EMBED_BATCH]
 
-        async def _upsert(b=batch):
+        async def _upsert(b: list[dict[str, Any]] = batch) -> Any:
             return await supabase.table("papers").upsert(b).execute()
 
         await async_retry(_upsert, max_retries=3, base_delay=1.0)
@@ -222,7 +223,7 @@ async def run_daily_fetch(
             for paper in enriched:
                 if paper.get("summary_tldr"):
                     summarised += 1
-                async def _update(p=paper):
+                async def _update(p: dict[str, Any] = paper) -> Any:
                     return await supabase.table("papers").update({
                         "summary_tldr": p.get("summary_tldr"),
                         "difficulty": p.get("difficulty", "intermediate"),

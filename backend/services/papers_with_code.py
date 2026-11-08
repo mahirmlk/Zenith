@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import httpx
 
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 PWC_API_URL = "https://paperswithcode.com/api/v1"
 
 
-async def fetch_paper_repos(arxiv_id: str) -> dict:
+async def fetch_paper_repos(arxiv_id: str) -> dict[str, Any]:
     """Fetch GitHub repos for a paper from Papers With Code using arxiv_id."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

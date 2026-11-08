@@ -1,12 +1,13 @@
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 import arxiv
 from services.retry import async_retry
 
 client = arxiv.Client()
+PaperRecord = dict[str, Any]
 
 
-async def search_arxiv(query: str, max_results: int = 20) -> list[dict]:
+async def search_arxiv(query: str, max_results: int = 20) -> list[PaperRecord]:
     search = arxiv.Search(
         query=query,
         max_results=max_results,
@@ -15,7 +16,7 @@ async def search_arxiv(query: str, max_results: int = 20) -> list[dict]:
 
     results = []
 
-    def _fetch():
+    def _fetch() -> list[PaperRecord]:
         for result in client.results(search):
             results.append({
                 "id": result.entry_id.split("/")[-1],
@@ -27,14 +28,16 @@ async def search_arxiv(query: str, max_results: int = 20) -> list[dict]:
             })
         return results
 
-    async def _fetch_async():
+    async def _fetch_async() -> list[PaperRecord]:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _fetch)
 
     return await async_retry(_fetch_async, max_retries=3, base_delay=1.0)
 
 
-async def fetch_latest_papers(categories: Optional[list[str]] = None, max_results: int = 50) -> list[dict]:
+async def fetch_latest_papers(
+    categories: Optional[list[str]] = None, max_results: int = 50
+) -> list[PaperRecord]:
     cats = categories or ["cs.AI", "cs.LG", "cs.CL", "stat.ML"]
     query = " OR ".join(f"cat:{c}" for c in cats)
     return await search_arxiv(query, max_results)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from mem0 import MemoryClient
@@ -23,17 +23,20 @@ def _get_client() -> MemoryClient:
     return _get_client_cached()
 
 
-def _get_user_profile_sync(user_id: str) -> list[dict]:
-    return _get_client().get_all(user_id=user_id)
+MemoryRecord = dict[str, Any]
 
 
-def _add_memory_sync(user_id: str, messages: list[dict]) -> None:
+def _get_user_profile_sync(user_id: str) -> list[MemoryRecord]:
+    return cast(list[MemoryRecord], _get_client().get_all(user_id=user_id))
+
+
+def _add_memory_sync(user_id: str, messages: list[MemoryRecord]) -> None:
     _get_client().add(messages, user_id=user_id)
 
 
-async def get_user_profile(user_id: str) -> list[dict]:
+async def get_user_profile(user_id: str) -> list[MemoryRecord]:
     return await asyncio.to_thread(_get_user_profile_sync, user_id)
 
 
-async def add_memory(user_id: str, messages: list[dict]) -> None:
+async def add_memory(user_id: str, messages: list[MemoryRecord]) -> None:
     await asyncio.to_thread(_add_memory_sync, user_id, messages)

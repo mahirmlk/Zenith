@@ -22,7 +22,8 @@ def crawl_paper(url: str) -> str:
     validate_public_url(url)
     app = get_firecrawl_app()
     result = app.scrape_url(url, params={"formats": ["markdown"]})
-    return result.get("markdown", "")
+    markdown = result.get("markdown", "")
+    return markdown if isinstance(markdown, str) else ""
 
 
 async def crawl_paper_cached(paper_id: str, url: str) -> str:
@@ -45,8 +46,8 @@ async def crawl_paper_cached(paper_id: str, url: str) -> str:
             .maybe_single()
             .execute()
         )
-        cached = response.data.get("content") if response.data else None
-        if cached:
+        cached = response.data.get("content") if isinstance(response.data, dict) else None
+        if isinstance(cached, str) and cached:
             return cached
 
         content = await asyncio.to_thread(crawl_paper, url)
