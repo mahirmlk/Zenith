@@ -61,6 +61,7 @@ async def readiness(response: Response) -> dict:
 
     if settings.app_env == "production":
         checks["run_store"] = False
+        checks["graph_checkpointer"] = False
         if checks["supabase"] and checks["redis"]:
             try:
                 from services.run_store import PostgresRunStore, get_run_store
@@ -69,6 +70,14 @@ async def readiness(response: Response) -> dict:
                 checks["run_store"] = isinstance(store, PostgresRunStore)
             except Exception:
                 checks["run_store"] = False
+        try:
+            from agents.orchestrator import checkpointer_ready
+
+            checks["graph_checkpointer"] = await asyncio.wait_for(
+                checkpointer_ready(), timeout=3.0
+            )
+        except Exception:
+            checks["graph_checkpointer"] = False
 
     required = all(checks.values()) if settings.app_env == "production" else checks["supabase"]
     if not required:

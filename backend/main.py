@@ -25,25 +25,44 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     logger.info("Starting Zenith backend")
     from services.run_store import run_store
     import asyncio
+    from agents.orchestrator import start_checkpointer, stop_checkpointer
+
+    app_settings = get_settings()
+    await start_checkpointer(
+        app_settings.database_url,
+        production=app_settings.app_env == "production",
+    )
 
     async def _cleanup_loop() -> None:
         while True:
             await asyncio.sleep(300)  # every 5 minutes
-            await run_store.cleanup()  # type: ignore[no-untyped-call]
+            try:
+                from agents.orchestrator import cleanup_expired_checkpoints
 
-    cleanup_task = asyncio.create_task(_cleanup_loop())
+                await cleanup_expired_checkpoints()
+                await run_store.cleanup()
+            except Exception:
+                logger.exception("Run/checkpoint cleanup failed; retrying next interval")
+
     from services.job_queue import start_worker, stop_worker
     from services.daily_scheduler import start_daily_scheduler, stop_daily_scheduler
 
-    start_worker()
-    start_daily_scheduler()
-    yield
-    # Shutdown
-    cleanup_task.cancel()
-    await asyncio.gather(cleanup_task, return_exceptions=True)
-    await stop_worker()
-    await stop_daily_scheduler()
-    logger.info("Shutting down backend")
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    try:
+        start_worker()
+        start_daily_scheduler()
+        yield
+    finally:
+        cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)
+        try:
+            await stop_worker()
+        finally:
+            try:
+                await stop_daily_scheduler()
+            finally:
+                await stop_checkpointer()
+                logger.info("Shutting down backend")
 
 
 app = FastAPI(

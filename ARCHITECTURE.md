@@ -47,7 +47,7 @@ Zenith is a research paper discovery and organization app. The current UI provid
 └──────────────────────────────────────────────┘
 ```
 
-Production run metadata, results, and ordered events are stored in Supabase Postgres through service-role-only atomic RPCs. Redis carries queued work and short-lived worker leases; the development fallback can use Redis or process memory. The LangGraph graph itself has no checkpointed intermediate state, so a worker restart recovers the queued run but restarts the graph from the beginning.
+Production run metadata, results, ordered events, and LangGraph graph state are stored in Postgres. The run store uses Supabase service-role RPCs; the graph checkpointer uses `AsyncPostgresSaver` with `DATABASE_URL`. Redis carries queued work and short-lived worker leases. Development may omit `DATABASE_URL` and use process memory; production startup fails closed if Postgres graph checkpointing is unavailable. On worker recovery, the graph resumes from its last completed node checkpoint; a failure inside a node may repeat that node's external calls.
 
 ---
 
@@ -409,9 +409,7 @@ Raw paper text (title + abstract)
 
 `services/run_store.py` offers a process-local `RunStore` for development, `RedisRunStore` when Redis is configured outside production, and `PostgresRunStore` in production. Production requires reachable Supabase and Redis and fails closed if the `research_runs` / `run_events` schema or RPCs are missing. Postgres stores canonical run state/events; Redis provides Streams delivery and tokenized leases. Event sequence allocation and status changes are atomic Postgres RPCs; terminal cancellation cannot be overwritten by late completion.
 
-**Durability boundary:** queue delivery is recoverable through Redis pending-entry reclaim, but LangGraph intermediate nodes are not checkpointed. A crashed worker can restart a run from the beginning after its lease expires. Staging must verify recovery, replay, cancellation, and migration/restore behavior before production.
-
-LangGraph checkpoints use Postgres only if `DATABASE_URL` is configured and the checkpointer package is installed; otherwise the graph uses `MemorySaver`. Do not treat that fallback as restart-safe.
+**Durability boundary:** queue delivery is recoverable through Redis pending-entry reclaim, while graph state is checkpointed in Postgres after each node. The worker checks the thread state and resumes pending nodes; a crash during a node can repeat that node, so external calls must remain retry-safe. Production requires `DATABASE_URL` and the `langgraph-checkpoint-postgres` package. App startup runs the checkpointer's additive, idempotent schema setup and fails closed on errors. Checkpoint decoding uses strict msgpack deserialization. Development uses `MemorySaver` only when `DATABASE_URL` is omitted. Staging must verify restart recovery, replay, cancellation, retention, and migration/restore behavior before production.
 
 ---
 
@@ -516,4 +514,4 @@ See `.env.example` for the full list. Key categories:
 - **Scheduler:** `ADMIN_API_KEY` (authenticates `/api/internal/ingest`)
 - **Cost guardrails:** `MAX_SUMMARIES_PER_RUN`
 - **Observability:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `APP_ENV`
-- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL` (run state + global rate limiting)
+- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL` (queue, budgets, and leases); `DATABASE_URL` (required in production for durable graph checkpoints)

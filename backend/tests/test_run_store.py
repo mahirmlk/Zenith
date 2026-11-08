@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 import services.run_store as run_store_module
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -249,6 +249,10 @@ class _FakePostgresQuery:
         self.filters[key] = value
         return self
 
+    def in_(self, key, values):
+        self.filters[f"in:{key}"] = values
+        return self
+
     def order(self, _key):
         return self
 
@@ -265,9 +269,11 @@ class _FakePostgresQuery:
             rows = list(self.database.runs.values())
             if self.is_delete:
                 cutoff = datetime.fromisoformat(self.filters["lt:created_at"])
+                statuses = self.filters.get("in:status", [])
                 stale_ids = [
                     row["id"] for row in rows
                     if datetime.fromisoformat(row["created_at"]) < cutoff
+                    and row.get("status") in statuses
                 ]
                 for run_id in stale_ids:
                     del self.database.runs[run_id]
@@ -350,6 +356,34 @@ async def test_postgres_run_store_preserves_terminal_state_and_ordered_events():
     assert state is not None and state.status == "cancelled" and state.results == []
     assert [event["sequence"] for event in events] == [1, 2]
     assert [event["event"] for event in events] == ["agent_step", "result"]
+
+
+@pytest.mark.asyncio
+async def test_postgres_run_cleanup_retains_active_runs_and_expires_only_terminal_runs():
+    database = _FakePostgres()
+    store = PostgresRunStore(database, redis_url="redis://fake", ttl_seconds=60)
+    now = datetime.now(timezone.utc)
+    database.runs = {
+        "active": {
+            "id": "active",
+            "status": "running",
+            "created_at": (now - timedelta(hours=2)).isoformat(),
+        },
+        "finished": {
+            "id": "finished",
+            "status": "complete",
+            "created_at": (now - timedelta(hours=2)).isoformat(),
+        },
+        "fresh": {
+            "id": "fresh",
+            "status": "failed",
+            "created_at": now.isoformat(),
+        },
+    }
+
+    await store.cleanup()
+
+    assert set(database.runs) == {"active", "fresh"}
 
 
 @pytest.mark.asyncio

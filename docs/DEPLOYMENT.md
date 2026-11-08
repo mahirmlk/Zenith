@@ -196,7 +196,7 @@ fly launch --name ai-paper-agent-backend --region iad
 When prompted:
 - Choose to deploy now? **No** (we need to set secrets first)
 - Choose a Postgres? **No** (we use Supabase)
-- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, scheduler leases, and worker leases. Supabase Postgres stores canonical run records and events; in-memory stores are development-only.
+- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, scheduler leases, and worker leases. Supabase Postgres stores canonical run records/events; `DATABASE_URL` enables durable LangGraph checkpoints. Production startup fails if graph checkpointing is not configured. In-memory stores are development-only.
 
 #### 2. Set Secrets
 
@@ -208,7 +208,8 @@ fly secrets set \
   SUPABASE_SERVICE_ROLE_KEY="eyJ..." \
   SUPABASE_JWT_SECRET="your-jwt-secret" \
   APP_URL="https://your-frontend-domain.vercel.app" \
-  REDIS_URL="redis://your-redis:6379"
+  REDIS_URL="redis://your-redis:6379" \
+  DATABASE_URL="postgresql://zenith_app:***@your-db-host:5432/postgres?sslmode=require"
 
 # Optional
 fly secrets set \
@@ -408,11 +409,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 
 ### Backend Health
 
-`GET /api/health` is a liveness endpoint. `GET /api/ready` performs bounded reachability checks against Supabase and Redis and returns 503 when required dependencies are unavailable.
+`GET /api/health` is a liveness endpoint. `GET /api/ready` performs bounded reachability checks against Supabase, Redis, the canonical Postgres run store, and the live LangGraph checkpoint connection; it returns 503 when any required production dependency is unavailable.
 
 ```bash
 curl https://api.yourdomain.com/api/ready
-# {"status":"ready","checks":{"supabase":true,"redis":true}}
+# {"status":"ready","checks":{"supabase":true,"redis":true,"run_store":true,"graph_checkpointer":true}}
 ```
 
 **Monitoring recommendations:**
@@ -531,7 +532,7 @@ fly scale count 4
 # Ensure REDIS_URL is set for shared queues, limits, budgets, and leases
 ```
 
-Production requires both reachable Supabase Postgres and Redis, even with one backend instance. Postgres is canonical for run metadata, results, and events; Redis Streams carry jobs, while Redis leases coordinate workers and scheduled ingestion. The API fails readiness if required dependencies are unreachable or run-store migration RPCs are missing.
+Production requires reachable Supabase Postgres, direct Postgres `DATABASE_URL`, and Redis, even with one backend instance. Supabase Postgres is canonical for run metadata, results, and events; the direct Postgres connection stores LangGraph checkpoints. Redis Streams carry jobs, while Redis leases coordinate workers and scheduled ingestion. Startup initializes the LangGraph checkpoint schema and fails closed if unavailable. The API fails readiness if required dependencies are unreachable or run-store migration RPCs are missing. The backend enforces `LANGGRAPH_STRICT_MSGPACK=true` before importing LangGraph to restrict checkpoint deserialization.
 
 ### Frontend (Next.js)
 

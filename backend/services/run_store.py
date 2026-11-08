@@ -633,6 +633,7 @@ class PostgresRunStore(RedisRunStore):
         await (
             self._database.table("research_runs")
             .delete()
+            .in_("status", ["complete", "failed", "cancelled"])
             .lt("created_at", cutoff.isoformat())
             .execute()
         )

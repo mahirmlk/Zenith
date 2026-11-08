@@ -39,8 +39,10 @@ dependencies are configured; it does not prove that they are reachable.
 Unauthenticated readiness probe. Performs bounded Supabase and Redis
 reachability checks. Returns `503` and `{"status":"not_ready", "checks": ...}`
 when a required dependency is unavailable. Production requires both Supabase
-and Redis. Development requires Supabase; Redis may be omitted for local
-single-process use.
+and Redis, a working Postgres run store, and a reachable LangGraph checkpoint
+database. Production startup requires `DATABASE_URL` and initializes the
+checkpointer schema. Development requires Supabase; Redis and `DATABASE_URL`
+may be omitted for local single-process use.
 
 ### `GET /api/models`
 

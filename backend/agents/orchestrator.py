@@ -1,4 +1,11 @@
+import os
+
+# LangGraph reads this option when its serializer module is imported. Keep
+# persisted checkpoint deserialization restricted to safe types in every env.
+os.environ["LANGGRAPH_STRICT_MSGPACK"] = "true"
+
 from datetime import datetime, timezone
+from datetime import timedelta
 from typing import Callable, Awaitable, Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.constants import START
@@ -85,32 +92,165 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
 
 _orchestrator_graph = None
 _checkpointer = None
+_checkpointer_context = None
+_durable_checkpointer = False
 
 
-def _get_checkpointer():
-    """LangGraph checkpointer (update.md §7.1).
+async def start_checkpointer(
+    database_url: str = "",
+    *,
+    production: bool = False,
+    saver_context_factory=None,
+) -> None:
+    """Open and initialize graph checkpoint storage during app startup.
 
-    PostgresSaver when `DATABASE_URL` is set AND the
-    `langgraph-checkpoint-postgres` package is installed; otherwise
-    MemorySaver (dev). thread_id=run_id at call sites either way.
+    Production requires Postgres. MemorySaver is only a local development
+    fallback. The Postgres context stays open for the app lifetime and is
+    closed by ``stop_checkpointer``.
     """
-    global _checkpointer
-    if _checkpointer is None:
-        import os
-
-        database_url = os.environ.get("DATABASE_URL", "")
-        if database_url:
-            try:
-                from langgraph.checkpoint.postgres import PostgresSaver
-
-                _checkpointer = PostgresSaver.from_conn_string(database_url)
-                return _checkpointer
-            except ImportError:
-                pass  # package not installed: fall back to MemorySaver
+    global _checkpointer, _checkpointer_context, _durable_checkpointer, _orchestrator_graph
+    if _checkpointer is not None:
+        if production and not _durable_checkpointer:
+            raise RuntimeError("Production LangGraph checkpointing is not durable")
+        return
+    if not database_url:
+        if production:
+            raise RuntimeError("DATABASE_URL is required for production LangGraph checkpointing")
         from langgraph.checkpoint.memory import MemorySaver
 
         _checkpointer = MemorySaver()
+        _durable_checkpointer = False
+        _orchestrator_graph = None
+        return
+
+    if saver_context_factory is None:
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        except ImportError as exc:
+            raise RuntimeError(
+                "langgraph-checkpoint-postgres is required when DATABASE_URL is configured"
+            ) from exc
+        saver_context_factory = AsyncPostgresSaver.from_conn_string
+
+    context = saver_context_factory(database_url)
+    saver = await context.__aenter__()
+    try:
+        await saver.setup()
+    except BaseException as exc:
+        await context.__aexit__(type(exc), exc, exc.__traceback__)
+        raise RuntimeError("Could not initialize the LangGraph Postgres checkpoint schema") from exc
+
+    _checkpointer_context = context
+    _checkpointer = saver
+    _durable_checkpointer = True
+    _orchestrator_graph = None
+
+
+async def stop_checkpointer() -> None:
+    """Close the app-scoped Postgres connection and clear the compiled graph."""
+    global _checkpointer, _checkpointer_context, _durable_checkpointer, _orchestrator_graph
+    context = _checkpointer_context
+    _checkpointer_context = None
+    _checkpointer = None
+    _durable_checkpointer = False
+    _orchestrator_graph = None
+    if context is not None:
+        await context.__aexit__(None, None, None)
+
+
+def _get_checkpointer():
+    global _checkpointer, _durable_checkpointer
+    from config import get_settings
+
+    if get_settings().app_env == "production" and not _durable_checkpointer:
+        raise RuntimeError("Production LangGraph checkpointing was not initialized")
+    if _checkpointer is None:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        _checkpointer = MemorySaver()
+        _durable_checkpointer = False
     return _checkpointer
+
+
+def has_durable_checkpointer() -> bool:
+    return _durable_checkpointer
+
+
+async def checkpointer_ready() -> bool:
+    """Return whether the initialized Postgres saver can reach its database."""
+    if not _durable_checkpointer or _checkpointer is None:
+        return False
+    try:
+        await _checkpointer.aget_tuple(
+            {"configurable": {"thread_id": "__zenith_readiness_probe__"}}
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def cleanup_expired_checkpoints(batch_size: int = 200) -> int:
+    """Delete checkpoints for terminal runs after the run-store retention TTL."""
+    if not _durable_checkpointer or _checkpointer is None:
+        return 0
+    from services.run_store import PostgresRunStore, get_run_store
+
+    store = await get_run_store()
+    if not isinstance(store, PostgresRunStore):
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=store._ttl)
+    deleted = 0
+    offset = 0
+    while True:
+        response = await (
+            store._database.table("research_runs")
+            .select("id")
+            .in_("status", ["complete", "failed", "cancelled"])
+            .lt("created_at", cutoff.isoformat())
+            .order("created_at")
+            .range(offset, offset + batch_size - 1)
+            .execute()
+        )
+        rows = response.data or []
+        for row in rows:
+            await _checkpointer.adelete_thread(str(row["id"]))
+            deleted += 1
+        if len(rows) < batch_size:
+            break
+        offset += len(rows)
+    return deleted
+
+
+async def _invoke_or_resume(graph, initial_state: OrchestratorState, config: dict):
+    """Resume an interrupted run from its latest checkpoint when available.
+
+    LangGraph checkpoints at node boundaries. Passing ``None`` resumes pending
+    work; a completed checkpoint is returned directly so a worker crash between
+    graph completion and run-store finalization does not run the graph twice.
+    """
+    get_state = getattr(graph, "aget_state", None)
+    if not callable(get_state):
+        return await graph.ainvoke(initial_state, config=config)
+
+    snapshot = await get_state(config)
+    snapshot_config = getattr(snapshot, "config", None) or {}
+    configurable = snapshot_config.get("configurable", {})
+    checkpoint_id = configurable.get("checkpoint_id")
+    if not checkpoint_id:
+        return await graph.ainvoke(initial_state, config=config)
+
+    values = getattr(snapshot, "values", None)
+    if not isinstance(values, dict):
+        raise RuntimeError("Existing LangGraph checkpoint has no valid state")
+    for key in ("run_id", "user_id", "query", "model"):
+        if values.get(key) != initial_state.get(key):
+            raise RuntimeError("LangGraph checkpoint does not match the requested run")
+
+    next_nodes = getattr(snapshot, "next", ())
+    if next_nodes:
+        return await graph.ainvoke(None, config=config)
+    return values
 
 
 def _get_graph():
@@ -154,10 +294,11 @@ async def run_orchestrator(
     }
 
     try:
-        final_state = await _get_graph().ainvoke(
-            initial_state,
-            config={**get_langfuse_config(), "configurable": {"thread_id": run_id}},
-        )
+        graph_config = {
+            **get_langfuse_config(),
+            "configurable": {"thread_id": run_id},
+        }
+        final_state = await _invoke_or_resume(_get_graph(), initial_state, graph_config)
     except Exception:
         await callback(AgentStep(agent="orchestrator", status="error", message="Step failed"))
         raise

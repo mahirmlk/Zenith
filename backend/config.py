@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""
+    database_url: str = ""
 
     app_url: str = "http://localhost:3000"
     next_public_api_url: str = "http://localhost:8000"
