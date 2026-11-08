@@ -5,7 +5,7 @@ otherwise the public corpus. Caller-supplied project access is always
 verified server-side against the DB, never trusted from the body.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -26,7 +26,12 @@ class HybridSearchRequest(BaseModel):
 
 
 @router.post("/search")
-async def hybrid_search(body: HybridSearchRequest, request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def hybrid_search(
+    body: HybridSearchRequest,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
     try:
         if body.project_id:
             proj = await (

@@ -6,6 +6,7 @@ from a retrieved abstract and carries that paper's ID citation.
 """
 import logging
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -27,11 +28,30 @@ class ResearchRequest(BaseModel):
 
 
 @router.post("/plan")
-async def research_plan(body: ResearchRequest, request: Request, user: dict = Depends(get_current_user)):
+async def research_plan(
+    body: ResearchRequest,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> Any:
     return classify_task(body.query)
 
 
-async def _papers_for_request(body: ResearchRequest, user: dict, supabase) -> list[dict]:
+def _paper_rows(data: object) -> list[dict[str, Any]]:
+    """Narrow the untyped PostgREST response to usable object rows."""
+    if not isinstance(data, list):
+        return []
+    return [
+        {key: value for key, value in row.items()}
+        for row in data
+        if isinstance(row, dict) and all(isinstance(key, str) for key in row)
+    ]
+
+
+async def _papers_for_request(
+    body: ResearchRequest,
+    user: dict[str, Any],
+    supabase: Any,
+) -> list[dict[str, Any]]:
     """Load a bounded public corpus or only papers attached to an accessible project."""
     query = supabase.table("papers").select("*")
     if body.project_id:
@@ -74,15 +94,19 @@ async def _papers_for_request(body: ResearchRequest, user: dict, supabase) -> li
         if not paper_ids:
             return []
         papers_result = await query.in_("id", paper_ids).execute()
-        return papers_result.data or []
+        return _paper_rows(papers_result.data)
 
     papers_result = await (
         query.order("published_at", desc=True).range(0, 49).execute()
     )
-    return papers_result.data or []
+    return _paper_rows(papers_result.data)
 
 
-def _extractive_claims(query: str, ranked_papers: list[dict], limit: int = 3) -> list[str]:
+def _extractive_claims(
+    query: str,
+    ranked_papers: list[dict[str, Any]],
+    limit: int = 3,
+) -> list[str]:
     """Pick exact abstract sentences with at least one substantive query term."""
     terms = query_terms(query)
     if not terms:
@@ -127,9 +151,9 @@ def _extractive_claims(query: str, ranked_papers: list[dict], limit: int = 3) ->
 async def research_compare(
     body: ResearchRequest,
     request: Request,
-    user: dict = Depends(get_current_user),
-    supabase=Depends(get_supabase),
-):
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
     try:
         papers = await _papers_for_request(body, user, supabase)
         ranked = hybrid_rank(body.query, papers)[:10]
@@ -145,8 +169,8 @@ async def research_compare(
 async def research_answer(
     body: ResearchRequest,
     request: Request,
-    user: dict = Depends(get_current_user),
-    supabase=Depends(get_supabase),
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
 ) -> ResearchAnswer:
     """Return only extractive, cited evidence; abstain when support is absent."""
     try:
