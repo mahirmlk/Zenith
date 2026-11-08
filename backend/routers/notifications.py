@@ -1,5 +1,6 @@
 """In-app notifications (update.md §12). No email/SMS channels."""
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -18,7 +19,10 @@ class NotifyRequest(BaseModel):
 
 
 @router.get("")
-async def list_notifications(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def list_notifications(
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     try:
         resp = await supabase.table("notifications").select("*").eq("user_id", user["user_id"]).order("created_at", desc=True).range(0, 49).execute()
         return resp.data or []
@@ -28,7 +32,10 @@ async def list_notifications(user: dict = Depends(get_current_user), supabase=De
 
 
 @router.post("/read")
-async def mark_read(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def mark_read(
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
     """Mark all notifications read (idempotent)."""
     from datetime import datetime, timezone
 

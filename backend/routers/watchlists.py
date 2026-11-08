@@ -4,7 +4,7 @@ In-app alerts only (no email until consent/unsubscribe infra exists).
 Cadence daily|weekly; dedupe by (watch_id, paper_id) via seen set.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -28,7 +28,11 @@ class WatchUpdate(BaseModel):
 
 
 @router.post("")
-async def create_watch(body: WatchCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def create_watch(
+    body: WatchCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     if body.project_id:
         # H5: project must be owned by (or shared with) the caller.
         proj = await supabase.table("projects").select("owner_id").eq("id", body.project_id).maybe_single().execute()
@@ -48,7 +52,10 @@ async def create_watch(body: WatchCreate, user: dict = Depends(get_current_user)
 
 
 @router.get("")
-async def list_watches(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def list_watches(
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     try:
         resp = await supabase.table("watchlists").select("*").eq("user_id", user["user_id"]).execute()
         return resp.data or []
@@ -58,7 +65,12 @@ async def list_watches(user: dict = Depends(get_current_user), supabase=Depends(
 
 
 @router.patch("/{watch_id}")
-async def update_watch(watch_id: str, body: WatchUpdate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def update_watch(
+    watch_id: str,
+    body: WatchUpdate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
         resp = await supabase.table("watchlists").update(patch).eq("id", watch_id).eq("user_id", user["user_id"]).execute()
@@ -73,7 +85,11 @@ async def update_watch(watch_id: str, body: WatchUpdate, user: dict = Depends(ge
 
 
 @router.delete("/{watch_id}")
-async def delete_watch(watch_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def delete_watch(
+    watch_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
     try:
         await supabase.table("watchlists").delete().eq("id", watch_id).eq("user_id", user["user_id"]).execute()
         return {"status": "ok"}

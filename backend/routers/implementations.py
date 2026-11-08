@@ -1,5 +1,6 @@
 """Paper-to-code endpoints (update.md §11, §15): plan + export only."""
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -15,7 +16,12 @@ router = APIRouter(prefix="/api/implementations", tags=["implementations"])
 
 
 @router.get("/{paper_id}/plan")
-async def implementation_plan(paper_id: str, request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def implementation_plan(
+    paper_id: str,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     try:
         resp = await supabase.table("papers").select("*").eq("id", paper_id).single().execute()
         if not resp.data:
@@ -30,7 +36,12 @@ async def implementation_plan(paper_id: str, request: Request, user: dict = Depe
 
 
 @router.get("/{paper_id}/export")
-async def implementation_export(paper_id: str, request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def implementation_export(
+    paper_id: str,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> PlainTextResponse:
     """Export the plan as Markdown (no code execution)."""
     plan = await implementation_plan(paper_id, request, user, supabase)
     lines = [
@@ -50,6 +61,10 @@ async def implementation_export(paper_id: str, request: Request, user: dict = De
 
 
 @router.post("/{paper_id}/run")
-async def implementation_run(paper_id: str, request: Request, user: dict = Depends(get_current_user)):
+async def implementation_run(
+    paper_id: str,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, str]:
     """Always refuses until a reviewed sandbox exists (update.md §11)."""
     return run_in_sandbox(paper_id=paper_id)

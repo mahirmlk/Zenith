@@ -4,7 +4,7 @@ Supabase-backed; every operation enforces owner/member authorization
 server-side (RLS in migration 0001 is defence-in-depth, not the only check).
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -32,24 +32,33 @@ class NoteCreate(BaseModel):
     source_id: Optional[str] = None
 
 
-async def _owned_project(supabase, project_id: str, user_id: str) -> dict:
+async def _owned_project(
+    supabase: Any,
+    project_id: str,
+    user_id: str,
+) -> dict[str, Any]:
     """Owner OR member access (H2 fix: members were locked out)."""
     from security.authorization import can_access_project
 
     resp = await supabase.table("projects").select("*").eq("id", project_id).maybe_single().execute()
-    if not resp.data:
+    project = resp.data
+    if not isinstance(project, dict):
         raise HTTPException(status_code=404, detail="Project not found")
-    if resp.data.get("owner_id") == user_id:
-        return resp.data
+    if project.get("owner_id") == user_id:
+        return project
     members = await supabase.table("project_members").select("user_id,role").eq("project_id", project_id).execute()
     member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
-    if not can_access_project(resp.data["owner_id"], member_roles, user_id):
+    if not can_access_project(project["owner_id"], member_roles, user_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    return resp.data
+    return project
 
 
 @router.post("")
-async def create_project(body: ProjectCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def create_project(
+    body: ProjectCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     try:
         resp = await supabase.table("projects").insert({
             "owner_id": user["user_id"], "title": body.title, "description": body.description,
@@ -61,7 +70,10 @@ async def create_project(body: ProjectCreate, user: dict = Depends(get_current_u
 
 
 @router.get("")
-async def list_projects(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def list_projects(
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     try:
         user_id = user["user_id"]
         memberships = await (
@@ -80,7 +92,7 @@ async def list_projects(user: dict = Depends(get_current_user), supabase=Depends
             .is_("deleted_at", "null")
             .execute()
         )
-        shared = []
+        shared: list[dict[str, Any]] = []
         if project_ids:
             shared_response = await (
                 supabase.table("projects")
@@ -98,12 +110,21 @@ async def list_projects(user: dict = Depends(get_current_user), supabase=Depends
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def get_project(
+    project_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
     return await _owned_project(supabase, project_id, user["user_id"])
 
 
 @router.patch("/{project_id}")
-async def update_project(project_id: str, body: ProjectUpdate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def update_project(
+    project_id: str,
+    body: ProjectUpdate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     project = await _owned_project(supabase, project_id, user["user_id"])
     members = await (
         supabase.table("project_members")
@@ -125,7 +146,11 @@ async def update_project(project_id: str, body: ProjectUpdate, user: dict = Depe
 
 
 @router.delete("/{project_id}")
-async def delete_project(project_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def delete_project(
+    project_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
     """Soft delete (deleted_at) — reversible, never hard-deletes user data."""
     project = await _owned_project(supabase, project_id, user["user_id"])
     if project["owner_id"] != user["user_id"]:
@@ -147,7 +172,12 @@ class MemberInvite(BaseModel):
 
 
 @router.post("/{project_id}/members")
-async def add_member(project_id: str, body: MemberInvite, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def add_member(
+    project_id: str,
+    body: MemberInvite,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     """Invite a member (owner-only). Role changes are audited."""
     project = await _owned_project(supabase, project_id, user["user_id"])
     if project["owner_id"] != user["user_id"]:
@@ -167,7 +197,12 @@ async def add_member(project_id: str, body: MemberInvite, user: dict = Depends(g
 
 
 @router.post("/{project_id}/notes")
-async def create_note(project_id: str, body: NoteCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def create_note(
+    project_id: str,
+    body: NoteCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     project = await _owned_project(supabase, project_id, user["user_id"])
     members = await (
         supabase.table("project_members")
@@ -195,7 +230,11 @@ async def create_note(project_id: str, body: NoteCreate, user: dict = Depends(ge
 
 
 @router.get("/{project_id}/notes")
-async def list_notes(project_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def list_notes(
+    project_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
     await _owned_project(supabase, project_id, user["user_id"])
     try:
         resp = await supabase.table("notes").select("*").eq("project_id", project_id).execute()

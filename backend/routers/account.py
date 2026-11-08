@@ -5,6 +5,7 @@ rows in Postgres (storage/Redis/Mem0 cleanup is best-effort here and
 documented in docs/security/DATA_HANDLING.md).
 """
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -16,7 +17,11 @@ router = APIRouter(prefix="/api/account", tags=["account"])
 
 
 @router.get("/export")
-async def export_account(request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def export_account(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
     uid = user["user_id"]
     try:
         saved = await supabase.table("user_papers").select("*").eq("user_id", uid).execute()
@@ -25,7 +30,7 @@ async def export_account(request: Request, user: dict = Depends(get_current_user
         watches = await supabase.table("watchlists").select("*").eq("user_id", uid).execute()
         notifications = await supabase.table("notifications").select("*").eq("user_id", uid).execute()
         project_ids = [p["id"] for p in (projects.data or [])]
-        notes = []
+        notes: list[dict[str, Any]] = []
         if project_ids:
             notes_resp = await supabase.table("notes").select("*").in_("project_id", project_ids).execute()
             notes = notes_resp.data or []
@@ -44,7 +49,11 @@ async def export_account(request: Request, user: dict = Depends(get_current_user
 
 
 @router.delete("")
-async def delete_account(request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def delete_account(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
     uid = user["user_id"]
     try:
         for table, col in (
