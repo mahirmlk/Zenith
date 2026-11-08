@@ -1,14 +1,14 @@
-# AI Paper Research Agent — Architecture
+# Zenith — Current Runtime Architecture
 
-> Four-layer architecture: Next.js frontend → FastAPI backend → LangGraph orchestration → External services
+> Reviewed against the checked-in code on 2026-11-08. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
 
 ---
 
 ## 1. System Context
 
-The AI Paper Research Agent continuously discovers, ingests, summarises, and personalises academic papers from ArXiv and HuggingFace Daily Papers. Users interact via a rich Next.js UI featuring a paper feed and a 3-D citation graph. A LangGraph multi-agent system orchestrates three specialised agents, uses Firecrawl to pull full paper text, stores user memory in Mem0/Supabase, and routes LLM calls through OpenRouter.
+Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings, citation graph, basic projects, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search requests enter a Redis Streams worker queue when Redis is configured; the worker runs the LangGraph Research → Summary → Memory pipeline. The pipeline uses ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive research answers and comparisons.
 
-**Core value proposition:** Zero effort from "paper exists" to "here's why it matters to you."
+**Current limitation:** research answers are exact abstract sentences selected by keyword overlap; they are not a synthesized scientific conclusion. See `docs/STATUS.md` for release blockers.
 
 ---
 
@@ -22,12 +22,17 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
                   │ HTTP / SSE
 ┌─────────────────▼────────────────────────────┐
 │          FastAPI Backend                      │
-│  API gateway · SSE streaming · Auth (JWT)     │
-│  Rate limiting · Response timing              │
+│  API · JWT authz · Redis rate limits          │
+│  Readiness · replay-only SSE · lifecycle       │
 └─────────────────┬────────────────────────────┘
                   │
 ┌─────────────────▼────────────────────────────┐
-│        LangGraph Orchestration Layer          │
+│       Redis queue + run/event state            │
+│    Streams consumer group · reclaim/leases    │
+└─────────────────┬────────────────────────────┘
+                  │
+┌─────────────────▼────────────────────────────┐
+│        LangGraph worker pipeline              │
 │  ┌────────────┐  ┌────────────┐  ┌─────────┐ │
 │  │ Research   │  │ Summary    │  │ Memory  │ │
 │  │ Agent      │  │ Agent      │  │ Agent   │ │
@@ -37,10 +42,12 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
          │               │              │
 ┌────────▼───────────────▼──────────────▼──────┐
 │             External Services                 │
-│  Firecrawl │ ArXiv+HF │ OpenRouter │ S2+PWC   │
-│  Mem0+Supabase │ Redis (run state)            │
+│  ArXiv+HF │ LLM providers │ S2+PWC │ Firecrawl│
+│  Supabase │ optional Mem0 │ Redis             │
 └──────────────────────────────────────────────┘
 ```
+
+Run metadata/events are not yet stored in the `research_runs` / `run_events` Postgres tables; Redis is the current multi-instance runtime store. The LangGraph checkpointer is Postgres only when configured and installed, otherwise it falls back to in-memory. These are tracked release gaps, not durable-storage guarantees.
 
 ---
 
@@ -62,30 +69,22 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
 - `/feed` — Personalised paper feed with search, SSE progress, model selector, save/dismiss
 - `/graph` — 3-D citation network (force-directed graph)
 - `/paper/[id]` — Paper detail with AI summary, contributions, difficulty, code repos
-- `/login` · `/signup` — Supabase Auth UI
+- `/login` — Supabase Auth UI
+- `/projects` — Basic project list/create UI
 - `/settings` — User preferences (model selection, research interests)
 
 **Key Components:**
-- `PaperCard` — Title, authors, AI TL;DR, relevance score, save/dismiss/share actions
+- `PaperCard` — Title, authors, AI TL;DR, relevance score, save/dismiss actions
 - `CitationGraph` — Force-directed Three.js graph; nodes=papers, edges=citations; click to navigate
-- `StreamingResponse` — SSE consumer for live agent progress (research → summary → memory)
-- `ModelSelector` — Dropdown for 9 LLM models (Claude, GPT-4o, Gemini, Mistral, Llama, DeepSeek, etc.)
+- `StreamingResponse` — SSE consumer with replay event deduplication and cancel control
+- `ModelSelector` — Model list loaded from `/api/models`
 - `SkeletonCard` — Loading placeholder with shimmer animation
 - `Navbar` / `Footer` — Shared layout components
 - `EmptyState` — Empty state placeholder for no-results states
 - `ErrorBoundary` — React error boundary for graceful failure handling
 - `QueryProvider` — TanStack Query provider wrapping the app
 
-**Supported LLM Models (ModelSelector):**
-- `anthropic/claude-opus-4`
-- `anthropic/claude-sonnet-4-5`
-- `openai/gpt-4o`
-- `openai/gpt-4o-mini`
-- `google/gemini-2.5-pro`
-- `google/gemini-2.0-flash`
-- `mistralai/mistral-large`
-- `meta-llama/llama-3.3-70b-instruct`
-- `deepseek/deepseek-r1`
+The supported model IDs are served by the backend registry; inspect `backend/services/llm_router.py` and `GET /api/models` for the current list.
 
 ---
 
@@ -97,29 +96,40 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
 | Runtime | Python 3.12, Uvicorn |
 | Streaming | Server-Sent Events (sse-starlette) |
 | Auth | Supabase JWT validation (ES256 JWKS, HS256 legacy fallback) |
-| Rate Limiting | slowapi, Redis-backed (per-endpoint limits) |
-| CORS | `allow_origins=["http://localhost:3000"]` |
+| Rate Limiting | slowapi with Redis storage; production requires Redis and disables in-memory fallback |
+| CORS | Explicit configured origins, methods, and headers |
 | Logging | Structured logging with timestamps and module names |
 | Observability | Langfuse tracing (LangGraph) + Sentry error tracking |
 
-**Registered Routers (8 total):**
+**Current route groups (see FastAPI OpenAPI for full request schemas):**
 ```
-GET    /api/health                         # Health check (health.router)
-POST   /api/auth/token                     # Validate Supabase JWT (auth.router)
-GET    /api/papers                         # List papers with optional ?q= filter (papers.router)
-GET    /api/papers/{paper_id}              # Single paper detail (papers.router)
-POST   /api/papers/{paper_id}/save         # Save/dismiss paper + Mem0 memory (papers.router)
-DELETE /api/papers/{paper_id}/save         # Unsave paper (papers.router)
-POST   /api/search                         # Trigger research pipeline (search.router)
-GET    /api/stream/{run_id}                # SSE stream of agent progress (stream.router)
-GET    /api/graph/{paper_id}               # Citation graph data (S2, cached in Supabase) (graph.router)
-GET    /api/prefs                          # Get user preferences (prefs.router)
-POST   /api/prefs                          # Update user preferences (prefs.router)
-GET    /api/papers/{paper_id}/code         # Papers With Code repos (pwc.router)
-POST   /api/internal/ingest                # Trigger daily ingestion (internal.router, admin key)
+GET    /api/health                         # Liveness
+GET    /api/ready                          # Dependency reachability (Supabase + Redis)
+POST   /api/auth/token                     # Validate Supabase JWT
+GET    /api/papers, /api/papers/saved      # Feed and saved papers
+GET    /api/papers/{id}, /api/papers/{id}/code
+POST   /api/papers/{id}/save                # Save/dismiss
+DELETE /api/papers/{id}/save
+POST   /api/search                          # Authenticated, idempotent run creation
+POST   /api/stream/session                  # Exchange bearer JWT for short-lived SSE token
+GET    /api/stream/{run_id}?token=...       # Read-only SSE replay/subscription
+GET    /api/runs/{id}, /events              # Status and replayable events
+POST   /api/runs/{id}/cancel
+POST   /api/retrieval/search                # Hybrid search; optional project scope
+POST   /api/research/plan|compare|answer    # Plan, comparison, extractive answer
+GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, notes
+GET/POST/PATCH/DELETE /api/watchlists/...   # Watchlists
+GET    /api/notifications                   # In-app notifications
+POST   /api/notifications/read
+GET    /api/models                          # Supported model registry
+GET    /api/graph/{paper_id}                # Authenticated citation graph
+GET    /api/implementations/{paper_id}/plan|export
+POST   /api/implementations/{paper_id}/run # Currently returns not-attempted
+GET    /api/account/export; DELETE /api/account
+POST   /api/internal/ingest                 # Admin-key protected ingestion trigger
 ```
 
-**Rate Limits** (enforced by slowapi, backed by Redis when `REDIS_URL` is set so limits are global across instances):
+**Rate Limits** (slowapi global limits use Redis in production; `/api/search` also has a per-user daily budget):
 | Endpoint | Limit |
 |----------|-------|
 | `/api/search` | 10 req / minute |
@@ -128,8 +138,8 @@ POST   /api/internal/ingest                # Trigger daily ingestion (internal.r
 | All other endpoints | 60 req / minute (default) |
 
 **Middleware Stack:**
-1. `CORSMiddleware` — Allows frontend origin
-2. `SlowAPIMiddleware` — Rate limiting via slowapi (Redis-backed when `REDIS_URL` set)
+1. `CORSMiddleware` — Allows configured frontend origins and explicit methods/headers
+2. `SlowAPIMiddleware` — Rate limiting via slowapi (Redis required in production)
 3. `TimingMiddleware` — Adds `X-Response-Time` header
 4. Auth middleware — Decodes and validates Supabase JWT (ES256 via JWKS, HS256 legacy fallback), attaches `request.state.user`
 5. Rate limit exception handler — Returns 429 JSON response
@@ -137,7 +147,9 @@ POST   /api/internal/ingest                # Trigger daily ingestion (internal.r
 **SSE Events:**
 - `agent_step` — Live progress from each agent (research, summary, memory, orchestrator)
 - `result` — Final ranked paper list with `PaperSearchResult` schema
-- `error` — Pipeline failure or 30-second inactivity timeout
+- `error` — Pipeline failure
+- `cancelled` — Run was cancelled; late provider results are suppressed
+- Every stored event has a monotonically increasing per-run sequence used for replay deduplication.
 
 ---
 
@@ -188,7 +200,7 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
 | **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries), edges cached in Supabase |
 | **Papers With Code** | GitHub repos for papers | PWC REST API (`httpx`) | No | No (silent degradation) |
-| **Redis** | Agent run state + global rate limiting | `redis.asyncio` (optional) | No (optional `REDIS_URL`) | No |
+| **Redis** | Run records/events, Streams queue and global rate limits | `redis.asyncio` (required for production) | `REDIS_URL` | Streams pending-entry reclaim; connection readiness check |
 
 Retry is kept separate from the provider fallback chain: `async_retry` handles
 same-provider transient failures (connect/read timeouts, 5xx, rate limits on
@@ -203,17 +215,15 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 
 ### Paper Ingestion Flow
 ```
-1. Daily scheduler triggers the pipeline:
-   - Fly.io scheduled machine running `python -m scripts.daily_fetch`
-     (see backend/fly.toml) — the primary scheduler, or
-   - a manual GitHub Actions dispatch (.github/workflows/daily_fetch.yml)
-     calling POST /api/internal/ingest with the X-Admin-Key header
-     (the cron schedule is disabled to control Actions costs).
+1. An operator or externally configured scheduler triggers `python -m scripts.daily_fetch`
+   or POST `/api/internal/ingest` with `X-Admin-Key`. The GitHub Actions workflow
+   is manual-only; Fly defines a cron process group but a scheduled machine must
+   be configured outside this repository.
 2. Research fetches ArXiv + HF APIs (with async retry)
 3. New papers are deduplicated by paper ID (cross-source)
 4. Summary Agent generates TL;DR, key contributions, and difficulty via LLM
    (capped at MAX_SUMMARIES_PER_RUN per run)
-5. Embedding pipeline chunks abstract and stores vector in Supabase (text-embedding-3-small, 1536-dim)
+5. Embedding pipeline stores vectors in Supabase (text-embedding-3-small, 1536-dim)
 6. Memory Agent scores papers against user profile (embedding similarity or keyword fallback)
 7. Orchestrator merges and ranks; results stream to frontend via SSE
 ```
@@ -224,29 +234,32 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 2. Frontend requests GET /api/papers (JWT attached via Authorization header)
 3. Backend fetches ranked papers from Supabase user_papers + Mem0 profile
 4. User enters a search query and clicks "Search"
-5. Frontend POSTs to /api/search, receives run_id
-6. Frontend opens EventSource to GET /api/stream/{run_id}
-7. Orchestrator runs Research → Summary → Memory pipeline
-8. Live steps stream to frontend; StreamingResponse component renders progress
-9. Final result renders as PaperCards in the feed
+5. Frontend POSTs to `/api/search` with bearer JWT and optional `Idempotency-Key`;
+   backend writes run state and enqueues work
+6. A worker consumes the Redis Stream entry under a consumer group and lease
+7. Frontend exchanges its JWT at `/api/stream/session` and subscribes to
+   `/api/stream/{run_id}?token=...`; SSE only replays/subscribes and never starts work
+8. Frontend deduplicates replayed event IDs, can cancel via `/api/runs/{id}/cancel`,
+   and renders the final result
 ```
 
 ### Agent Pipeline Flow (with retry)
 ```
-POST /api/search
-  ├─► Creates RunState in RunStore (Redis or in-memory)
-  ├─► Returns run_id to frontend
-  │
-GET /api/stream/{run_id}
-  ├─► Validates run_id in RunStore
-  ├─► Opens SSE connection
-  ├─► Launches orchestrator_graph.ainvoke()
-  │     ├─► research_node → ArXiv (retry 3x) + HF (retry 3x) → deduplicate
-  │     ├─► summary_node  → LLM (retry 3x per paper, async_retry with exp backoff)
-  │     └─► memory_node   → Mem0 profile → embedding similarity → rank
-  ├─► Streams all steps via callback
-  ├─► Emits result event with PaperSearchResult
-  └─► Updates RunStore status to "complete"
+POST /api/search (JWT, optional Idempotency-Key)
+  ├─► Creates run record in RedisRunStore (local RunStore in development only)
+  ├─► Appends run_id to Redis Stream and returns run_id
+  ├─► Worker consumer-group claims entry; per-run lease prevents double execution
+  ├─► research_node → ArXiv + HF → deduplicate
+  ├─► summary_node  → LLM through llm_router (bounded fan-out)
+  ├─► memory_node   → Mem0 profile/ranking
+  ├─► Persists sequenced events to the run store for replay
+  └─► Acknowledges job after terminal completion; idle pending jobs can be reclaimed
+
+GET /api/stream/session (JWT exchange) → short-lived stateless signed token
+GET /api/stream/{run_id}?token=...
+  ├─► Verifies token and run ownership
+  ├─► Replays stored events, then subscribes to new events (read-only)
+  └─► Cancellation suppresses late result publication
 ```
 
 ---
@@ -395,21 +408,11 @@ Raw paper text (title + abstract)
 
 ## 8. Run State Management
 
-Agent run states are managed by `services/run_store.py`, which provides two implementations:
+`services/run_store.py` offers a process-local `RunStore` for development and `RedisRunStore` when `REDIS_URL` is configured. Production must configure and reach Redis; production Redis connection failures fail closed. Redis stores run state/events with TTL, while `services/job_queue.py` uses a Redis Streams consumer group, pending-entry reclaim, and tokenized worker leases. Event appends and status changes use Redis transactions; terminal cancellation cannot be overwritten by late completion.
 
-### In-Memory Store (`RunStore`)
-- Used when `REDIS_URL` is not set
-- Python dict with asyncio locks for thread safety
-- Entries expire after 3600 seconds (1 hour TTL)
-- States are lost on backend restart
+**Durability boundary:** the SQL migrations create `research_runs` and `run_events`, but runtime run execution does not currently use those tables. Redis is the canonical live run store at present. Redis persistence policy, failover, and restore must be operated and tested; Postgres-canonical metadata and events remain incomplete.
 
-### Redis Store (`RedisRunStore`)
-- Used when `REDIS_URL` is configured
-- Persists run state in Redis with automatic key expiry
-- **Required for multi-instance deployments** (otherwise SSE streams may fail)
-- Falls back to in-memory store silently if Redis is unreachable
-
-The `run_store` module exports a `RunStore` instance and a `RedisRunStore` instance. At startup, the backend tries Redis first, falling back to in-memory with a warning log.
+LangGraph checkpoints use Postgres only if `DATABASE_URL` is configured and the checkpointer package is installed; otherwise the graph uses `MemorySaver`. Do not treat that fallback as restart-safe.
 
 ---
 
@@ -458,127 +461,32 @@ provider's transient failure, fallback handles provider unavailability.
 - `GET /api/health`: exempt
 - Default: 60 req/min for all other endpoints
 - slowapi's limiter is backed by Redis (`storage_uri` = `REDIS_URL`) so limits
-  are **global** across multiple backend instances; it falls back to in-memory
-  when Redis is unavailable or unconfigured
+  are global across backend instances. Production requires Redis and disables
+  in-memory fallback; development may use memory.
 
 **CORS:**
-- Allowed origins: `http://localhost:3000` (configurable per deployment)
-- Credentials enabled
-- All methods and headers allowed
+- Allowed origins come from `APP_URL` (comma-separated for multiple origins).
+- Credentials enabled; methods and headers use explicit allowlists in `main.py`.
 
 ---
 
 ## 11. Folder Structure
 
 ```
-ai-paper-research-agent/
-├── frontend/                        # Next.js 15 application
-│   ├── app/                         # App Router pages
-│   │   ├── (auth)/                  # Login / signup pages
-│   │   ├── feed/                    # Paper feed page (+ loading.tsx)
-│   │   ├── graph/                   # 3-D citation graph (+ layout.tsx)
-│   │   ├── paper/[id]/             # Single paper detail (+ loading.tsx)
-│   │   ├── settings/               # User preferences (+ loading.tsx)
-│   │   ├── api/                     # API routes (if any)
-│   │   ├── page.tsx                 # Landing page
-│   │   ├── layout.tsx               # Root layout
-│   │   └── globals.css              # Global styles
-│   ├── components/
-│   │   ├── PaperCard.tsx
-│   │   ├── CitationGraph.tsx (or in graph/page.tsx)
-│   │   ├── StreamingResponse.tsx    # SSE consumer component
-│   │   ├── ModelSelector.tsx        # LLM model picker
-│   │   ├── SkeletonCard.tsx
-│   │   ├── Navbar.tsx
-│   │   ├── Footer.tsx
-│   │   ├── EmptyState.tsx
-│   │   ├── ErrorBoundary.tsx
-│   │   └── QueryProvider.tsx
-│   ├── lib/
-│   │   ├── api.ts                   # API client (fetch wrappers)
-│   │   ├── auth.ts                  # Supabase auth helpers
-│   │   ├── hooks.ts                 # Custom React hooks
-│   │   └── supabase.ts              # Supabase client singleton
-│   ├── store/
-│   │   └── useAppStore.ts           # Zustand store (model, prefs, loading)
-│   ├── types/
-│   │   └── index.ts                 # TypeScript interfaces
-│   ├── package.json
-│   └── Dockerfile
-│
-├── backend/                         # FastAPI application
-│   ├── main.py                      # App entry, middleware, routers
-│   ├── config.py                    # Pydantic settings (env vars)
-│   ├── dependencies.py              # Auth dependency injection
-│   ├── logging_config.py            # Structured logging setup
-│   ├── routers/                     # 9 API routers
-│   │   ├── __init__.py
-│   │   ├── health.py
-│   │   ├── auth.py
-│   │   ├── papers.py
-│   │   ├── search.py
-│   │   ├── stream.py
-│   │   ├── graph.py
-│   │   ├── prefs.py
-│   │   ├── pwc.py
-│   │   └── internal.py              # POST /api/internal/ingest (admin key)
-│   ├── agents/                      # LangGraph agent layer
-│   │   ├── __init__.py
-│   │   ├── orchestrator.py          # StateGraph: research → summary → memory
-│   │   ├── research_agent.py
-│   │   ├── summary_agent.py
-│   │   ├── memory_agent.py
-│   │   └── prompts/
-│   │       └── summary_prompt.txt
-│   ├── services/                    # 17 external service integrations
-│   │   ├── __init__.py
-│   │   ├── arxiv.py
-│   │   ├── huggingface.py
-│   │   ├── firecrawl.py             # crawl_paper + crawl_paper_cached (Supabase cache)
-│   │   ├── papers_with_code.py
-│   │   ├── semantic_scholar.py
-│   │   ├── citation_cache.py        # Supabase-backed citation edge cache
-│   │   ├── jwt_validator.py         # ES256 JWKS + HS256 legacy JWT validation
-│   │   ├── mem0_client.py
-│   │   ├── supabase_client.py
-│   │   ├── llm_router.py
-│   │   ├── embeddings.py
-│   │   ├── ingestion.py             # run_daily_fetch() pipeline
-│   │   ├── observability.py         # Langfuse + Sentry initialisation
-│   │   ├── run_store.py             # Redis + in-memory run state
-│   │   └── retry.py                 # Async retry with exp backoff
-│   ├── middleware/
-│   │   ├── __init__.py
-│   │   ├── rate_limit.py
-│   │   └── timing.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py
-│   ├── scripts/
-│   │   ├── __init__.py
-│   │   ├── seed_dev.py
-│   │   └── daily_fetch.py
-│   ├── pyproject.toml
-│   └── Dockerfile
-│
-├── supabase/
-│   └── schema.sql                   # Database migration
-│
-├── docs/                            # Documentation
-│   ├── API.md                       # Full API reference
-│   ├── DEVELOPER_GUIDE.md           # Developer onboarding
-│   └── DEPLOYMENT.md                # Production deployment guide
-│
-├── .github/workflows/
-│   ├── ci.yml                       # GitHub Actions CI (manual dispatch)
-│   └── daily_fetch.yml              # Daily ingestion trigger (manual dispatch)
-│
-├── docker-compose.yml               # Local dev stack
-├── docker-compose.prod.yml          # Production Docker stack
-├── .env.example                     # Environment variable template
-├── PLAN.md                          # Master project plan
-├── ARCHITECTURE.md                  # This file
-└── README.md                        # Project overview
+Zenith/
+├── frontend/                 # Next.js App Router, components, API client, tests
+├── backend/
+│   ├── routers/               # HTTP routes and request handling
+│   ├── services/              # Supabase, Redis, providers, retrieval, budgets
+│   ├── agents/                # LangGraph nodes and separate prompt files
+│   ├── security/              # Authorization and validation
+│   ├── guardrails/            # Tool and action policy
+│   ├── scripts/               # Daily ingestion and maintenance commands
+│   └── tests/                 # API, security, service, and graph tests
+├── supabase/migrations/       # Ordered schema changes; schema.sql is a snapshot
+├── evals/                     # Versioned local cases and smoke runner
+├── docs/                      # API, security, operations, status, audit records
+└── .github/workflows/         # Push/PR CI and manual ingestion trigger
 ```
 
 ---
@@ -590,9 +498,9 @@ ai-paper-research-agent/
 | Frontend | Vercel | Docker, any Node.js host |
 | Backend | Fly.io | Railway, Docker on cloud VM |
 | Database | Supabase (managed Postgres) | Self-hosted Postgres |
-| Redis | Fly Upstash / local Redis | In-memory (single instance only) |
-| Daily ingestion scheduler | Fly scheduled machine | Manual GitHub Actions dispatch → `/api/internal/ingest` |
-| CI/CD | GitHub Actions (manual dispatch) | Run lint/test/build locally |
+| Redis | Managed Redis required in production / local Redis for development | In-memory is development-only |
+| Daily ingestion scheduler | Externally scheduled Fly process group (must be configured) | Manual GitHub Actions dispatch → `/api/internal/ingest` |
+| CI/CD | GitHub Actions on push, pull request, and manual dispatch | Run lint/test/build locally |
 
 Docker Compose files are available for both local development (`docker-compose.yml`) and single-server production deployment (`docker-compose.prod.yml`).
 
