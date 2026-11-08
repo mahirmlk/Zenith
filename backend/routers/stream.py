@@ -46,10 +46,17 @@ def _validate_sse_session(session_token: str) -> str | None:
 async def _run_once(run_id: str, query: str, user_id: str, model: str | None) -> None:
     """Run the orchestrator exactly once per run_id (start-once guard)."""
     async def callback(step: AgentStep) -> None:
+        state = await run_store.get(run_id)
+        if state and state.status == "cancelled":
+            return
         await run_store.add_event(run_id, "agent_step", step.model_dump())
 
     try:
         result = await run_orchestrator(run_id, query, callback, user_id=user_id, model=model)
+        state = await run_store.get(run_id)
+        if state and state.status == "cancelled":
+            await run_store.add_event(run_id, "cancelled", {"run_id": run_id})
+            return
         await run_store.add_event(run_id, "result", result.model_dump())
     except Exception:  # noqa: BLE001 - record safe error class only
         logger.exception("Run %s failed", run_id)
@@ -66,7 +73,7 @@ async def event_generator(run_id: str, query: str, user_id: str, model: str | No
     replayed = await run_store.get_events(run_id)
     for evt in replayed:
         yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
-    if replayed and replayed[-1]["event"] in ("result", "error"):
+    if replayed and replayed[-1]["event"] in ("result", "error", "cancelled"):
         return  # Terminal event already replayed — no duplicate result.
 
     state = await run_store.get(run_id)
@@ -74,11 +81,8 @@ async def event_generator(run_id: str, query: str, user_id: str, model: str | No
         yield {"event": "result", "data": {"papers": state.results, "run_id": run_id}}
         return
 
-    # Start work only once; other subscribers just wait for events.
-    if await run_store.try_start(run_id):
-        task = asyncio.create_task(_run_once(run_id, query, user_id, model))
-        _running_tasks[run_id] = task
-
+    # Workers own job execution. The SSE request is a read-only subscription
+    # and cannot race the queue for a run claim.
     seen_seq = max((e["sequence"] for e in replayed), default=0)
     deadline = datetime.now(timezone.utc) + timedelta(minutes=10)
     while datetime.now(timezone.utc) < deadline:
@@ -88,12 +92,14 @@ async def event_generator(run_id: str, query: str, user_id: str, model: str | No
             if evt["sequence"] > seen_seq:
                 yield {"event": evt["event"], "data": evt["data"], "id": str(evt["sequence"])}
                 seen_seq = evt["sequence"]
-                if evt["event"] in ("result", "error"):
+                if evt["event"] in ("result", "error", "cancelled"):
                     return
         state = await run_store.get(run_id)
-        if state and state.status in ("complete", "failed"):
+        if state and state.status in ("complete", "failed", "cancelled"):
             if state.status == "complete" and state.results:
                 yield {"event": "result", "data": {"papers": state.results, "run_id": run_id}}
+            elif state.status == "cancelled":
+                yield {"event": "cancelled", "data": {"run_id": run_id}}
             return
 
 

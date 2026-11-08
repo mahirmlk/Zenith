@@ -57,3 +57,28 @@ async def test_run_store_get_nonexistent():
     store = RunStore(ttl_seconds=60)
     state = await store.get("nonexistent")
     assert state is None
+
+
+@pytest.mark.asyncio
+async def test_run_store_cancelled_run_cannot_be_completed():
+    store = RunStore(ttl_seconds=60)
+    await store.create("run-cancel", "query")
+    assert await store.try_start("run-cancel") is True
+
+    await store.update("run-cancel", status="cancelled")
+    await store.update("run-cancel", status="complete", results=[{"id": "paper"}])
+
+    state = await store.get("run-cancel")
+    assert state.status == "cancelled"
+    assert state.results == []
+
+
+@pytest.mark.asyncio
+async def test_run_store_running_lease_is_released_for_recovery():
+    store = RunStore(ttl_seconds=60)
+    await store.create("run-recover", "query")
+    assert await store.try_start("run-recover") is True
+    assert await store.try_start("run-recover") is False
+
+    await store.release("run-recover")
+    assert await store.try_start("run-recover") is True

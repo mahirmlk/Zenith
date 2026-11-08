@@ -43,6 +43,9 @@ async def run_cancel(run_id: str, user: dict = Depends(get_current_user)):
     if state.status in ("complete", "failed", "cancelled"):
         return {"run_id": run_id, "status": state.status}
     await run_store.update(run_id, status="cancelled")
-    # Cooperative cancellation: the running task (if any) observes the
-    # status change; we never hard-kill mid-tool-call here.
-    return {"run_id": run_id, "status": "cancelled"}
+    state = await run_store.get(run_id)
+    if state and state.status == "cancelled":
+        await run_store.add_event(run_id, "cancelled", {"run_id": run_id})
+    # Cancellation is terminal for result publication. An in-flight provider
+    # call may finish, but the late response is discarded by _run_once.
+    return {"run_id": run_id, "status": state.status if state else "cancelled"}

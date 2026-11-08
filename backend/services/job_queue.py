@@ -1,21 +1,32 @@
-"""Durable-run job queue (update.md §7.1).
+"""Background run queue.
 
-Two backends, same run_id/event contract:
-- In-process asyncio queue (dev/single-process, default).
-- Redis list (multi-instance production) when `REDIS_URL` is set:
-  producers LPUSH, workers BRPOP — any instance can run any run, and
-  `try_start` in the run store prevents duplicate execution.
-Postgres remains canonical for run metadata (migration 0001).
+Development uses a process-local asyncio queue. Redis deployments use a
+consumer group: delivered messages remain pending until acknowledged, and
+idle pending messages can be claimed after a worker dies. Run records still
+live in Redis rather than the planned canonical Postgres tables.
 """
 import asyncio
 import logging
+import os
+import uuid
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_queue: asyncio.Queue | None = None
+_queue: asyncio.Queue[str] | None = None
 _worker_task: asyncio.Task | None = None  # type: ignore[type-arg]
+_active_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
 _redis = None
-QUEUE_KEY = "zenith:runs:queue"
+_consumer = f"{os.getenv('HOSTNAME', 'worker')}-{uuid.uuid4().hex[:8]}"
+QUEUE_KEY = "zenith:runs:stream"
+CONSUMER_GROUP = "zenith:runs:workers"
+RECOVER_AFTER_MS = 90_000
+
+
+@dataclass(frozen=True)
+class QueueMessage:
+    run_id: str
+    message_id: str | None = None
 
 
 def _use_redis() -> bool:
@@ -35,7 +46,16 @@ async def _redis_client():
     return _redis
 
 
-def _get_queue() -> asyncio.Queue:  # type: ignore[type-arg]
+async def _ensure_group(client) -> None:
+    try:
+        await client.xgroup_create(QUEUE_KEY, CONSUMER_GROUP, id="0", mkstream=True)
+    except Exception as exc:
+        # BUSYGROUP means another worker already created the shared group.
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+
+def _get_queue() -> asyncio.Queue[str]:
     global _queue
     if _queue is None:
         _queue = asyncio.Queue()
@@ -45,7 +65,8 @@ def _get_queue() -> asyncio.Queue:  # type: ignore[type-arg]
 async def enqueue(run_id: str) -> None:
     if _use_redis():
         client = await _redis_client()
-        await client.lpush(QUEUE_KEY, run_id)
+        await _ensure_group(client)
+        await client.xadd(QUEUE_KEY, {"run_id": run_id})
         return
     await _get_queue().put(run_id)
 
@@ -54,67 +75,131 @@ def queue_depth() -> int:
     return _get_queue().qsize() if _queue else 0
 
 
-async def _dequeue() -> str:
-    if _use_redis():
-        client = await _redis_client()
-        item = await client.brpop(QUEUE_KEY, timeout=5)
-        if item is None:
-            raise asyncio.TimeoutError
-        return item[1]
-    return await asyncio.wait_for(_get_queue().get(), timeout=5)
+async def _dequeue() -> QueueMessage:
+    if not _use_redis():
+        run_id = await asyncio.wait_for(_get_queue().get(), timeout=5)
+        return QueueMessage(run_id=run_id)
+
+    client = await _redis_client()
+    await _ensure_group(client)
+    # Recover work left pending by a crashed worker before reading new work.
+    claimed = await client.xautoclaim(
+        QUEUE_KEY,
+        CONSUMER_GROUP,
+        _consumer,
+        min_idle_time=RECOVER_AFTER_MS,
+        start_id="0-0",
+        count=1,
+    )
+    messages = claimed[1] if claimed and len(claimed) > 1 else []
+    if messages:
+        message_id, fields = messages[0]
+        run_id = fields.get("run_id")
+        if run_id:
+            return QueueMessage(run_id=run_id, message_id=message_id)
+
+    batches = await client.xreadgroup(
+        CONSUMER_GROUP,
+        _consumer,
+        {QUEUE_KEY: ">"},
+        count=1,
+        block=5_000,
+    )
+    if not batches:
+        raise asyncio.TimeoutError
+    message_id, fields = batches[0][1][0]
+    return QueueMessage(run_id=fields["run_id"], message_id=message_id)
+
+
+async def _execute_run(run_id: str) -> bool:
+    from routers.stream import _run_once
+    from services.run_store import run_store
+
+    try:
+        state = await run_store.get(run_id)
+        if state is None:
+            logger.warning("Queue: unknown run %s, acknowledging", run_id)
+            return True
+        if state.status in ("complete", "failed", "cancelled"):
+            return True
+        if not await run_store.try_start(run_id):
+            # A live worker owns the lease. Keep this stream message pending;
+            # it will be redelivered after the lease and visibility timeout.
+            return False
+
+        heartbeat = asyncio.create_task(_heartbeat_run(run_id))
+        try:
+            await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            await run_store.release(run_id)
+        return True
+    except asyncio.CancelledError:
+        # Leave the stream entry pending so another worker can recover it.
+        raise
+    except Exception:
+        logger.exception("Queue worker failed on run %s", run_id)
+        try:
+            await run_store.update(run_id, status="failed")
+        except Exception:
+            logger.exception("Could not persist failed status for run %s", run_id)
+            return False
+        return True
+
+
+async def _heartbeat_run(run_id: str) -> None:
+    from services.run_store import run_store
+
+    while True:
+        await asyncio.sleep(30)
+        if not await run_store.heartbeat(run_id):
+            return
+
+
+async def _ack(message: QueueMessage) -> None:
+    if not message.message_id:
+        _get_queue().task_done()
+        return
+    client = await _redis_client()
+    await client.xack(QUEUE_KEY, CONSUMER_GROUP, message.message_id)
 
 
 _semaphore: asyncio.Semaphore | None = None
 
 
-async def _execute_run(run_id: str) -> None:
-    from routers.stream import _run_once  # local import: avoid cycle
-
-    try:
-        from services.run_store import run_store
-
-        state = await run_store.get(run_id)
-        if state is None:
-            logger.warning("Queue: unknown run %s, skipping", run_id)
-            return
-        if not await run_store.try_start(run_id):
-            logger.info("Queue: run %s already started, skipping duplicate", run_id)
-            return
-        await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
-    except Exception:
-        logger.exception("Queue worker failed on run %s", run_id)
-        try:
-            from services.run_store import run_store
-
-            await run_store.update(run_id, status="failed")
-        except Exception:
-            pass
-
-
 async def worker_loop() -> None:
-    """Consume run_ids, executing with bounded concurrency (4) so one
-    long LLM run cannot starve the queue head (bug-hunt P1)."""
+    """Consume jobs with bounded concurrency and graceful cancellation."""
     global _semaphore
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(4)
 
-    async def _bounded(run_id: str):
+    async def _bounded(message: QueueMessage):
         async with _semaphore:
-            await _execute_run(run_id)
-            if not _use_redis():
-                _get_queue().task_done()
+            handled = await _execute_run(message.run_id)
+            if handled:
+                await _ack(message)
 
-    while True:
-        try:
-            run_id = await _dequeue()
-        except asyncio.TimeoutError:
-            continue
-        asyncio.create_task(_bounded(run_id))
+    try:
+        while True:
+            try:
+                message = await _dequeue()
+            except asyncio.TimeoutError:
+                continue
+            task = asyncio.create_task(_bounded(message))
+            _active_tasks.add(task)
+            task.add_done_callback(_active_tasks.discard)
+    except asyncio.CancelledError:
+        for task in tuple(_active_tasks):
+            task.cancel()
+        await asyncio.gather(*tuple(_active_tasks), return_exceptions=True)
+        _active_tasks.clear()
+        raise
 
 
 def start_worker() -> None:
     global _worker_task
-    if _worker_task is None:
+    if _worker_task is None or _worker_task.done():
         _worker_task = asyncio.create_task(worker_loop())
         logger.info("Job queue worker started (redis=%s)", _use_redis())
 

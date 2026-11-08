@@ -4,8 +4,10 @@ from typing import Optional
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 import asyncio
+import secrets
 
 logger = logging.getLogger(__name__)
+TERMINAL_STATUSES = {"complete", "failed", "cancelled"}
 
 
 @dataclass
@@ -28,6 +30,7 @@ class RunStore:
         self._store: dict[str, RunState] = {}
         self._ttl = timedelta(seconds=ttl_seconds)
         self._lock = asyncio.Lock()
+        self._active_runs: set[str] = set()
 
     async def create(
         self,
@@ -72,20 +75,36 @@ class RunStore:
             state = self._store.get(run_id)
             if not state:
                 return
+            # A cancellation is terminal. Late orchestration completions must
+            # never turn a cancelled run back into a successful result.
+            if state.status in TERMINAL_STATUSES and status != state.status:
+                return
             if status:
                 state.status = status
             if results is not None:
                 state.results = results
+            if state.status in TERMINAL_STATUSES:
+                self._active_runs.discard(run_id)
 
     async def try_start(self, run_id: str) -> bool:
         """Atomically mark a run started. True only for the first caller."""
         async with self._lock:
             state = self._store.get(run_id)
-            if not state or state.started:
+            if not state or state.status in TERMINAL_STATUSES or run_id in self._active_runs:
                 return False
+            self._active_runs.add(run_id)
             state.started = True
             state.status = "running"
             return True
+
+    async def heartbeat(self, run_id: str) -> bool:
+        async with self._lock:
+            state = self._store.get(run_id)
+            return bool(state and state.status == "running" and run_id in self._active_runs)
+
+    async def release(self, run_id: str) -> None:
+        async with self._lock:
+            self._active_runs.discard(run_id)
 
     async def add_event(self, run_id: str, event: str, data: dict) -> None:
         async with self._lock:
@@ -110,14 +129,16 @@ class RunStore:
 
 
 class RedisRunStore:
-    """Redis-backed store. NOTE: not the canonical store (Postgres is, per
-    migration 0001); Redis is queue/cache only (update.md §7)."""
+    """Redis-backed run state and leases. Postgres canonical storage is not
+    wired yet; production still requires the separately tracked DB work."""
 
     def __init__(self, redis_url: str = "redis://localhost:6379", ttl_seconds: int = 3600):
         self._redis_url = redis_url
         self._ttl = ttl_seconds
         self._redis = None
         self._fallback = RunStore(ttl_seconds=ttl_seconds)
+        self._lease_seconds = 90
+        self._lease_tokens: dict[str, str] = {}
 
     async def _ensure_connected(self):
         if self._redis is None:
@@ -168,32 +189,122 @@ class RedisRunStore:
 
     async def update(self, run_id: str, status: Optional[str] = None, results: Optional[list] = None):
         await self._ensure_connected()
-        state = await self.get(run_id)
-        if state is None:
-            return
-        if status:
-            state.status = status
-        if results is not None:
-            state.results = results
-        await self._redis.set(run_id, self._serialize(state), ex=self._ttl)
+        from redis.exceptions import WatchError
+
+        for _ in range(5):
+            async with self._redis.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(run_id)
+                    data = await pipe.get(run_id)
+                    if data is None:
+                        return
+                    state = self._deserialize(data)
+                    if state.status in TERMINAL_STATUSES and status != state.status:
+                        return
+                    if status:
+                        state.status = status
+                    if results is not None:
+                        state.results = results
+                    pipe.multi()
+                    pipe.set(run_id, self._serialize(state), ex=self._ttl)
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    continue
+        raise RuntimeError(f"Could not update run {run_id}: concurrent updates did not settle")
 
     async def try_start(self, run_id: str) -> bool:
-        state = await self.get(run_id)
-        if not state or state.started:
-            return False
-        state.started = True
-        state.status = "running"
         await self._ensure_connected()
-        await self._redis.set(run_id, self._serialize(state), ex=self._ttl)
-        return True
+        from redis.exceptions import WatchError
+
+        lease_key = self._lease_key(run_id)
+        for _ in range(5):
+            token = secrets.token_urlsafe(24)
+            async with self._redis.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(run_id)
+                    data = await pipe.get(run_id)
+                    if data is None:
+                        return False
+                    state = self._deserialize(data)
+                    if state.status in TERMINAL_STATUSES:
+                        return False
+                    acquired = await self._redis.set(
+                        lease_key, token, nx=True, ex=self._lease_seconds
+                    )
+                    if not acquired:
+                        return False
+                    state.started = True
+                    state.status = "running"
+                    pipe.multi()
+                    pipe.set(run_id, self._serialize(state), ex=self._ttl)
+                    await pipe.execute()
+                    self._lease_tokens[run_id] = token
+                    return True
+                except WatchError:
+                    await self._redis.eval(
+                        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                        "return redis.call('del', KEYS[1]) else return 0 end",
+                        1,
+                        lease_key,
+                        token,
+                    )
+        return False
+
+    @staticmethod
+    def _lease_key(run_id: str) -> str:
+        return f"zenith:runs:lease:{run_id}"
+
+    async def heartbeat(self, run_id: str) -> bool:
+        await self._ensure_connected()
+        token = self._lease_tokens.get(run_id)
+        if not token:
+            return False
+        result = await self._redis.eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+            "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+            1,
+            self._lease_key(run_id),
+            token,
+            self._lease_seconds,
+        )
+        return bool(result)
+
+    async def release(self, run_id: str) -> None:
+        await self._ensure_connected()
+        token = self._lease_tokens.pop(run_id, None)
+        if not token:
+            return
+        await self._redis.eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+            "return redis.call('del', KEYS[1]) else return 0 end",
+            1,
+            self._lease_key(run_id),
+            token,
+        )
 
     async def add_event(self, run_id: str, event: str, data: dict) -> None:
-        state = await self.get(run_id)
-        if not state:
-            return
-        state.events.append({"sequence": len(state.events) + 1, "event": event, "data": data})
         await self._ensure_connected()
-        await self._redis.set(run_id, self._serialize(state), ex=self._ttl)
+        from redis.exceptions import WatchError
+
+        for _ in range(5):
+            async with self._redis.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(run_id)
+                    raw = await pipe.get(run_id)
+                    if raw is None:
+                        return
+                    state = self._deserialize(raw)
+                    state.events.append(
+                        {"sequence": len(state.events) + 1, "event": event, "data": data}
+                    )
+                    pipe.multi()
+                    pipe.set(run_id, self._serialize(state), ex=self._ttl)
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    continue
+        raise RuntimeError(f"Could not append run event for {run_id}: concurrent updates did not settle")
 
     async def get_events(self, run_id: str) -> list[dict]:
         state = await self.get(run_id)
