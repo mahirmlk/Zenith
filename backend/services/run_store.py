@@ -1,6 +1,8 @@
 import json
 import logging
 from typing import Any, Optional, Protocol
+from collections.abc import Callable
+from typing import cast
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 import asyncio
@@ -17,13 +19,13 @@ class RunState:
     query: str
     model: Optional[str] = None
     status: str = "pending"
-    results: list[dict] = field(default_factory=list)
+    results: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Phase P0-C (update.md §5.2/§7): ownership, idempotency, start-once, events.
     user_id: Optional[str] = None
     idempotency_key: Optional[str] = None
     started: bool = False
-    events: list[dict] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class RunStoreProtocol(Protocol):
@@ -120,7 +122,12 @@ class RunStore:
                 return None
             return state
 
-    async def update(self, run_id: str, status: Optional[str] = None, results: Optional[list] = None):
+    async def update(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        results: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         async with self._lock:
             state = self._store.get(run_id)
             if not state:
@@ -156,7 +163,7 @@ class RunStore:
         async with self._lock:
             self._active_runs.discard(run_id)
 
-    async def add_event(self, run_id: str, event: str, data: dict) -> None:
+    async def add_event(self, run_id: str, event: str, data: dict[str, Any]) -> None:
         async with self._lock:
             state = self._store.get(run_id)
             if not state:
@@ -165,12 +172,12 @@ class RunStore:
                 {"sequence": len(state.events) + 1, "event": event, "data": data}
             )
 
-    async def get_events(self, run_id: str) -> list[dict]:
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         async with self._lock:
             state = self._store.get(run_id)
             return list(state.events) if state else []
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         async with self._lock:
             now = datetime.now(timezone.utc)
             expired = [k for k, v in self._store.items() if now - v.created_at > self._ttl]
@@ -188,16 +195,17 @@ class RedisRunStore:
     def __init__(self, redis_url: str = "redis://localhost:6379", ttl_seconds: int = 3600):
         self._redis_url = redis_url
         self._ttl = ttl_seconds
-        self._redis = None
+        self._redis: Any = None
         self._fallback = RunStore(ttl_seconds=ttl_seconds)
         self._lease_seconds = 90
         self._lease_tokens: dict[str, str] = {}
 
-    async def _ensure_connected(self):
+    async def _ensure_connected(self) -> None:
         if self._redis is None:
             import redis.asyncio as redis_mod
 
-            self._redis = redis_mod.from_url(self._redis_url, decode_responses=True)
+            redis_from_url = cast(Callable[..., Any], redis_mod.from_url)
+            self._redis = redis_from_url(self._redis_url, decode_responses=True)
 
     def _serialize(self, state: RunState) -> str:
         d = asdict(state)
@@ -278,7 +286,12 @@ class RedisRunStore:
         run_id = await self._redis.get(self._idempotency_index_key(user_id, idempotency_key))
         return await self.get(run_id) if run_id else None
 
-    async def update(self, run_id: str, status: Optional[str] = None, results: Optional[list] = None):
+    async def update(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        results: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         await self._ensure_connected()
         from redis.exceptions import WatchError
 
@@ -374,7 +387,7 @@ class RedisRunStore:
             token,
         )
 
-    async def add_event(self, run_id: str, event: str, data: dict) -> None:
+    async def add_event(self, run_id: str, event: str, data: dict[str, Any]) -> None:
         await self._ensure_connected()
         from redis.exceptions import WatchError
 
@@ -397,11 +410,11 @@ class RedisRunStore:
                     continue
         raise RuntimeError(f"Could not append run event for {run_id}: concurrent updates did not settle")
 
-    async def get_events(self, run_id: str) -> list[dict]:
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         state = await self.get(run_id)
         return list(state.events) if state else []
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         pass
 
 
@@ -413,7 +426,7 @@ class PostgresRunStore(RedisRunStore):
     backend restart cannot erase the API's run history.
     """
 
-    def __init__(self, database, redis_url: str, ttl_seconds: int = 3600):
+    def __init__(self, database: Any, redis_url: str, ttl_seconds: int = 3600):
         super().__init__(redis_url=redis_url, ttl_seconds=ttl_seconds)
         self._database = database
 
@@ -456,14 +469,14 @@ class PostgresRunStore(RedisRunStore):
         ).hexdigest()
 
     @staticmethod
-    def _row(response) -> Optional[dict]:
+    def _row(response: Any) -> Optional[dict[str, Any]]:
         data = getattr(response, "data", None)
         if isinstance(data, list):
             return data[0] if data else None
         return data if isinstance(data, dict) else None
 
     @staticmethod
-    def _state_from_row(row: dict) -> RunState:
+    def _state_from_row(row: dict[str, Any]) -> RunState:
         created_at = row.get("created_at")
         if isinstance(created_at, str):
             try:
@@ -559,7 +572,7 @@ class PostgresRunStore(RedisRunStore):
         self,
         run_id: str,
         status: Optional[str] = None,
-        results: Optional[list] = None,
+        results: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         response = await self._database.rpc(
             "update_research_run_atomic",
@@ -605,13 +618,13 @@ class PostgresRunStore(RedisRunStore):
             await self.release(run_id)
             raise
 
-    async def add_event(self, run_id: str, event: str, data: dict) -> None:
+    async def add_event(self, run_id: str, event: str, data: dict[str, Any]) -> None:
         await self._database.rpc(
             "append_run_event_atomic",
             {"p_run_id": run_id, "p_kind": event, "p_payload": data},
         ).execute()
 
-    async def get_events(self, run_id: str) -> list[dict]:
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         response = await (
             self._database.table("run_events")
             .select("sequence,kind,safe_payload")
@@ -649,20 +662,20 @@ async def _create_run_store() -> RunStoreProtocol:
         from services.supabase_client import get_supabase
 
         database = await get_supabase()
-        store = PostgresRunStore(database, redis_url=settings.redis_url)
-        await store._ensure_connected()
-        await store._redis.ping()
-        await store.verify_schema()
+        postgres_store = PostgresRunStore(database, redis_url=settings.redis_url)
+        await postgres_store._ensure_connected()
+        await postgres_store._redis.ping()
+        await postgres_store.verify_schema()
         logger.info("Using PostgresRunStore with Redis leases")
-        return store
+        return postgres_store
 
     if settings.redis_url:
         try:
-            store = RedisRunStore(redis_url=settings.redis_url)
-            await store._ensure_connected()
-            await store._redis.ping()
+            redis_store = RedisRunStore(redis_url=settings.redis_url)
+            await redis_store._ensure_connected()
+            await redis_store._redis.ping()
             logger.info("Using RedisRunStore")
-            return store
+            return redis_store
         except Exception as exc:
             # update.md §7: never silently degrade in production.
             if getattr(settings, "app_env", "development") == "production":
