@@ -33,12 +33,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     cleanup_task = asyncio.create_task(_cleanup_loop())
     from services.job_queue import start_worker, stop_worker
+    from services.daily_scheduler import start_daily_scheduler, stop_daily_scheduler
 
     start_worker()
+    start_daily_scheduler()
     yield
     # Shutdown
     cleanup_task.cancel()
     stop_worker()
+    await stop_daily_scheduler()
     logger.info("Shutting down backend")
 
 
