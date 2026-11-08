@@ -1,4 +1,5 @@
 import os
+from importlib import import_module
 
 # LangGraph reads this option when its serializer module is imported. Keep
 # persisted checkpoint deserialization restricted to safe types in every env.
@@ -6,7 +7,7 @@ os.environ["LANGGRAPH_STRICT_MSGPACK"] = "true"
 
 from datetime import datetime, timezone
 from datetime import timedelta
-from typing import Callable, Awaitable, Optional, TypedDict
+from typing import Any, Awaitable, Callable, Optional, TypedDict, cast
 from langgraph.graph import StateGraph, END
 from langgraph.constants import START
 from models.schemas import AgentStep, PaperSearchResult, Paper
@@ -25,14 +26,14 @@ class OrchestratorState(TypedDict):
     query: str
     user_id: str
     model: Optional[str]
-    raw_papers: list[dict]
-    enriched_papers: list[dict]
-    ranked_papers: list[dict]
+    raw_papers: list[dict[str, Any]]
+    enriched_papers: list[dict[str, Any]]
+    ranked_papers: list[dict[str, Any]]
     steps: list[AgentStep]
     failed_agents: list[str]
 
 
-async def _emit(run_id: str, state: OrchestratorState, step: AgentStep):
+async def _emit(run_id: str, state: OrchestratorState, step: AgentStep) -> None:
     """Emit a step to both the state list and the live callback."""
     state["steps"].append(step)
     cb = _callbacks.get(run_id)
@@ -43,7 +44,7 @@ async def _emit(run_id: str, state: OrchestratorState, step: AgentStep):
 async def _research_node(state: OrchestratorState) -> OrchestratorState:
     run_id = state["run_id"]
 
-    async def cb(step: AgentStep):
+    async def cb(step: AgentStep) -> None:
         await _emit(run_id, state, step)
 
     try:
@@ -59,7 +60,7 @@ async def _research_node(state: OrchestratorState) -> OrchestratorState:
 async def _summary_node(state: OrchestratorState) -> OrchestratorState:
     run_id = state["run_id"]
 
-    async def cb(step: AgentStep):
+    async def cb(step: AgentStep) -> None:
         await _emit(run_id, state, step)
 
     try:
@@ -76,7 +77,7 @@ async def _summary_node(state: OrchestratorState) -> OrchestratorState:
 async def _memory_node(state: OrchestratorState) -> OrchestratorState:
     run_id = state["run_id"]
 
-    async def cb(step: AgentStep):
+    async def cb(step: AgentStep) -> None:
         await _emit(run_id, state, step)
 
     try:
@@ -90,9 +91,9 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
     return state
 
 
-_orchestrator_graph = None
-_checkpointer = None
-_checkpointer_context = None
+_orchestrator_graph: Any = None
+_checkpointer: Any = None
+_checkpointer_context: Any = None
 _durable_checkpointer = False
 
 
@@ -100,7 +101,7 @@ async def start_checkpointer(
     database_url: str = "",
     *,
     production: bool = False,
-    saver_context_factory=None,
+    saver_context_factory: Callable[[str], Any] | None = None,
 ) -> None:
     """Open and initialize graph checkpoint storage during app startup.
 
@@ -125,12 +126,13 @@ async def start_checkpointer(
 
     if saver_context_factory is None:
         try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            postgres_checkpoint = import_module("langgraph.checkpoint.postgres.aio")
         except ImportError as exc:
             raise RuntimeError(
                 "langgraph-checkpoint-postgres is required when DATABASE_URL is configured"
             ) from exc
-        saver_context_factory = AsyncPostgresSaver.from_conn_string
+        saver_class = getattr(postgres_checkpoint, "AsyncPostgresSaver")
+        saver_context_factory = cast(Callable[[str], Any], saver_class.from_conn_string)
 
     context = saver_context_factory(database_url)
     saver = await context.__aenter__()
@@ -158,7 +160,7 @@ async def stop_checkpointer() -> None:
         await context.__aexit__(None, None, None)
 
 
-def _get_checkpointer():
+def _get_checkpointer() -> Any:
     global _checkpointer, _durable_checkpointer
     from config import get_settings
 
@@ -222,7 +224,11 @@ async def cleanup_expired_checkpoints(batch_size: int = 200) -> int:
     return deleted
 
 
-async def _invoke_or_resume(graph, initial_state: OrchestratorState, config: dict):
+async def _invoke_or_resume(
+    graph: Any,
+    initial_state: OrchestratorState,
+    config: dict[str, Any],
+) -> Any:
     """Resume an interrupted run from its latest checkpoint when available.
 
     LangGraph checkpoints at node boundaries. Passing ``None`` resumes pending
@@ -253,7 +259,7 @@ async def _invoke_or_resume(graph, initial_state: OrchestratorState, config: dic
     return values
 
 
-def _get_graph():
+def _get_graph() -> Any:
     global _orchestrator_graph
     if _orchestrator_graph is None:
         builder = StateGraph(OrchestratorState)
@@ -312,7 +318,7 @@ async def run_orchestrator(
         await callback(AgentStep(agent="orchestrator", status="error", message="Step failed"))
         raise RuntimeError(f"Research pipeline failed in: {failed}")
 
-    papers = []
+    papers: list[Paper] = []
     for p in final_state.get("ranked_papers", []):
         pub_at = p.get("published_at", "")
         if isinstance(pub_at, str) and pub_at:

@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Literal, Optional
+from pydantic import BaseModel, Field, field_validator
 
 
 class Paper(BaseModel):
@@ -14,7 +14,7 @@ class Paper(BaseModel):
     summary_contributions: Optional[list[str]] = None
     relevance_score: Optional[float] = None
     difficulty: Optional[Literal["introductory", "intermediate", "expert"]] = None
-    papers_with_code: Optional[dict] = None
+    papers_with_code: Optional[dict[str, Any]] = None
 
 
 class PaperSearchResult(BaseModel):
@@ -30,8 +30,6 @@ class SearchRequest(BaseModel):
 class UserPrefs(BaseModel):
     preferred_model: str = Field(default="anthropic/claude-sonnet-4-5", max_length=100)
     interests: list[str] = Field(default_factory=list, max_length=50)
-
-    from pydantic import field_validator
 
     @field_validator("interests")
     @classmethod
@@ -51,7 +49,7 @@ class AgentStep(BaseModel):
 
 class StreamEvent(BaseModel):
     event: Literal["agent_step", "result", "error"]
-    data: dict
+    data: dict[str, Any]
 
 
 class SavePaperRequest(BaseModel):

@@ -1,5 +1,5 @@
 """Typed intermediate outputs for deep research (update.md §9.1)."""
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,7 @@ class ResearchAnswer(BaseModel):
 def classify_task(query: str) -> ResearchPlan:
     """Deterministic routing (update.md §9.1): planner only for complex tasks."""
     q = (query or "").lower()
+    task: Literal["feed", "explain", "compare", "deep_research"]
     if any(w in q for w in ("compare", "comparison", "vs", "versus", "difference between")):
         task = "compare"
     elif any(w in q for w in ("explain", "what is", "how does", "summarize", "summarise")):
@@ -49,7 +50,7 @@ def classify_task(query: str) -> ResearchPlan:
     return ResearchPlan(query=query, task_type=task)
 
 
-def build_comparison(papers: list[dict]) -> list[ComparisonRow]:
+def build_comparison(papers: list[dict[str, Any]]) -> list[ComparisonRow]:
     """Structured cross-paper table rows (deterministic extraction from metadata)."""
     rows = []
     for p in papers:

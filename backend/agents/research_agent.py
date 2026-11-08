@@ -1,31 +1,39 @@
-from typing import Callable, Awaitable
+from typing import Any, Awaitable, Callable, cast
 import asyncio
 from models.schemas import AgentStep
 
 
-try:
-    from services.arxiv import search_arxiv
-except Exception:
-    search_arxiv = None  # type: ignore[misc]
+PaperData = dict[str, Any]
+ArxivSearch = Callable[[str, int], Awaitable[list[PaperData]]]
+HuggingFaceFetch = Callable[[], Awaitable[list[PaperData]]]
 
 try:
-    from services.huggingface import fetch_hf_daily
-except Exception:
-    fetch_hf_daily = None  # type: ignore[misc]
+    from services.arxiv import search_arxiv as _search_arxiv
+except ImportError:
+    search_arxiv: ArxivSearch | None = None
+else:
+    search_arxiv = cast(ArxivSearch, _search_arxiv)
+
+try:
+    from services.huggingface import fetch_hf_daily as _fetch_hf_daily
+except ImportError:
+    fetch_hf_daily: HuggingFaceFetch | None = None
+else:
+    fetch_hf_daily = cast(HuggingFaceFetch, _fetch_hf_daily)
 
 
 async def research_agent(
     query: str,
     callback: Callable[[AgentStep], Awaitable[None]],
-) -> list[dict]:
+) -> list[PaperData]:
     await callback(AgentStep(agent="research", status="fetching_arxiv"))
 
-    async def _fetch_arxiv():
+    async def _fetch_arxiv() -> list[PaperData]:
         if search_arxiv is not None:
-            return await search_arxiv(query, max_results=20)
+            return await search_arxiv(query, 20)
         return []
 
-    async def _fetch_hf():
+    async def _fetch_hf() -> list[PaperData]:
         if fetch_hf_daily is not None:
             try:
                 return await fetch_hf_daily()
@@ -39,8 +47,8 @@ async def research_agent(
     await callback(AgentStep(agent="research", status="huggingface_fetched", count=len(hf_papers)))
 
     # Deduplicate by ID
-    seen = set()
-    papers = []
+    seen: set[str] = set()
+    papers: list[PaperData] = []
     for p in arxiv_papers + hf_papers:
         pid = p.get("id", "")
         if pid and pid not in seen:

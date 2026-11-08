@@ -1,6 +1,7 @@
-from typing import Callable, Awaitable
+from typing import Any, Awaitable, Callable
 import re
 import logging
+import math
 from models.schemas import AgentStep
 from services.mem0_client import get_user_profile
 from services.embeddings import embed_texts
@@ -26,7 +27,9 @@ def _extract_keywords(text: str) -> set[str]:
     return {w for w in words if w not in _STOPWORDS and len(w) > 2}
 
 
-async def _try_match_papers_sql(interest_text: str, papers: list[dict]) -> bool:
+async def _try_match_papers_sql(
+    interest_text: str, papers: list[dict[str, Any]]
+) -> bool:
     """Try to use the match_papers SQL function for scoring. Returns True if successful."""
     try:
         from services.supabase_client import get_supabase
@@ -45,7 +48,12 @@ async def _try_match_papers_sql(interest_text: str, papers: list[dict]) -> bool:
         ).execute()
 
         if result.data:
-            scored_ids = {r["id"]: r["similarity"] for r in result.data}
+            scored_ids: dict[str, float] = {}
+            for row in result.data:
+                paper_id = row.get("id")
+                similarity = row.get("similarity")
+                if isinstance(paper_id, str) and isinstance(similarity, (int, float)):
+                    scored_ids[paper_id] = float(similarity)
             for paper in papers:
                 paper["relevance_score"] = scored_ids.get(paper.get("id", ""), 0.0)
             return True
@@ -55,11 +63,11 @@ async def _try_match_papers_sql(interest_text: str, papers: list[dict]) -> bool:
 
 
 async def memory_agent(
-    papers: list[dict],
+    papers: list[dict[str, Any]],
     user_id: str,
     query: str,
     callback: Callable[[AgentStep], Awaitable[None]],
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     await callback(AgentStep(agent="memory", status="loading_profile"))
 
     try:
@@ -67,10 +75,10 @@ async def memory_agent(
     except Exception:
         profile = []
 
-    interests = []
+    interests: list[str] = []
     for mem in profile:
         content = mem.get("memory", "")
-        if content:
+        if isinstance(content, str) and content:
             interests.append(content)
 
     await callback(AgentStep(agent="memory", status="scoring_papers"))
@@ -92,8 +100,8 @@ async def memory_agent(
 
             def cosine_sim(a: list[float], b: list[float]) -> float:
                 dot = sum(x * y for x, y in zip(a, b))
-                norm_a = sum(x * x for x in a) ** 0.5
-                norm_b = sum(x * x for x in b) ** 0.5
+                norm_a = math.sqrt(sum(x * x for x in a))
+                norm_b = math.sqrt(sum(x * x for x in b))
                 return dot / (norm_a * norm_b + 1e-10)
 
             for paper, vec in zip(papers, paper_vecs):
@@ -114,4 +122,8 @@ async def memory_agent(
                 paper["relevance_score"] = 0.5
 
     await callback(AgentStep(agent="memory", status="ranking_complete", count=len(papers)))
-    return sorted(papers, key=lambda p: p.get("relevance_score", 0), reverse=True)
+    def score(paper: dict[str, Any]) -> float:
+        value = paper.get("relevance_score", 0.0)
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    return sorted(papers, key=score, reverse=True)

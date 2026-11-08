@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import json
 import re
 import asyncio
 from pathlib import Path
-from typing import Callable, Awaitable, Optional
+from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING, cast
 from langchain_core.messages import SystemMessage, HumanMessage
 from models.schemas import AgentStep
 from services.llm_router import get_llm
 from services.retry import async_retry
 from config import get_settings
+
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
 
 _PROMPT_PATH = Path(__file__).with_name("prompts") / "summary_prompt.txt"
 _summary_prompt_cache: str | None = None
@@ -21,6 +26,13 @@ _CONTENT_OPEN = "<paper_content>"
 _CONTENT_CLOSE = "</paper_content>"
 
 
+def _decode_json_object(text: str) -> dict[str, Any]:
+    value = json.loads(text)
+    if not isinstance(value, dict):
+        raise ValueError("Expected a JSON object from summary model")
+    return cast(dict[str, Any], value)
+
+
 def _get_summary_prompt() -> str:
     global _summary_prompt_cache
     if _summary_prompt_cache is None:
@@ -28,7 +40,7 @@ def _get_summary_prompt() -> str:
     return _summary_prompt_cache
 
 
-def _wrap_content(paper: dict) -> str:
+def _wrap_content(paper: dict[str, Any]) -> str:
     """Wrap crawled/untrusted paper text in explicit delimiters.
 
     Closing tags in the untrusted text are escaped so a malicious
@@ -40,32 +52,32 @@ def _wrap_content(paper: dict) -> str:
     return f"{_CONTENT_OPEN}\n{body}\n{_CONTENT_CLOSE}"
 
 
-def _extract_json(text: str) -> dict:
+def _extract_json(text: str) -> dict[str, Any]:
     """Extract JSON from LLM output, handling markdown fences and partial responses."""
     text = text.strip()
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return _decode_json_object(text)
+    except ValueError:
         pass
 
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
+            return _decode_json_object(match.group(1))
+        except ValueError:
             pass
 
     match = re.search(r"(\{.*?\})", text, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
+            return _decode_json_object(match.group(1))
+        except ValueError:
             pass
 
     raise ValueError("No valid JSON found in response")
 
 
-def _apply_fallback(paper: dict) -> dict:
+def _apply_fallback(paper: dict[str, Any]) -> dict[str, Any]:
     """Graceful degradation when summarisation fails or is skipped."""
     abstract = paper.get("abstract", "")
     paper["summary_tldr"] = abstract[:200] + "..." if abstract else ""
@@ -75,10 +87,10 @@ def _apply_fallback(paper: dict) -> dict:
 
 
 async def _summarise_single_paper(
-    paper: dict,
-    llm,
+    paper: dict[str, Any],
+    llm: BaseChatModel,
     semaphore: asyncio.Semaphore,
-) -> dict:
+) -> dict[str, Any]:
     """Summarise a single paper with concurrency control."""
     messages = [
         SystemMessage(content=_get_summary_prompt()),
@@ -88,7 +100,8 @@ async def _summarise_single_paper(
     try:
         async with semaphore:
             response = await async_retry(lambda: llm.ainvoke(messages), max_retries=3, base_delay=1.0)
-            content = response.content if hasattr(response, "content") else str(response)
+            response_content = response.content if hasattr(response, "content") else response
+            content = response_content if isinstance(response_content, str) else str(response_content)
             parsed = _extract_json(content)
             paper["summary_tldr"] = parsed.get("tldr", "")
             paper["difficulty"] = parsed.get("difficulty", "intermediate")
@@ -100,11 +113,11 @@ async def _summarise_single_paper(
 
 
 async def summary_agent(
-    papers: list[dict],
+    papers: list[dict[str, Any]],
     callback: Callable[[AgentStep], Awaitable[None]],
     model_override: Optional[str] = None,
     max_summaries: Optional[int] = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Generate AI summaries, capping LLM fan-out to ``max_summaries`` papers.
 
     Papers beyond the ceiling are given the abstract-preview fallback without
