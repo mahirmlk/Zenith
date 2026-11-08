@@ -28,17 +28,17 @@ On 2026-11-08 with the current production selector and ranker:
 | Result | Measured |
 |---|---:|
 | Cases | 12 |
-| Passing cases | 5 / 12 |
-| Abstention accuracy | 91.7% |
+| Passing cases | 12 / 12 |
+| Abstention accuracy | 100% |
 | Citation validity | 100% |
 | Exact sentence support | 100% |
 | Answerable-case claim coverage | 100% |
 | Recall@5 | 100% |
-| MRR@5 | 94.4% |
+| MRR@5 | 100% |
 | Fabricated-citation negative control | Pass |
-| Gate | **Fail** |
+| Gate | **Pass** |
 
-The failing cases are `qa_rank_optimizer_001`, `qa_supported_dataset_001`, `qa_hyphenated_acronym_001`, `qa_title_only_001`, `qa_prompt_injection_001`, `qa_supported_robustness_001`, and `qa_crispr_disambiguation_001`. They expose these release findings: unrelated retrieved papers can contribute claims from generic query-term overlap; the selector emits a claim when only the title matches and the abstract does not support the question; a prompt-injection instruction in an abstract is emitted as a claim; and the CRISPR case ranks a generic editing-workflow paper above the relevant study. Do not weaken these cases to turn the suite green. Fix the retrieval/claim-selection behavior, then rerun and record the new baseline.
+The gate passes after BM25 ignores common question terms, claim selection requires substantive overlap and relevant query entities, and instruction-like abstract sentences are excluded. Do not weaken these cases. The corpus remains small and hand-authored, so passing it is a regression check rather than a broad research-quality result.
 
 ## What this suite does not prove
 

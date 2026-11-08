@@ -196,7 +196,7 @@ fly launch --name ai-paper-agent-backend --region iad
 When prompted:
 - Choose to deploy now? **No** (we need to set secrets first)
 - Choose a Postgres? **No** (we use Supabase)
-- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, and run state; in-memory mode is development-only.
+- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, scheduler leases, and worker leases. Supabase Postgres stores canonical run records and events; in-memory stores are development-only.
 
 #### 2. Set Secrets
 
@@ -520,17 +520,18 @@ The backend is primarily I/O-bound (waiting on OpenRouter, ArXiv, Supabase). Sca
 |----------|-------------|
 | More instances (horizontal) | High concurrent user count |
 | Larger VM (vertical) | Single long-running agent runs (LLM calls) |
-| Redis for run state | Multi-instance deployments (shared state) |
+| Postgres for run metadata/events | Durable run history across restarts and replicas |
+| Redis for queue and leases | Shared work delivery, rate limits, budgets, and scheduler/worker leases |
 
 **Fly.io scaling:**
 ```bash
 # Run 2-4 instances behind load balancer
 fly scale count 4
 
-# Ensure REDIS_URL is set for shared run state across instances
+# Ensure REDIS_URL is set for shared queues, limits, budgets, and leases
 ```
 
-Production always requires Redis, even with one backend instance. Redis-backed run records and Streams make work visible across replicas; Postgres-canonical run metadata remains a release blocker tracked in `docs/STATUS.md`.
+Production requires both reachable Supabase Postgres and Redis, even with one backend instance. Postgres is canonical for run metadata, results, and events; Redis Streams carry jobs, while Redis leases coordinate workers and scheduled ingestion. The API fails readiness if required dependencies are unreachable or run-store migration RPCs are missing.
 
 ### Frontend (Next.js)
 

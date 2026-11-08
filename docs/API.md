@@ -107,9 +107,12 @@ worker. Events include `agent_step`, `result`, `error`, and `cancelled`.
 | `POST /api/runs/{run_id}/cancel` | Yes, owner only | Mark run terminally cancelled; suppress late result publication |
 
 Missing, ownerless, and non-owned runs return `404` to avoid leaking their
-existence. Redis Streams keeps jobs pending until acknowledged and workers
-can reclaim idle pending entries. Run state is still Redis/process-memory
-backed; Postgres `research_runs` and `run_events` are not yet wired into runtime.
+existence. In production, Postgres `research_runs` and `run_events` are the
+canonical run store; Redis Streams keeps jobs pending until acknowledged,
+workers reclaim idle pending entries, and Redis holds short-lived run leases.
+Local development uses an in-memory run store when Redis/Supabase are absent.
+Production fails closed if the canonical schema/RPCs, Supabase, or Redis are
+unavailable.
 
 ## Retrieval and research
 
@@ -140,7 +143,7 @@ mutations apply endpoint-specific authorization.
 | Method and path | Behavior |
 |---|---|
 | `POST /api/projects` | Create a project (`title`, optional `description`) |
-| `GET /api/projects` | List caller-owned projects |
+| `GET /api/projects` | List owned and shared projects for the caller |
 | `GET /api/projects/{project_id}` | Read an accessible project |
 | `PATCH /api/projects/{project_id}` | Update project fields |
 | `DELETE /api/projects/{project_id}` | Soft-delete project |
@@ -155,9 +158,10 @@ mutations apply endpoint-specific authorization.
 | `POST /api/notifications/read` | Mark caller notifications as read |
 
 Ingestion creates schema-compatible notifications with database-backed
-watchlist/paper deduplication. A recurring scheduler is not enabled by this
-repository; operators must configure the Fly cron process or an external
-scheduler.
+watchlist/paper deduplication. The backend starts a Redis-leased daily UTC
+scheduler when Redis and Supabase are configured. Scheduled, Fly cron, and
+admin-triggered ingestion must use the same lease path; see `docs/STATUS.md`
+for current verification evidence and live-infrastructure limitations.
 
 ## Implementation planning and account
 

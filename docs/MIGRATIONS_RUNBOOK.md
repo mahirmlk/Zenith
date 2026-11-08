@@ -1,9 +1,9 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0006 live in `supabase/migrations/`. They are additive SQL migration files and 0005 uses `DROP POLICY IF EXISTS` for idempotent re-runs. No down migrations are provided; rollback requires a reviewed forward migration or restore. Static tests do not prove behavior against a live Supabase project. Apply and verify in staging before production.
+Migrations 0001–0009 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
-**Status:** drafted and statically verified; NOT yet applied to any live database. This is the one remaining manual step before production (see [STATUS.md](STATUS.md)).
+**Status:** drafted and statically checked; NOT yet applied to any live database. The Postgres/RLS behavior, migration rollback, backups, and tenant isolation still need staging evidence (see [STATUS.md](STATUS.md)).
 
 ```bash
 # 1. Apply in order (Supabase dashboard SQL editor or psql)
@@ -13,12 +13,17 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0003_watchlists.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0004_notifications.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0005_rls_policies_completion.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0006_summary_contributions.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0007_watchlist_notification_dedupe.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0008_canonical_research_runs.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0009_project_role_rls.sql
 
-# 2. Verify RLS: as anon, SELECT on user_papers must return 0 rows;
-#    as user A, user B's rows must be invisible (see SECURITY_TEST_PLAN).
+# 2. Verify RLS: run the owner/member/editor/viewer/outsider/anon matrix in
+#    docs/security/SECURITY_TEST_PLAN.md, including project metadata, notes,
+#    source rows, memberships, runs, and events.
 
-# 3. Rollback (if needed): drop the policies/objects added above.
-#    Never drop user data tables as a 'rollback'.
+# 3. Do not use automatic down migrations. Roll back 0008/0009 only with a
+#    reviewed recovery plan, exported run history, stopped workers, and a
+#    tested restore. Never drop user data tables as a routine rollback.
 ```
 
-**Current status (2026-11-05):** migrations are drafted + statically verified but **not yet applied to any live database** (no DB credentials in the build sandbox). This is the one remaining manual step before production.
+**Current status (2026-11-08):** migrations are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.

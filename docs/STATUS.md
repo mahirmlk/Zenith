@@ -1,40 +1,38 @@
 # Shipment Readiness Status
 
-Reviewed 2026-11-08 against `update.md` and the runtime code. **Release status: not ready for production.** The application has a working local feature set, but the evidence and operational controls do not support a production-ready claim.
+Reviewed 2026-11-08 against `update.md`, the current code, migrations, and local checks. **Release status: not ready for production.** Core local paths have improved, but production evidence and several requested product capabilities are still missing.
 
 | Capability | Verified state | Evidence / remaining gap |
 |---|---|---|
-| Paper feed, auth, and search | Implemented; backend suite passed locally | Authenticated search, distributed per-user UTC daily budgets, hashed idempotency keys, and run queueing exist. Production run state remains Redis, not the canonical Postgres tables. |
-| Streaming and run lifecycle | Improved; durable Postgres state remains open | Redis Streams keep jobs pending until ack and reclaim abandoned work; run leases prevent concurrent execution; cancellation suppresses late results; the UI deduplicates replay and supports cancel. Production startup requires shared Redis for rate limits and budgets. |
-| Tenant security | Partial; production unverified | JWT validation and RLS migration files exist. Project access is owner/member scoped, viewers are read-only, editors can write, and only owners can invite/delete. Migration application, RLS behavior, and negative isolation tests remain unverified against staging/live Supabase. |
-| Projects | Partial | CRUD, notes, member-role authorization, and project listing for owners and members exist alongside a basic list/create page. Invitation delivery and a complete collaboration UX are not implemented. |
-| Retrieval and evidence | Partial | Project answer/compare now authorize members and limit to attached sources; answer returns exact abstract sentences with IDs and abstains without keyword overlap. This is extractive and does not synthesize cross-paper evidence; generic retrieval route also authorizes project members. |
-| Paper-to-code | Planning only | Runner is feature gated. The API passes no code to it; execution path is not a complete approval-and-isolation workflow. Keep disabled. |
-| Watchlists and notifications | API/storage implemented; recurring operation unverified | Migration 0007 adds watchlist linkage and deduplication; cadence and enabled state are honored. Scheduled monitoring is not enabled as an operational service. |
-| Health and production controls | Implemented locally; production unverified | Readiness checks bounded Supabase and Redis connectivity; production rate limits and search budgets fail closed without Redis. Live dependency behavior and alerting have not been verified. |
-| Evals | Deterministic code-path smoke; not a product quality gate | Runner invokes production hybrid ranking and extractive claim selection on a two-case fixed corpus. It lacks a sufficiently broad quality baseline and does not test a deployed service. |
-| CI | Automated workflow exists; full gate not verified here | CI runs on pushes and PRs. Compose build previously required a missing `.env`; workflow now creates a secret-free empty file before build. No CI run/link is available from this workspace. |
-| Frontend checks | Passed locally | `npm run lint`, `npm run typecheck`, and `npm run test` passed (18 tests across 4 files); `npm run build` passed after running with elevated filesystem access. |
-| Deployment and migrations | Not production verified | No staging deployment, live dependency/readiness test, migration application, backup restore, or operational monitoring evidence was available. |
+| Paper feed, auth, and search | Implemented locally | Authenticated search, distributed per-user UTC budgets, hashed idempotency keys, queueing, and shared Redis leases exist. Provider behavior and distributed operation have not been tested against staging services. |
+| Run lifecycle and persistence | Postgres canonical store implemented; deployment unverified | Production selects `PostgresRunStore` for run metadata/results/events and fails closed when Supabase schema/RPCs or Redis are unavailable. Redis Streams deliver jobs and recover pending work. LangGraph intermediate state is not checkpointed, so a recovered run restarts from the beginning. |
+| Tenant security | Code and migrations implemented; production unverified | JWT validation and migrations 0001–0009 exist. Project owner/member/editor/viewer rules and narrow direct-auth RLS policies are present. SQL has only static tests; migration application and negative tenant-isolation tests against Supabase remain open. |
+| Projects | Partial | CRUD, notes, membership/role authorization, source attachment, and owner/shared project listing exist. Invitation delivery and a complete collaboration UX are not implemented. |
+| Retrieval and evidence | Extractive preview with regression gate | Project answers/comparisons authorize members, restrict to attached sources, require substantive overlap, filter unrelated entities, and exclude instruction-like abstract sentences. Answers use exact abstract sentences; there is no cross-paper synthesis or claim-level evidence-span evaluation. |
+| Paper-to-code | Planning / guarded only | Runner is feature gated and receives no code from the API. Approval, isolation, resource limits, and review workflow are not a complete product path. Keep execution disabled. |
+| Watchlists and notifications | Scheduled code implemented; live operation unverified | Daily 02:00 UTC polling and API/Fly/manual ingestion triggers share one Redis lease. Retry, overlap, lease-loss, and cancellation behavior have local tests. Live Redis coordination, scheduler uptime, delivery, and alerting are unverified. |
+| Health and production controls | Implemented locally; production unverified | Readiness checks bounded Supabase and Redis connectivity and verifies the production Postgres run-store schema/RPCs. Production budgets fail closed without Redis. No live dependency, alerting, or outage exercise was run. |
+| Evals | Deterministic regression gate passes | 12 hand-authored cases run the production ranker and extractive selector; all 12 pass and the fabricated-citation negative control passes. This does not establish broad scientific quality or deployed-provider behavior. |
+| CI and local checks | Local checks pass; remote gate unverified | Ruff and backend tests pass locally; eval passes. Frontend lint/typecheck/tests/build passed earlier in this branch. CI runs mypy with `continue-on-error: true`; the current local mypy run reports substantial existing debt. No remote CI run is available. |
+| Deployment and migrations | Not production verified | Migrations 0001–0009 have not been applied to staging/live. Docker image build, staging deployment, migration/rollback, backup restore, security isolation, provider behavior, and operational monitoring evidence are unavailable. |
 
 ## Release blockers
 
-1. Store canonical run metadata/events and state in Postgres; integration-test Redis recovery and run replay across process restarts.
-2. Apply/verify RLS migrations against staging with negative tenant-isolation tests and validate the new project role rules against real Supabase policies.
-3. Extend extractive research preview to evaluated synthesis only after adding claim-level evidence spans; current endpoint labels itself as extractive.
-4. Expand the real-code-path eval smoke into a versioned quality suite and record measured baselines before gates.
-5. Complete the implementation-plan approval flow and keep arbitrary execution disabled until the isolated runner is independently reviewed.
-6. Enable and verify scheduled monitoring; test readiness and fail-closed rate limits against reachable and unavailable shared dependencies.
-7. Obtain passing CI/build evidence, deploy to staging, verify migration and rollback procedures, and complete restore/security/eval gates from `update.md` §16 and §19.
+1. Apply migrations 0001–0009 in staging; verify Postgres RPC behavior, RLS with owner/member/editor/viewer/outsider/anon cases, rollback, and backup restore.
+2. Exercise Redis queue recovery, scheduler/API/Fly overlap, lease loss, cancellation, and restart behavior with real shared Redis and Supabase services. Add durable LangGraph checkpoints or explicitly accept and test restart-from-start semantics before release.
+3. Run remote CI, Docker image build, and a staging deployment; verify readiness, provider integration, migrations, alerts, and recovery under dependency outages.
+4. Expand the small hand-authored eval corpus and add deployed-service/provider tests. Keep research output extractive until claim-level evidence spans and synthesis quality are evaluated.
+5. Complete the implementation-plan approval and isolated execution workflow before enabling paper-to-code execution; keep arbitrary execution disabled until that review is complete.
+6. Complete invitation delivery and collaboration UX if they are required for the release scope.
+7. Reduce mypy debt and make the type gate blocking before claiming a fully clean CI gate.
 
-The feature branches and local migration files are not evidence that these items have shipped. Do not describe Zenith as production-ready until the blockers above have test and deployment evidence.
+The code and local migrations are not evidence that staging or production behavior is safe. Do not describe Zenith as production-ready until the release blockers have verified evidence.
 
 ## Validation evidence
 
-- Frontend lint: passed using ESLint on source/config paths.
-- Frontend typecheck: passed.
-- Frontend tests: passed, 18 tests across 4 files.
-- Frontend production build: passed with elevated filesystem access after ordinary sandboxed builds failed with `EPERM` creating `.next` output directories.
-- Backend Ruff: passed (`python -m ruff check .`) on the current working tree.
-- Backend pytest: passed, 116 tests with 6 skipped (`python -m pytest -q`, 85.83 seconds). The sync Starlette TestClient was replaced by an in-process HTTPX ASGI adapter because its local socket pair hung in this sandbox. Optional Mem0/Qdrant and LangChain chat-model type imports no longer run eagerly at app startup. The Pydantic v2 settings deprecation was also removed.
-- CI: not run remotely. Docker image build: not run because the local Docker daemon is unavailable. Live/staging database, migrations, provider access, and deployment: not run.
+- Frontend lint, typecheck, tests (18 across 4 files), and production build passed earlier in this branch; frontend source has not changed since.
+- Backend Ruff: passed on the current working tree.
+- Backend pytest: 141 passed, 6 skipped in 75.70 seconds (`python -m pytest -q` from `backend`). The sync Starlette TestClient was replaced by an in-process HTTPX ASGI adapter because its local socket pair hung in this Windows sandbox.
+- Eval: `python evals/runners/run_evals.py` passed 12/12 cases with abstention accuracy, citation validity, exact support, claim coverage, Recall@5, and MRR@5 each at 1.000; fabricated-citation negative control passed.
+- Mypy: `python -m mypy .` reports 145 errors in 21 files (103 source files checked); CI currently treats this command as non-blocking.
+- CI: not run remotely. Docker image build, staging/live dependencies, migrations, provider access, backup restore, and deployment were not verified.

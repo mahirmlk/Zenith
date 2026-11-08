@@ -47,7 +47,7 @@ Zenith is a research paper discovery and organization app. The current UI provid
 └──────────────────────────────────────────────┘
 ```
 
-Run metadata/events are not yet stored in the `research_runs` / `run_events` Postgres tables; Redis is the current multi-instance runtime store. The LangGraph checkpointer is Postgres only when configured and installed, otherwise it falls back to in-memory. These are tracked release gaps, not durable-storage guarantees.
+Production run metadata, results, and ordered events are stored in Supabase Postgres through service-role-only atomic RPCs. Redis carries queued work and short-lived worker leases; the development fallback can use Redis or process memory. The LangGraph graph itself has no checkpointed intermediate state, so a worker restart recovers the queued run but restarts the graph from the beginning.
 
 ---
 
@@ -200,7 +200,7 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
 | **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries), edges cached in Supabase |
 | **Papers With Code** | GitHub repos for papers | PWC REST API (`httpx`) | No | No (silent degradation) |
-| **Redis** | Run records/events, Streams queue and global rate limits | `redis.asyncio` (required for production) | `REDIS_URL` | Streams pending-entry reclaim; connection readiness check |
+| **Redis** | Streams queue, worker leases, global rate limits, per-user budgets, scheduler leases | `redis.asyncio` (required for production) | `REDIS_URL` | Pending-entry reclaim; bounded readiness check |
 
 Retry is kept separate from the provider fallback chain: `async_retry` handles
 same-provider transient failures (connect/read timeouts, 5xx, rate limits on
@@ -215,10 +215,9 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 
 ### Paper Ingestion Flow
 ```
-1. An operator or externally configured scheduler triggers `python -m scripts.daily_fetch`
-   or POST `/api/internal/ingest` with `X-Admin-Key`. The GitHub Actions workflow
-   is manual-only; Fly defines a cron process group but a scheduled machine must
-   be configured outside this repository.
+1. The backend scheduler polls for the daily 02:00 UTC ingestion window when
+   Supabase and Redis are configured. Fly cron and admin manual triggers call
+   the same leased runner; only one ingestion job may hold the shared lease.
 2. Research fetches ArXiv + HF APIs (with async retry)
 3. New papers are deduplicated by paper ID (cross-source)
 4. Summary Agent generates TL;DR, key contributions, and difficulty via LLM
@@ -246,7 +245,7 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 ### Agent Pipeline Flow (with retry)
 ```
 POST /api/search (JWT, optional Idempotency-Key)
-  ├─► Creates run record in RedisRunStore (local RunStore in development only)
+  ├─► Creates canonical run record in PostgresRunStore in production (Redis or memory in development)
   ├─► Appends run_id to Redis Stream and returns run_id
   ├─► Worker consumer-group claims entry; per-run lease prevents double execution
   ├─► research_node → ArXiv + HF → deduplicate
@@ -408,9 +407,9 @@ Raw paper text (title + abstract)
 
 ## 8. Run State Management
 
-`services/run_store.py` offers a process-local `RunStore` for development and `RedisRunStore` when `REDIS_URL` is configured. Production must configure and reach Redis; production Redis connection failures fail closed. Redis stores run state/events with TTL, while `services/job_queue.py` uses a Redis Streams consumer group, pending-entry reclaim, and tokenized worker leases. Event appends and status changes use Redis transactions; terminal cancellation cannot be overwritten by late completion.
+`services/run_store.py` offers a process-local `RunStore` for development, `RedisRunStore` when Redis is configured outside production, and `PostgresRunStore` in production. Production requires reachable Supabase and Redis and fails closed if the `research_runs` / `run_events` schema or RPCs are missing. Postgres stores canonical run state/events; Redis provides Streams delivery and tokenized leases. Event sequence allocation and status changes are atomic Postgres RPCs; terminal cancellation cannot be overwritten by late completion.
 
-**Durability boundary:** the SQL migrations create `research_runs` and `run_events`, but runtime run execution does not currently use those tables. Redis is the canonical live run store at present. Redis persistence policy, failover, and restore must be operated and tested; Postgres-canonical metadata and events remain incomplete.
+**Durability boundary:** queue delivery is recoverable through Redis pending-entry reclaim, but LangGraph intermediate nodes are not checkpointed. A crashed worker can restart a run from the beginning after its lease expires. Staging must verify recovery, replay, cancellation, and migration/restore behavior before production.
 
 LangGraph checkpoints use Postgres only if `DATABASE_URL` is configured and the checkpointer package is installed; otherwise the graph uses `MemorySaver`. Do not treat that fallback as restart-safe.
 
@@ -499,7 +498,7 @@ Zenith/
 | Backend | Fly.io | Railway, Docker on cloud VM |
 | Database | Supabase (managed Postgres) | Self-hosted Postgres |
 | Redis | Managed Redis required in production / local Redis for development | In-memory is development-only |
-| Daily ingestion scheduler | Externally scheduled Fly process group (must be configured) | Manual GitHub Actions dispatch → `/api/internal/ingest` |
+| Daily ingestion scheduler | Backend 02:00 UTC poller, coordinated by a shared Redis lease | Fly cron/manual admin triggers use the same guarded runner |
 | CI/CD | GitHub Actions on push, pull request, and manual dispatch | Run lint/test/build locally |
 
 Docker Compose files are available for both local development (`docker-compose.yml`) and single-server production deployment (`docker-compose.prod.yml`).
