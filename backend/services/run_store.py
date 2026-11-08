@@ -143,8 +143,11 @@ class RunStore:
 
 
 class RedisRunStore:
-    """Redis-backed run state and leases. Postgres canonical storage is not
-    wired yet; production still requires the separately tracked DB work."""
+    """Redis-backed run state and leases for local/development deployments.
+
+    Production uses :class:`PostgresRunStore` for canonical metadata and
+    events while Redis remains the queue and worker-lease service.
+    """
 
     def __init__(self, redis_url: str = "redis://localhost:6379", ttl_seconds: int = 3600):
         self._redis_url = redis_url
@@ -366,10 +369,256 @@ class RedisRunStore:
         pass
 
 
+class PostgresRunStore(RedisRunStore):
+    """Canonical run/event storage in Postgres with Redis worker leases.
+
+    Redis keeps its existing job queue and lease role. Run metadata, results,
+    and ordered events are read from and committed to Supabase Postgres so a
+    backend restart cannot erase the API's run history.
+    """
+
+    def __init__(self, database, redis_url: str, ttl_seconds: int = 3600):
+        super().__init__(redis_url=redis_url, ttl_seconds=ttl_seconds)
+        self._database = database
+
+    async def verify_schema(self) -> None:
+        """Fail fast when the canonical run migration is absent."""
+        await (
+            self._database.table("research_runs")
+            .select("id,user_id,query,model,results,status,created_at,updated_at,started,idempotency_key")
+            .limit(0)
+            .execute()
+        )
+        # These no-op RPCs also verify that PostgREST has refreshed its schema
+        # cache and that service_role can invoke the security-definer writers.
+        await self._database.rpc(
+            "update_research_run_atomic",
+            {
+                "p_run_id": None,
+                "p_status": None,
+                "p_results": None,
+                "p_started": False,
+            },
+        ).execute()
+        await self._database.rpc(
+            "append_run_event_atomic",
+            {"p_run_id": None, "p_kind": "readiness_probe", "p_payload": {}},
+        ).execute()
+        await (
+            self._database.table("run_events")
+            .select("run_id,sequence,kind,safe_payload,created_at")
+            .limit(0)
+            .execute()
+        )
+
+    @staticmethod
+    def _idempotency_digest(user_id: Optional[str], idempotency_key: Optional[str]) -> Optional[str]:
+        if not idempotency_key:
+            return None
+        return hashlib.sha256(
+            f"{user_id or ''}\0{idempotency_key}".encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _row(response) -> Optional[dict]:
+        data = getattr(response, "data", None)
+        if isinstance(data, list):
+            return data[0] if data else None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _state_from_row(row: dict) -> RunState:
+        created_at = row.get("created_at")
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                created_at = datetime.now(timezone.utc)
+        if not isinstance(created_at, datetime):
+            created_at = datetime.now(timezone.utc)
+        results = row.get("results") or []
+        if isinstance(results, str):
+            try:
+                results = json.loads(results)
+            except json.JSONDecodeError:
+                results = []
+        return RunState(
+            run_id=str(row["id"]),
+            query=row.get("query") or "",
+            model=row.get("model"),
+            status=row.get("status") or "pending",
+            results=results if isinstance(results, list) else [],
+            created_at=created_at,
+            user_id=str(row["user_id"]) if row.get("user_id") is not None else None,
+            idempotency_key=row.get("idempotency_key"),
+            started=bool(row.get("started", False)),
+            events=[],
+        )
+
+    async def create(
+        self,
+        run_id: str,
+        query: str,
+        model: Optional[str] = None,
+        user_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> RunState:
+        digest = self._idempotency_digest(user_id, idempotency_key)
+        response = await self._database.rpc(
+            "create_research_run_atomic",
+            {
+                "p_run_id": run_id,
+                "p_user_id": user_id,
+                "p_query": query,
+                "p_model": model,
+                "p_idempotency_key": digest,
+                "p_ttl_seconds": self._ttl,
+            },
+        ).execute()
+        row = self._row(response)
+        if row is None:
+            raise RuntimeError("Postgres did not return the created research run")
+        state = self._state_from_row(row)
+        if state.query != query or state.model != model:
+            raise ValueError("Idempotency key was already used for a different request")
+        # Preserve the caller's opaque key in the immediate response. Only
+        # the digest is persisted and returned by later lookups.
+        state.idempotency_key = idempotency_key
+        return state
+
+    async def get(self, run_id: str) -> Optional[RunState]:
+        response = await (
+            self._database.table("research_runs")
+            .select("*")
+            .eq("id", run_id)
+            .maybe_single()
+            .execute()
+        )
+        row = self._row(response)
+        if row is None:
+            return None
+        state = self._state_from_row(row)
+        return None if datetime.now(timezone.utc) - state.created_at > timedelta(seconds=self._ttl) else state
+
+    async def find_idempotent(self, user_id: str, idempotency_key: str) -> Optional[RunState]:
+        digest = self._idempotency_digest(user_id, idempotency_key)
+        response = await (
+            self._database.table("research_runs")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("idempotency_key", digest)
+            .maybe_single()
+            .execute()
+        )
+        row = self._row(response)
+        if row is None:
+            return None
+        state = self._state_from_row(row)
+        if datetime.now(timezone.utc) - state.created_at > timedelta(seconds=self._ttl):
+            return None
+        state.idempotency_key = idempotency_key
+        return state
+
+    async def update(
+        self,
+        run_id: str,
+        status: Optional[str] = None,
+        results: Optional[list] = None,
+    ) -> None:
+        response = await self._database.rpc(
+            "update_research_run_atomic",
+            {
+                "p_run_id": run_id,
+                "p_status": status,
+                "p_results": results,
+                "p_started": status == "running",
+            },
+        ).execute()
+        if response.data is False:
+            logger.debug("Run %s missing or already terminal; update ignored", run_id)
+
+    async def try_start(self, run_id: str) -> bool:
+        """Claim the Redis lease, then persist running state atomically."""
+        state = await self.get(run_id)
+        if state is None or state.status in TERMINAL_STATUSES:
+            return False
+        await self._ensure_connected()
+        lease_key = self._lease_key(run_id)
+        token = secrets.token_urlsafe(24)
+        acquired = await self._redis.set(
+            lease_key, token, nx=True, ex=self._lease_seconds
+        )
+        if not acquired:
+            return False
+        self._lease_tokens[run_id] = token
+        try:
+            response = await self._database.rpc(
+                "update_research_run_atomic",
+                {
+                    "p_run_id": run_id,
+                    "p_status": "running",
+                    "p_results": None,
+                    "p_started": True,
+                },
+            ).execute()
+            if not response.data:
+                await self.release(run_id)
+                return False
+            return True
+        except Exception:
+            await self.release(run_id)
+            raise
+
+    async def add_event(self, run_id: str, event: str, data: dict) -> None:
+        await self._database.rpc(
+            "append_run_event_atomic",
+            {"p_run_id": run_id, "p_kind": event, "p_payload": data},
+        ).execute()
+
+    async def get_events(self, run_id: str) -> list[dict]:
+        response = await (
+            self._database.table("run_events")
+            .select("sequence,kind,safe_payload")
+            .eq("run_id", run_id)
+            .order("sequence")
+            .execute()
+        )
+        return [
+            {
+                "sequence": row["sequence"],
+                "event": row["kind"],
+                "data": row.get("safe_payload") or {},
+            }
+            for row in (response.data or [])
+        ]
+
+    async def cleanup(self) -> None:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._ttl)
+        await (
+            self._database.table("research_runs")
+            .delete()
+            .lt("created_at", cutoff.isoformat())
+            .execute()
+        )
+
+
 async def _create_run_store():
     from config import get_settings
 
     settings = get_settings()
+    if settings.app_env == "production":
+        if not settings.redis_url:
+            raise RuntimeError("REDIS_URL is required for production run leases and queueing")
+        from services.supabase_client import get_supabase
+
+        database = await get_supabase()
+        store = PostgresRunStore(database, redis_url=settings.redis_url)
+        await store._ensure_connected()
+        await store._redis.ping()
+        await store.verify_schema()
+        logger.info("Using PostgresRunStore with Redis leases")
+        return store
+
     if settings.redis_url:
         try:
             store = RedisRunStore(redis_url=settings.redis_url)
@@ -387,12 +636,17 @@ async def _create_run_store():
 
 
 _instance = None
+_instance_lock: Optional[asyncio.Lock] = None
 
 
 async def get_run_store():
-    global _instance
+    global _instance, _instance_lock
     if _instance is None:
-        _instance = await _create_run_store()
+        if _instance_lock is None:
+            _instance_lock = asyncio.Lock()
+        async with _instance_lock:
+            if _instance is None:
+                _instance = await _create_run_store()
     return _instance
 
 
@@ -419,6 +673,14 @@ class _RunStoreProxy:
     async def try_start(self, run_id):
         store = await self._store()
         return await store.try_start(run_id)
+
+    async def heartbeat(self, run_id):
+        store = await self._store()
+        return await store.heartbeat(run_id)
+
+    async def release(self, run_id):
+        store = await self._store()
+        await store.release(run_id)
 
     async def add_event(self, run_id, event, data):
         store = await self._store()
