@@ -7,6 +7,7 @@ never mixed across project scopes at the router layer.
 import math
 import re
 from collections import Counter
+from typing import Any
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _QUERY_STOPWORDS = frozenset(
@@ -45,14 +46,14 @@ def query_entities(text: str) -> set[str]:
     return entities
 
 
-def bm25_scores(query: str, docs: list[dict], k1: float = 1.5, b: float = 0.75) -> list[float]:
+def bm25_scores(query: str, docs: list[dict[str, Any]], k1: float = 1.5, b: float = 0.75) -> list[float]:
     """BM25 score per doc (docs have title+abstract)."""
     q = sorted(query_terms(query))
     if not q or not docs:
         return [0.0] * len(docs)
     doc_tokens = [tokenize(f"{d.get('title','')} {d.get('abstract','')}") for d in docs]
     avgdl = sum(len(t) for t in doc_tokens) / max(len(doc_tokens), 1)
-    df = Counter()
+    df: Counter[str] = Counter()
     for toks in doc_tokens:
         df.update(set(toks))
     n = len(docs)
@@ -82,7 +83,11 @@ def hybrid_fuse(bm25: list[float], vector: list[float], alpha: float = 0.5) -> l
     return [alpha * x + (1 - alpha) * y for x, y in zip(b, v)]
 
 
-def hybrid_rank(query: str, docs: list[dict], vector_scores: list[float] | None = None) -> list[dict]:
+def hybrid_rank(
+    query: str,
+    docs: list[dict[str, Any]],
+    vector_scores: list[float] | None = None,
+) -> list[dict[str, Any]]:
     """Return docs with `score` attached, sorted descending."""
     bm25 = bm25_scores(query, docs)
     vector = vector_scores if vector_scores is not None else [0.0] * len(docs)

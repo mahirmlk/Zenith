@@ -17,7 +17,9 @@ def sandbox_enabled() -> bool:
     return os.environ.get("SANDBOX_ENABLED", "false").lower() == "true"
 
 
-def run_in_sandbox(paper_id: str = "", code: str = "", timeout_seconds: int = 120) -> dict:
+def run_in_sandbox(
+    paper_id: str = "", code: str = "", timeout_seconds: int = 120
+) -> dict[str, str]:
     if not sandbox_enabled():
         return {
             "status": "not attempted",

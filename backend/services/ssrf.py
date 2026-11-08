@@ -54,6 +54,8 @@ def validate_public_url(url: str, *, resolve: bool = True) -> str:
             raise ValueError(f"Cannot resolve hostname: {host}") from exc
         for info in infos:
             ip_str = info[4][0]
+            if not isinstance(ip_str, str):
+                raise ValueError(f"Cannot validate DNS result for hostname: {host}")
             if _ip_is_blocked(ip_str):
                 raise ValueError(f"Hostname resolves to non-public IP: {host} -> {ip_str}")
     return url

@@ -7,8 +7,17 @@ In-memory for now; the durable implementation belongs in Postgres
 """
 import time
 import uuid
+from typing import TypedDict
 
-_approvals: dict[str, dict] = {}
+
+class Approval(TypedDict):
+    user_id: str
+    action: str
+    resource_id: str
+    expires_at: float
+
+
+_approvals: dict[str, Approval] = {}
 
 
 def record_approval(user_id: str, action: str, resource_id: str, ttl_seconds: int = 300) -> str:

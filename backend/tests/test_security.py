@@ -66,6 +66,12 @@ def test_ssrf_public_ip_allowed():
     assert validate_public_url("https://8.8.8.8/paper", resolve=False)
 
 
+def test_ssrf_fails_closed_for_malformed_dns_address(monkeypatch):
+    monkeypatch.setattr("services.ssrf.socket.getaddrinfo", lambda *_args: [(2, 1, 6, "", (42, 0))])
+    with pytest.raises(ValueError, match="Cannot validate DNS result"):
+        validate_public_url("https://papers.example", resolve=True)
+
+
 def test_model_registry_rejects_unknown():
     with pytest.raises(ValueError):
         validate_model("evil/expensive-model", "summary_default")
