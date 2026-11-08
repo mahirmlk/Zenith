@@ -19,6 +19,7 @@ export type PlanFactCategory =
   | 'metric'
   | 'training'
   | 'evaluation'
+  | 'limitation'
   | 'compute';
 
 export interface EvidenceSpan {

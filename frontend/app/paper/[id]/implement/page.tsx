@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { fetchImplementationPlan } from '@/lib/api';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { fetchImplementationExport, fetchImplementationPlan } from '@/lib/api';
 import type { ImplementationPlan, PlanFactCategory } from '@/types';
 
 const FACT_LABELS: Record<PlanFactCategory, string> = {
@@ -13,6 +13,7 @@ const FACT_LABELS: Record<PlanFactCategory, string> = {
   metric: 'Metrics',
   training: 'Training',
   evaluation: 'Evaluation',
+  limitation: 'Limitations',
   compute: 'Compute',
 };
 
@@ -229,6 +230,20 @@ function PlanContent({ plan }: { plan: ImplementationPlan }) {
 export default function ImplementationPlanPage() {
   const params = useParams<{ id: string }>();
   const paperId = params.id;
+  const exportMutation = useMutation({
+    mutationFn: () => fetchImplementationExport(paperId),
+    onSuccess: (markdown) => {
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${paperId.replace(/[^A-Za-z0-9._-]/g, '_')}-reproducibility-brief.md`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    },
+  });
   const { data: plan, isPending, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['implementationPlan', paperId],
     queryFn: () => fetchImplementationPlan(paperId),
@@ -277,10 +292,26 @@ export default function ImplementationPlanPage() {
         ) : plan ? (
           <>
             <div className="surface-card mb-5 p-5 sm:p-7">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-zenith-surface px-3 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-zenith-secondary">{plan.status}</span>
-                <span className="font-mono text-[10px] text-zenith-muted">Source: {plan.paper_id}</span>
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-zenith-surface px-3 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-zenith-secondary">{plan.status}</span>
+                  <span className="font-mono text-[10px] text-zenith-muted">Source: {plan.paper_id}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => exportMutation.mutate()}
+                  disabled={exportMutation.isPending}
+                  aria-busy={exportMutation.isPending}
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-zenith-border bg-white px-4 py-2 text-[12px] font-semibold text-ink-900 transition hover:border-zenith-secondary/50 hover:bg-zenith-surface disabled:cursor-wait disabled:opacity-60"
+                >
+                  {exportMutation.isPending ? 'Preparing download…' : 'Download Markdown'}
+                </button>
               </div>
+              {exportMutation.isError && (
+                <p className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[12px] leading-[1.6] text-red-800" role="alert">
+                  Markdown export failed: {exportMutation.error instanceof Error ? exportMutation.error.message : 'Please try again.'}
+                </p>
+              )}
               <h2 className="mb-6 font-serif text-[21px] leading-[1.35] text-ink-900 sm:text-[24px]">{plan.title || 'Untitled paper'}</h2>
               <PlanContent plan={plan} />
             </div>

@@ -101,6 +101,18 @@ export async function fetchImplementationPlan(paperId: string): Promise<Implemen
   return res.json();
 }
 
+export async function fetchImplementationExport(paperId: string): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/implementations/${encodeURIComponent(paperId)}/export`,
+    { headers: await getHeaders() },
+  );
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.text();
+}
+
 export async function fetchPaperCode(id: string): Promise<{ repos: { url: string; stars: number }[] }> {
   const res = await fetch(`${API_BASE}/api/papers/${id}/code`, {
     headers: await getHeaders(),
