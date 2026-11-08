@@ -3,44 +3,68 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sse_starlette.sse import EventSourceResponse
 
+from config import get_settings
 from agents.orchestrator import run_orchestrator
 from dependencies import get_current_user
 from models.schemas import AgentStep
+from security.authorization import can_access_run
 from services.run_store import run_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stream", tags=["stream"])
 
-_sse_sessions: dict[str, dict] = {}  # type: ignore[type-arg]
 # Background tasks started once per run (update.md §7.1): a disconnect or
 # reconnect must never cancel or duplicate the work.
 _running_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
 
 
 @router.post("/session")
-async def create_sse_session(user: dict = Depends(get_current_user)) -> dict[str, str]:  # type: ignore[type-arg]
-    """Exchange JWT for a short-lived SSE session token."""
-    session_id = str(uuid.uuid4())
-    _sse_sessions[session_id] = {
-        "user_id": user["user_id"],
-        "created_at": datetime.now(timezone.utc),
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
-    }
-    return {"session_token": session_id}
+async def create_sse_session(request: Request, user: dict = Depends(get_current_user)) -> dict[str, str]:  # type: ignore[type-arg]
+    """Exchange a bearer JWT for a short-lived stateless SSE token.
+
+    Using a server-only key lets every API replica verify the token without
+    process-local session state.
+    """
+    key = get_settings().supabase_service_role_key
+    if not key:
+        raise HTTPException(status_code=503, detail="Streaming authentication unavailable")
+    now = datetime.now(timezone.utc)
+    session_token = jwt.encode(
+        {
+            "sub": user["user_id"],
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+            "iss": "zenith-sse",
+            "jti": str(uuid.uuid4()),
+        },
+        key,
+        algorithm="HS256",
+    )
+    return {"session_token": session_token}
 
 
 def _validate_sse_session(session_token: str) -> str | None:
-    session = _sse_sessions.get(session_token)
-    if not session:
+    key = get_settings().supabase_service_role_key
+    if not key:
         return None
-    if datetime.now(timezone.utc) > session["expires_at"]:
-        _sse_sessions.pop(session_token, None)  # guard: concurrent expiry
+    try:
+        payload = jwt.decode(
+            session_token,
+            key,
+            algorithms=["HS256"],
+            issuer="zenith-sse",
+            options={"require": ["sub", "iat", "exp", "iss", "jti"]},
+        )
+        subject = payload.get("sub")
+        return subject if isinstance(subject, str) and subject else None
+    except InvalidTokenError:
         return None
-    return session["user_id"]  # type: ignore[no-any-return]
 
 
 async def _run_once(run_id: str, query: str, user_id: str, model: str | None) -> None:
@@ -106,6 +130,7 @@ async def event_generator(run_id: str, query: str, user_id: str, model: str | No
 @router.get("/{run_id}")
 async def stream(
     run_id: str,
+    request: Request,
     token: str | None = Query(default=None, description="SSE session token"),
 ) -> EventSourceResponse:
     user_id = _validate_sse_session(token) if token else None
@@ -117,6 +142,6 @@ async def stream(
         raise HTTPException(status_code=404, detail="Run not found or expired")
     # Ownership (update.md §5.2): a run bound to a user is only streamable
     # by that user. 404 (not 403) avoids leaking existence.
-    if getattr(state, "user_id", None) and state.user_id != user_id:
+    if not can_access_run(getattr(state, "user_id", None), user_id):
         raise HTTPException(status_code=404, detail="Run not found or expired")
     return EventSourceResponse(event_generator(run_id, state.query, user_id, state.model))  # type: ignore[arg-type,unused-ignore]

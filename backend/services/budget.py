@@ -94,6 +94,29 @@ async def consume(user_id: str, daily_limit: int) -> bool:
     return await _consume_memory(user_id, daily_limit)
 
 
+async def refund(user_id: str) -> None:
+    """Refund a reservation when a concurrent idempotent create replays."""
+    settings = get_settings()
+    day, _ = _utc_day_and_ttl()
+    user_digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    key = f"zenith:budget:search:{user_digest}:{day}"
+    if settings.redis_url:
+        client = await _get_redis_client(settings.redis_url)
+        await client.eval(
+            "local current = tonumber(redis.call('GET', KEYS[1]) or '0') "
+            "if current <= 0 then return 0 end "
+            "return redis.call('DECR', KEYS[1])",
+            1,
+            key,
+        )
+        return
+    if settings.app_env.lower() == "production":
+        raise BudgetUnavailableError("Redis is required for production search budgets")
+    async with _lock:
+        if _counts.get((user_id, day), 0) > 0:
+            _counts[(user_id, day)] -= 1
+
+
 def reset_for_tests() -> None:
     """Clear process-local state and the cached client reference for tests."""
     global _redis, _redis_url

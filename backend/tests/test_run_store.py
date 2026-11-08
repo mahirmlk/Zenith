@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from services.run_store import RunStore
+from services.run_store import RedisRunStore, RunStore
 
 
 @pytest.mark.asyncio
@@ -82,3 +82,68 @@ async def test_run_store_running_lease_is_released_for_recovery():
 
     await store.release("run-recover")
     assert await store.try_start("run-recover") is True
+
+
+@pytest.mark.asyncio
+async def test_run_store_idempotency_replays_same_request():
+    store = RunStore(ttl_seconds=60)
+    first = await store.create(
+        "run-first", "same query", model="model-a", user_id="user-1", idempotency_key="key-1"
+    )
+    replay = await store.create(
+        "run-second", "same query", model="model-a", user_id="user-1", idempotency_key="key-1"
+    )
+
+    assert replay.run_id == first.run_id
+
+
+@pytest.mark.asyncio
+async def test_run_store_idempotency_rejects_key_reuse_for_different_request():
+    store = RunStore(ttl_seconds=60)
+    await store.create(
+        "run-first", "original query", model="model-a", user_id="user-1", idempotency_key="key-1"
+    )
+
+    with pytest.raises(ValueError, match="different request"):
+        await store.create(
+            "run-second", "different query", model="model-a", user_id="user-1", idempotency_key="key-1"
+        )
+
+
+class _FakeRedis:
+    def __init__(self):
+        self.values = {}
+
+    async def eval(self, _script, _key_count, index_key, run_id, serialized, ttl):
+        current = self.values.get(index_key)
+        if current and current in self.values:
+            return current
+        self.values[run_id] = serialized
+        self.values[index_key] = run_id
+        return run_id
+
+    async def get(self, key):
+        return self.values.get(key)
+
+
+@pytest.mark.asyncio
+async def test_redis_run_store_idempotency_uses_atomic_index_and_replays():
+    store = RedisRunStore()
+    store._redis = _FakeRedis()
+
+    async def connected():
+        return None
+
+    store._ensure_connected = connected
+    first = await store.create(
+        "redis-first", "same query", model="model-a", user_id="user-1", idempotency_key="key-1"
+    )
+    replay = await store.create(
+        "redis-second", "same query", model="model-a", user_id="user-1", idempotency_key="key-1"
+    )
+
+    assert replay.run_id == first.run_id == "redis-first"
+    with pytest.raises(ValueError, match="different request"):
+        await store.create(
+            "redis-third", "different query", model="model-a", user_id="user-1", idempotency_key="key-1"
+        )

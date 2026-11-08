@@ -4,6 +4,7 @@ import os
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from main import app
 
@@ -37,6 +38,43 @@ def test_account_export_structure(monkeypatch):
 
 
 def test_stream_session_exchange_requires_auth(monkeypatch):
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key-long-enough")
     resp = client.post("/api/stream/session", headers=_headers(monkeypatch))
-    # Session token is issued only for authed users; shape check when live.
-    assert resp.status_code in (200, 401, 500)
+    assert resp.status_code == 200
+    assert isinstance(resp.json().get("session_token"), str)
+
+
+def test_sse_session_token_verifies_without_process_local_state(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-auth-secret-long-enough")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key-long-enough")
+    auth_token = jwt.encode({"sub": "u-stateless"}, "test-auth-secret-long-enough", algorithm="HS256")
+
+    response = client.post(
+        "/api/stream/session",
+        headers={"Authorization": f"Bearer {auth_token}"},
+    )
+
+    assert response.status_code == 200
+    session_token = response.json()["session_token"]
+    from routers.stream import _validate_sse_session
+
+    assert _validate_sse_session(session_token) == "u-stateless"
+    assert _validate_sse_session(session_token + "tampered") is None
+
+
+@pytest.mark.asyncio
+async def test_stream_denies_ownerless_legacy_run(monkeypatch):
+    from routers import stream
+    from services.run_store import RunState
+
+    async def get_ownerless(_run_id):
+        return RunState(run_id="orphan", query="private query", user_id=None)
+
+    monkeypatch.setattr(stream.run_store, "get", get_ownerless)
+    monkeypatch.setattr(stream, "_validate_sse_session", lambda _token: "unrelated-user")
+
+    with pytest.raises(HTTPException) as error:
+        await stream.stream("orphan", request=object(), token="valid-session")
+
+    assert error.value.status_code == 404

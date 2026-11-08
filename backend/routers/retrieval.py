@@ -7,10 +7,11 @@ verified server-side against the DB, never trusted from the body.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
+from security.authorization import can_access_project
 from services.retrieval import hybrid_rank
 from services.supabase_client import get_supabase
 
@@ -25,11 +26,32 @@ class HybridSearchRequest(BaseModel):
 
 
 @router.post("/search")
-async def hybrid_search(body: HybridSearchRequest, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def hybrid_search(body: HybridSearchRequest, request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     try:
         if body.project_id:
-            proj = await supabase.table("projects").select("owner_id").eq("id", body.project_id).single().execute()
-            if not proj.data or proj.data.get("owner_id") != user["user_id"]:
+            proj = await (
+                supabase.table("projects")
+                .select("owner_id")
+                .eq("id", body.project_id)
+                .maybe_single()
+                .execute()
+            )
+            if not proj.data:
+                raise HTTPException(status_code=404, detail="Project not found")
+            members = await (
+                supabase.table("project_members")
+                .select("user_id,role")
+                .eq("project_id", body.project_id)
+                .execute()
+            )
+            member_roles = {
+                row["user_id"]: row["role"]
+                for row in (members.data or [])
+                if row.get("user_id") and row.get("role")
+            }
+            if not can_access_project(
+                proj.data.get("owner_id", ""), member_roles, user["user_id"]
+            ):
                 raise HTTPException(status_code=404, detail="Project not found")
             src = await supabase.table("project_sources").select("paper_id").eq("project_id", body.project_id).execute()
             ids = [r["paper_id"] for r in (src.data or []) if r.get("paper_id")]

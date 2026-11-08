@@ -7,7 +7,7 @@ from a retrieved abstract and carries that paper's ID citation.
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agents.research_types import ResearchAnswer, build_comparison, classify_task
@@ -34,7 +34,7 @@ class ResearchRequest(BaseModel):
 
 
 @router.post("/plan")
-async def research_plan(body: ResearchRequest, user: dict = Depends(get_current_user)):
+async def research_plan(body: ResearchRequest, request: Request, user: dict = Depends(get_current_user)):
     return classify_task(body.query)
 
 
@@ -129,6 +129,7 @@ def _extractive_claims(query: str, ranked_papers: list[dict], limit: int = 3) ->
 @router.post("/compare")
 async def research_compare(
     body: ResearchRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase),
 ):
@@ -146,6 +147,7 @@ async def research_compare(
 @router.post("/answer", response_model=ResearchAnswer)
 async def research_answer(
     body: ResearchRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     supabase=Depends(get_supabase),
 ) -> ResearchAnswer:

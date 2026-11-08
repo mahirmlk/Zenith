@@ -99,6 +99,7 @@ async def test_research_answer_returns_verbatim_cited_project_evidence_for_membe
 
     result = await research_answer(
         ResearchRequest(query="diffusion models", project_id="proj"),
+        object(),
         {"user_id": "member"},
         supabase,
     )
@@ -119,6 +120,7 @@ async def test_research_answer_abstains_without_matching_abstract_evidence():
 
     result = await research_answer(
         ResearchRequest(query="quantum cryptography"),
+        object(),
         {"user_id": "reader"},
         supabase,
     )
@@ -135,6 +137,7 @@ async def test_project_research_hides_projects_from_nonmembers():
     with pytest.raises(HTTPException) as exc_info:
         await research_compare(
             ResearchRequest(query="diffusion", project_id="proj"),
+            object(),
             {"user_id": "outsider"},
             supabase,
         )
@@ -156,6 +159,7 @@ async def test_project_comparison_uses_only_attached_papers():
 
     result = await research_compare(
         ResearchRequest(query="diffusion", project_id="proj"),
+        object(),
         {"user_id": "owner"},
         supabase,
     )

@@ -22,6 +22,7 @@ class OrchestratorState(TypedDict):
     enriched_papers: list[dict]
     ranked_papers: list[dict]
     steps: list[AgentStep]
+    failed_agents: list[str]
 
 
 async def _emit(run_id: str, state: OrchestratorState, step: AgentStep):
@@ -43,6 +44,7 @@ async def _research_node(state: OrchestratorState) -> OrchestratorState:
         state["raw_papers"] = await research_agent(state["query"], cb)
     except Exception:
         await _emit(run_id, state, AgentStep(agent="research", status="error", message="Step failed"))
+        state["failed_agents"].append("research")
         state["raw_papers"] = []
     return state
 
@@ -59,6 +61,7 @@ async def _summary_node(state: OrchestratorState) -> OrchestratorState:
         )
     except Exception:
         await _emit(run_id, state, AgentStep(agent="summary", status="error", message="Step failed"))
+        state["failed_agents"].append("summary")
         state["enriched_papers"] = state["raw_papers"]
     return state
 
@@ -75,6 +78,7 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
         )
     except Exception:
         await _emit(run_id, state, AgentStep(agent="memory", status="error", message="Step failed"))
+        state["failed_agents"].append("memory")
         state["ranked_papers"] = state["enriched_papers"]
     return state
 
@@ -146,6 +150,7 @@ async def run_orchestrator(
         "enriched_papers": [],
         "ranked_papers": [],
         "steps": [],
+        "failed_agents": [],
     }
 
     try:
@@ -155,12 +160,16 @@ async def run_orchestrator(
         )
     except Exception:
         await callback(AgentStep(agent="orchestrator", status="error", message="Step failed"))
-        final_state = initial_state
+        raise
     finally:
         _callbacks.pop(run_id, None)
 
     if final_state is None:
-        final_state = initial_state
+        raise RuntimeError("Research graph returned no state")
+    if final_state.get("failed_agents"):
+        failed = ", ".join(final_state["failed_agents"])
+        await callback(AgentStep(agent="orchestrator", status="error", message="Step failed"))
+        raise RuntimeError(f"Research pipeline failed in: {failed}")
 
     papers = []
     for p in final_state.get("ranked_papers", []):
@@ -189,6 +198,6 @@ async def run_orchestrator(
         )
 
     result = PaperSearchResult(papers=papers, run_id=run_id)
-    await run_store.update(run_id, status="complete", results=[paper.model_dump() for paper in papers])
     await callback(AgentStep(agent="orchestrator", status="complete", count=len(papers)))
+    await run_store.update(run_id, status="complete", results=[paper.model_dump() for paper in papers])
     return result

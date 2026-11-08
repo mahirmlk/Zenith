@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
+from security.authorization import can_write_project
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -62,8 +63,35 @@ async def create_project(body: ProjectCreate, user: dict = Depends(get_current_u
 @router.get("")
 async def list_projects(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     try:
-        resp = await supabase.table("projects").select("*").eq("owner_id", user["user_id"]).is_("deleted_at", "null").execute()
-        return resp.data or []
+        user_id = user["user_id"]
+        memberships = await (
+            supabase.table("project_members")
+            .select("project_id")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        project_ids = list(dict.fromkeys(
+            row["project_id"] for row in (memberships.data or []) if row.get("project_id")
+        ))
+        owned = await (
+            supabase.table("projects")
+            .select("*")
+            .eq("owner_id", user_id)
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        shared = []
+        if project_ids:
+            shared_response = await (
+                supabase.table("projects")
+                .select("*")
+                .in_("id", project_ids)
+                .is_("deleted_at", "null")
+                .execute()
+            )
+            shared = shared_response.data or []
+        projects = {project["id"]: project for project in [*(owned.data or []), *shared]}
+        return list(projects.values())
     except Exception:
         logger.exception("list_projects failed")
         raise HTTPException(status_code=500, detail="Internal error")
@@ -77,6 +105,15 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user), s
 @router.patch("/{project_id}")
 async def update_project(project_id: str, body: ProjectUpdate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     project = await _owned_project(supabase, project_id, user["user_id"])
+    members = await (
+        supabase.table("project_members")
+        .select("user_id,role")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
+    if not can_write_project(project["owner_id"], member_roles, user["user_id"]):
+        raise HTTPException(status_code=403, detail="Project is read-only")
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
         # C3: bind the mutation to the owner as defence-in-depth.
@@ -90,7 +127,9 @@ async def update_project(project_id: str, body: ProjectUpdate, user: dict = Depe
 @router.delete("/{project_id}")
 async def delete_project(project_id: str, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     """Soft delete (deleted_at) — reversible, never hard-deletes user data."""
-    await _owned_project(supabase, project_id, user["user_id"])
+    project = await _owned_project(supabase, project_id, user["user_id"])
+    if project["owner_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the project owner can delete it")
     try:
         from datetime import datetime, timezone
         await supabase.table("projects").update(
@@ -110,7 +149,9 @@ class MemberInvite(BaseModel):
 @router.post("/{project_id}/members")
 async def add_member(project_id: str, body: MemberInvite, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     """Invite a member (owner-only). Role changes are audited."""
-    await _owned_project(supabase, project_id, user["user_id"])
+    project = await _owned_project(supabase, project_id, user["user_id"])
+    if project["owner_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the project owner can invite members")
     try:
         from security.audit import audit
         audit(user["user_id"], "project:invite", "allowed", project_id)
@@ -127,7 +168,16 @@ async def add_member(project_id: str, body: MemberInvite, user: dict = Depends(g
 
 @router.post("/{project_id}/notes")
 async def create_note(project_id: str, body: NoteCreate, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
-    await _owned_project(supabase, project_id, user["user_id"])
+    project = await _owned_project(supabase, project_id, user["user_id"])
+    members = await (
+        supabase.table("project_members")
+        .select("user_id,role")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
+    if not can_write_project(project["owner_id"], member_roles, user["user_id"]):
+        raise HTTPException(status_code=403, detail="Project is read-only")
     if body.source_id:
         # H5: source must belong to this project.
         src = await supabase.table("project_sources").select("id").eq("id", body.source_id).eq("project_id", project_id).maybe_single().execute()

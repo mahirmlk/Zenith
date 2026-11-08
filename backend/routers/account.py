@@ -6,7 +6,7 @@ documented in docs/security/DATA_HANDLING.md).
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from dependencies import get_current_user
 from services.supabase_client import get_supabase
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/account", tags=["account"])
 
 
 @router.get("/export")
-async def export_account(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def export_account(request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     uid = user["user_id"]
     try:
         saved = await supabase.table("user_papers").select("*").eq("user_id", uid).execute()
@@ -44,7 +44,7 @@ async def export_account(user: dict = Depends(get_current_user), supabase=Depend
 
 
 @router.delete("")
-async def delete_account(user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
+async def delete_account(request: Request, user: dict = Depends(get_current_user), supabase=Depends(get_supabase)):
     uid = user["user_id"]
     try:
         for table, col in (

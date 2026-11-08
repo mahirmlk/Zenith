@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from typing import Optional
 from models.schemas import Paper, SavePaperRequest
 from services.supabase_client import get_supabase
@@ -85,6 +85,7 @@ async def get_paper(  # type: ignore[no-untyped-def]
 
 @router.post("/{paper_id}/save")
 async def save_paper(  # type: ignore[no-untyped-def]
+    request: Request,
     paper_id: str,
     req: SavePaperRequest,
     supabase=Depends(get_supabase),
@@ -118,6 +119,7 @@ async def save_paper(  # type: ignore[no-untyped-def]
 
 @router.delete("/{paper_id}/save")
 async def unsave_paper(  # type: ignore[no-untyped-def]
+    request: Request,
     paper_id: str,
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),

@@ -1,7 +1,7 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi import BackgroundTasks
 from pydantic import BaseModel
 
@@ -26,7 +26,7 @@ def _require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
 
 
 @router.post("/ingest", response_model=IngestResponse, dependencies=[Depends(_require_admin_key)])
-async def trigger_daily_ingest(background_tasks: BackgroundTasks) -> IngestResponse:
+async def trigger_daily_ingest(request: Request, background_tasks: BackgroundTasks) -> IngestResponse:
     """Trigger the daily paper ingestion pipeline in the background.
 
     Intended for scheduled triggers (Fly scheduled machines or a GitHub

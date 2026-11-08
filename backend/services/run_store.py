@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 import asyncio
 import secrets
+import hashlib
 
 logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = {"complete", "failed", "cancelled"}
@@ -48,6 +49,8 @@ class RunStore:
                         and existing.user_id == user_id
                         and not self._expired(existing)
                     ):
+                        if existing.query != query or existing.model != model:
+                            raise ValueError("Idempotency key was already used for a different request")
                         return existing
             state = RunState(
                 run_id=run_id,
@@ -61,6 +64,17 @@ class RunStore:
 
     def _expired(self, state: RunState) -> bool:
         return datetime.now(timezone.utc) - state.created_at > self._ttl
+
+    async def find_idempotent(self, user_id: str, idempotency_key: str) -> Optional[RunState]:
+        async with self._lock:
+            for state in self._store.values():
+                if (
+                    state.user_id == user_id
+                    and state.idempotency_key == idempotency_key
+                    and not self._expired(state)
+                ):
+                    return state
+        return None
 
     async def get(self, run_id: str) -> Optional[RunState]:
         async with self._lock:
@@ -151,6 +165,13 @@ class RedisRunStore:
         d["created_at"] = state.created_at.isoformat()
         return json.dumps(d, default=str)
 
+    @staticmethod
+    def _idempotency_index_key(user_id: Optional[str], idempotency_key: str) -> str:
+        digest = hashlib.sha256(
+            f"{user_id or ''}\0{idempotency_key}".encode("utf-8")
+        ).hexdigest()
+        return f"zenith:runs:idempotency:{digest}"
+
     def _deserialize(self, data: str) -> RunState:
         d = json.loads(data)
         if isinstance(d.get("created_at"), str):
@@ -177,8 +198,34 @@ class RedisRunStore:
             run_id=run_id, query=query, model=model,
             user_id=user_id, idempotency_key=idempotency_key,
         )
-        await self._redis.set(run_id, self._serialize(state), ex=self._ttl)
-        return state
+        if not idempotency_key:
+            await self._redis.set(run_id, self._serialize(state), ex=self._ttl)
+            return state
+
+        index_key = self._idempotency_index_key(user_id, idempotency_key)
+        create_or_replay = """
+        local existing = redis.call('GET', KEYS[1])
+        if existing and redis.call('EXISTS', existing) == 1 then
+            return existing
+        end
+        redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+        redis.call('SET', KEYS[1], KEYS[2], 'EX', ARGV[2])
+        return KEYS[2]
+        """
+        actual_run_id = await self._redis.eval(
+            create_or_replay,
+            2,
+            index_key,
+            run_id,
+            self._serialize(state),
+            self._ttl,
+        )
+        stored_state = await self.get(actual_run_id)
+        if stored_state is None:
+            raise RuntimeError("Run idempotency record points to missing state")
+        if stored_state.query != query or stored_state.model != model:
+            raise ValueError("Idempotency key was already used for a different request")
+        return stored_state
 
     async def get(self, run_id: str) -> Optional[RunState]:
         await self._ensure_connected()
@@ -186,6 +233,11 @@ class RedisRunStore:
         if data is None:
             return None
         return self._deserialize(data)
+
+    async def find_idempotent(self, user_id: str, idempotency_key: str) -> Optional[RunState]:
+        await self._ensure_connected()
+        run_id = await self._redis.get(self._idempotency_index_key(user_id, idempotency_key))
+        return await self.get(run_id) if run_id else None
 
     async def update(self, run_id: str, status: Optional[str] = None, results: Optional[list] = None):
         await self._ensure_connected()
@@ -355,6 +407,10 @@ class _RunStoreProxy:
     async def get(self, run_id):
         store = await self._store()
         return await store.get(run_id)
+
+    async def find_idempotent(self, user_id, idempotency_key):
+        store = await self._store()
+        return await store.find_idempotent(user_id, idempotency_key)
 
     async def update(self, run_id, status=None, results=None):
         store = await self._store()
