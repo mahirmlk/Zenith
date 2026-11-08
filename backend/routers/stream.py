@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 import jwt
@@ -90,7 +91,12 @@ async def _run_once(run_id: str, query: str, user_id: str, model: str | None) ->
         _running_tasks.pop(run_id, None)
 
 
-async def event_generator(run_id: str, query: str, user_id: str, model: str | None):
+async def event_generator(
+    run_id: str,
+    query: str,
+    user_id: str,
+    model: str | None,
+) -> AsyncIterator[dict[str, Any]]:
     # Replay persisted events first (reconnect safety, update.md §7.1).
     # Track by max sequence (not len) to avoid missing events appended
     # between the replay read and the poll loop (bug-hunt P1).

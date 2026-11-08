@@ -11,6 +11,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +37,22 @@ def _use_redis() -> bool:
     return bool(get_settings().redis_url)
 
 
-async def _redis_client():
+async def _redis_client() -> Any:
     global _redis
     if _redis is None:
         import redis.asyncio as redis_mod
 
         from config import get_settings
 
-        _redis = redis_mod.from_url(get_settings().redis_url, decode_responses=True)
+        # redis-py exposes this module factory without a usable return stub.
+        _redis = redis_mod.from_url(  # type: ignore[no-untyped-call]
+            get_settings().redis_url,
+            decode_responses=True,
+        )
     return _redis
 
 
-async def _ensure_group(client) -> None:
+async def _ensure_group(client: Any) -> None:
     try:
         await client.xgroup_create(QUEUE_KEY, CONSUMER_GROUP, id="0", mkstream=True)
     except Exception as exc:
@@ -175,7 +180,7 @@ async def worker_loop() -> None:
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(4)
 
-    async def _bounded(message: QueueMessage):
+    async def _bounded(message: QueueMessage) -> None:
         async with _semaphore:
             handled = await _execute_run(message.run_id)
             if handled:

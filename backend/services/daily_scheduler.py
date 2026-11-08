@@ -11,7 +11,7 @@ import logging
 import secrets
 from datetime import date, datetime, time, timezone
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _due_at(now: datetime) -> datetime:
     return datetime.combine(now.date(), RUN_AT_UTC, tzinfo=timezone.utc)
 
 
-async def _redis_client():
+async def _redis_client() -> Any:
     global _redis
     if _redis is None:
         from config import get_settings
@@ -81,7 +81,8 @@ async def _redis_client():
         url = get_settings().redis_url
         if not url:
             raise RuntimeError("REDIS_URL is required for scheduled ingestion")
-        _redis = redis_mod.from_url(
+        # redis-py exposes this module factory without a usable return stub.
+        _redis = redis_mod.from_url(  # type: ignore[no-untyped-call]
             url,
             decode_responses=True,
             socket_connect_timeout=3,
@@ -94,7 +95,7 @@ async def run_with_ingestion_lease(
     runner: Callable[[], Awaitable[object]],
     *,
     source: str,
-    redis=None,
+    redis: Any | None = None,
     on_acquired: Callable[[], Awaitable[None]] | None = None,
     completion_day: date | None = None,
 ) -> LeaseResult:
@@ -192,7 +193,7 @@ async def run_daily_fetch_with_lease(source: str = "manual") -> LeaseResult:
 async def run_due_once(
     *,
     now: datetime | None = None,
-    redis=None,
+    redis: Any | None = None,
     runner: Callable[[], Awaitable[object]] | None = None,
 ) -> bool:
     """Run this UTC day's ingestion once when due; return whether claimed.
@@ -284,7 +285,7 @@ async def run_due_once(
             logger.exception("Could not release daily ingestion lease for %s", current.date())
 
 
-async def _renew_lock(client, lock_key: str, owner: str) -> None:
+async def _renew_lock(client: Any, lock_key: str, owner: str) -> None:
     while True:
         await asyncio.sleep(LOCK_RENEW_SECONDS)
         try:

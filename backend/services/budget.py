@@ -8,6 +8,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from config import get_settings
 
@@ -32,12 +33,13 @@ def _utc_day_and_ttl(now: datetime | None = None) -> tuple[str, int]:
     return current.date().isoformat(), ttl
 
 
-async def _get_redis_client(redis_url: str):
+async def _get_redis_client(redis_url: str) -> Any:
     global _redis, _redis_url
     if _redis is None or _redis_url != redis_url:
         import redis.asyncio as redis_mod
 
-        _redis = redis_mod.from_url(redis_url, decode_responses=True)
+        # redis-py exposes this module factory without a usable return stub.
+        _redis = redis_mod.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
         _redis_url = redis_url
     return _redis
 
