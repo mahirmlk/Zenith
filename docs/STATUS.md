@@ -36,5 +36,5 @@ The feature branches and local migration files are not evidence that these items
 - Frontend tests: passed, 18 tests across 4 files.
 - Frontend production build: passed with elevated filesystem access after ordinary sandboxed builds failed with `EPERM` creating `.next` output directories.
 - Backend Ruff: passed (`python -m ruff check .`) on the current working tree.
-- Backend pytest: an earlier run passed 111 tests with 6 skipped before the latest role, health, orchestration, and rate-limit request edits. The latest full-suite attempt stalled during Python import resolution under `langchain_core` before returning a result; current changes therefore do not have a fresh full-suite pass.
+- Backend pytest: an earlier run passed 111 tests with 6 skipped before the latest role, health, orchestration, and rate-limit request edits. The latest full-suite attempt returned no result; a verbose targeted run reached `test_health` and stalled on its TestClient request. A separate `langchain_core` import diagnostic was also unusually slow. Current changes therefore do not have a fresh full-suite pass.
 - CI: not run remotely. Docker image build: not run because the local Docker daemon is unavailable. Live/staging database, migrations, provider access, and deployment: not run.
