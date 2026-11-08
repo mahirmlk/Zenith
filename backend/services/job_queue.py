@@ -2,8 +2,9 @@
 
 Development uses a process-local asyncio queue. Redis deployments use a
 consumer group: delivered messages remain pending until acknowledged, and
-idle pending messages can be claimed after a worker dies. Run records still
-live in Redis rather than the planned canonical Postgres tables.
+idle pending messages can be claimed after a worker dies. Production run
+records and events are canonical in Postgres; Redis stores queue messages and
+worker leases.
 """
 import asyncio
 import logging
@@ -186,6 +187,12 @@ async def worker_loop() -> None:
                 message = await _dequeue()
             except asyncio.TimeoutError:
                 continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Run queue poll failed; retrying")
+                await asyncio.sleep(1)
+                continue
             task = asyncio.create_task(_bounded(message))
             _active_tasks.add(task)
             task.add_done_callback(_active_tasks.discard)
@@ -204,8 +211,10 @@ def start_worker() -> None:
         logger.info("Job queue worker started (redis=%s)", _use_redis())
 
 
-def stop_worker() -> None:
+async def stop_worker() -> None:
     global _worker_task
-    if _worker_task is not None:
-        _worker_task.cancel()
-        _worker_task = None
+    task = _worker_task
+    _worker_task = None
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

@@ -9,15 +9,45 @@ import re
 from collections import Counter
 
 _TOKEN = re.compile(r"[a-z0-9]+")
+_QUERY_STOPWORDS = frozenset(
+    "a an and are as at be been being between by can could did do does doing for from had has "
+    "have how i in into is it its may might must of on or our paper papers should that the their "
+    "them then there these they this those through to was we were what when where which who why "
+    "will with would you your use uses used study studies report reports explain summarize summarise "
+    "compare comparison versus vs methods improve improvement result results "
+    "findings finding show shows describe described tell tell us about improve improvement "
+    "results result"
+    .split()
+)
+_ENTITY_LEADERS = frozenset({"what", "which", "who", "where", "when", "why", "how", "does", "the"})
 
 
 def tokenize(text: str) -> list[str]:
     return _TOKEN.findall((text or "").lower())
 
 
+def query_terms(text: str) -> set[str]:
+    """Return substantive query terms for ranking and evidence selection."""
+    return {
+        token
+        for token in tokenize(text)
+        if len(token) > 2 and token not in _QUERY_STOPWORDS
+    }
+
+
+def query_entities(text: str) -> set[str]:
+    """Extract capitalized query entities after excluding question leaders."""
+    entities: set[str] = set()
+    for match in re.findall(r"\b[A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*\b", text or ""):
+        if match.casefold() in _ENTITY_LEADERS:
+            continue
+        entities.update(query_terms(match))
+    return entities
+
+
 def bm25_scores(query: str, docs: list[dict], k1: float = 1.5, b: float = 0.75) -> list[float]:
     """BM25 score per doc (docs have title+abstract)."""
-    q = tokenize(query)
+    q = sorted(query_terms(query))
     if not q or not docs:
         return [0.0] * len(docs)
     doc_tokens = [tokenize(f"{d.get('title','')} {d.get('abstract','')}") for d in docs]

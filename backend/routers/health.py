@@ -59,6 +59,17 @@ async def readiness(response: Response) -> dict:
                 except Exception:
                     pass
 
+    if settings.app_env == "production":
+        checks["run_store"] = False
+        if checks["supabase"] and checks["redis"]:
+            try:
+                from services.run_store import PostgresRunStore, get_run_store
+
+                store = await asyncio.wait_for(get_run_store(), timeout=5.0)
+                checks["run_store"] = isinstance(store, PostgresRunStore)
+            except Exception:
+                checks["run_store"] = False
+
     required = all(checks.values()) if settings.app_env == "production" else checks["supabase"]
     if not required:
         response.status_code = 503

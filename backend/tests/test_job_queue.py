@@ -1,4 +1,6 @@
 """Queue recovery tests using a fake Redis Streams client."""
+import asyncio
+
 import pytest
 
 from services import job_queue
@@ -76,6 +78,47 @@ async def test_acknowledges_redis_stream_message(monkeypatch):
     await job_queue._ack(job_queue.QueueMessage("run-1", "9-0"))
 
     assert fake.acked == [(job_queue.QUEUE_KEY, job_queue.CONSUMER_GROUP, "9-0")]
+
+
+@pytest.mark.asyncio
+async def test_worker_poll_retries_after_redis_failure(monkeypatch):
+    recovered = asyncio.Event()
+    calls = 0
+
+    async def dequeue():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("redis unavailable")
+        recovered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(job_queue, "_dequeue", dequeue)
+    task = asyncio.create_task(job_queue.worker_loop())
+    try:
+        await asyncio.wait_for(recovered.wait(), timeout=3)
+        assert calls >= 2
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stop_worker_waits_for_worker_shutdown(monkeypatch):
+    started = asyncio.Event()
+
+    async def dequeue():
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(job_queue, "_dequeue", dequeue)
+    monkeypatch.setattr(job_queue, "_use_redis", lambda: False)
+    job_queue.start_worker()
+    await started.wait()
+
+    await job_queue.stop_worker()
+
+    assert job_queue._worker_task is None
 
 
 async def _return(value):

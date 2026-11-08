@@ -14,19 +14,12 @@ from agents.research_types import ResearchAnswer, build_comparison, classify_tas
 from dependencies import get_current_user
 from security.authorization import can_access_project
 from security.output_validation import validate_citations
-from services.retrieval import hybrid_rank, tokenize
+from services.retrieval import hybrid_rank, query_entities, query_terms
 from services.supabase_client import get_supabase
+from security.prompt_injection import scan_untrusted
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/research", tags=["research"])
-
-_STOPWORDS = {
-    "about", "after", "are", "between", "does", "from", "give", "have", "into",
-    "paper", "papers", "that", "their", "them", "there", "these", "this", "those",
-    "what", "when", "where", "which", "with", "would", "could", "should", "explain",
-    "summarize", "summarise", "compare", "comparison", "research", "study", "studies",
-}
-
 
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
@@ -91,25 +84,29 @@ async def _papers_for_request(body: ResearchRequest, user: dict, supabase) -> li
 
 def _extractive_claims(query: str, ranked_papers: list[dict], limit: int = 3) -> list[str]:
     """Pick exact abstract sentences with at least one substantive query term."""
-    terms = {
-        word for word in tokenize(query)
-        if len(word) > 2 and word not in _STOPWORDS
-    }
+    terms = query_terms(query)
     if not terms:
         return []
 
     candidates: list[tuple[int, float, str, str]] = []
+    entities = query_entities(query)
     for paper in ranked_papers:
         paper_id = str(paper.get("id") or "")
         abstract = paper.get("abstract") or ""
         if not paper_id or not isinstance(abstract, str):
             continue
+        document_terms = query_terms(f"{paper.get('title') or ''} {abstract}")
+        if entities and not entities.intersection(document_terms):
+            continue
         for sentence in re.split(r"(?<=[.!?])\s+", abstract.strip()):
             sentence = sentence.strip()
             if not sentence:
                 continue
-            overlap = len(terms.intersection(tokenize(sentence)))
-            if overlap:
+            if scan_untrusted(sentence):
+                continue
+            overlap = len(terms.intersection(query_terms(sentence)))
+            coverage = overlap / len(terms)
+            if overlap and coverage >= 0.34:
                 candidates.append((overlap, float(paper.get("score") or 0), paper_id, sentence))
 
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
