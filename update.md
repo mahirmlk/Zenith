@@ -858,7 +858,7 @@ Honest status — **not everything in this document is implemented yet.** See [d
 - [x] §6 guardrails policy layer (`backend/security/`, `backend/guardrails/`, `test_guardrails.py`)
 - [x] §8 projects API (CRUD + notes) + `/projects` page; §10 eval smoke harness in CI; §18 docs (GUARDRAILS/EVALUATIONS/CHANGELOG/STATUS)
 - [~] §7 Redis queue/worker, Postgres-canonical run/event store, and durable LangGraph checkpoints implemented; live cross-process replay and retention validation remain open.
-- [~] §8 hybrid retrieval and extractive selection implemented; claim-level evidence spans remain open. §9 deep research and §13 collaboration/MCP remain incomplete. §11 now has an evidence-backed implementation brief and Markdown export, but is not a reproduction workflow; repository associations are unverified and execution remains disabled. §12 daily watchlist scheduler is implemented but live operation is unverified.
+- [~] §8 hybrid retrieval and extractive selection implemented; broader claim-level evaluation remains open. §9 has a bounded project-scoped extractive evidence map, but deep research planning, synthesis, and claim verification remain incomplete. §13 collaboration/MCP remains incomplete. §11 has an evidence-backed implementation brief and Markdown export, but is not a reproduction workflow; repository associations are unverified and execution remains disabled. §12 daily watchlist scheduler is implemented but live operation is unverified.
 - [ ] Push/PRs: branches are **local only** (push blocked: no GitHub credentials in sandbox). Run `git push -u origin audit/baseline-and-threat-model security/auth-rls-and-tenancy infra/durable-runs-and-sse security/guardrails-tool-policy feature/research-workspaces` from a credentialed shell, open PRs, retain branches after merge.
 
 ### §11 follow-up — evidence-backed implementation brief (2026-11-08)
@@ -870,3 +870,10 @@ Honest status — **not everything in this document is implemented yet.** See [d
 - [~] This is a source-grounded planning slice only. PDF/page-level evidence, code/dataset validation, approval flow, secure execution, and end-to-end reproduction remain incomplete.
 
 This follow-up does not change the shipment status in `docs/STATUS.md`: migrations, RLS, durable worker/checkpoint recovery, provider behavior, Docker, deployment, monitoring, backup restore, and remote CI still require staging or remote evidence.
+
+### §9 follow-up — bounded project evidence map (2026-11-08)
+
+- [x] Add authenticated `POST /api/research/evidence-map`, requiring a project ID and using the existing project membership and attached-source authorization path.
+- [x] Cap selection at 10 attached papers and 5 exact abstract spans; verify returned offsets against source text, filter instruction-like sentences, and abstain when no supported evidence is found.
+- [x] Tests cover member/outsider access, attached-source scope, offsets, injection filtering, abstention, and caps. Full backend suite: 163 passed, 6 skipped; Ruff and strict mypy passed.
+- [~] The endpoint is extractive evidence collection only. It does not plan multi-step research, synthesize or reconcile cross-paper findings, or establish scientific claim correctness. Broader retrieval and claim-support evaluations remain required.

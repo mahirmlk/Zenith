@@ -17,6 +17,27 @@ class SourceCandidate(BaseModel):
     score: float = 0.0
 
 
+class EvidenceItem(BaseModel):
+    """A verbatim abstract sentence with offsets into the exact source text."""
+
+    paper_id: str
+    title: str = ""
+    sentence: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
+
+
+class EvidenceMapResponse(BaseModel):
+    """Bounded, project-scoped evidence; this response contains no synthesis."""
+
+    query: str
+    project_id: str
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    abstained: bool = False
+    explanation: str = ""
+
+
 class ComparisonRow(BaseModel):
     paper_id: str
     problem: str = ""

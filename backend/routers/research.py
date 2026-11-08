@@ -11,7 +11,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from agents.research_types import ResearchAnswer, build_comparison, classify_task
+from agents.research_types import (
+    EvidenceItem,
+    EvidenceMapResponse,
+    ResearchAnswer,
+    build_comparison,
+    classify_task,
+)
 from dependencies import get_current_user
 from security.authorization import can_access_project
 from security.output_validation import validate_citations
@@ -25,6 +31,10 @@ router = APIRouter(prefix="/api/research", tags=["research"])
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
     project_id: str | None = None
+
+
+class ProjectEvidenceMapRequest(ResearchRequest):
+    project_id: str = Field(..., min_length=1, max_length=128)
 
 
 @router.post("/plan")
@@ -145,6 +155,125 @@ def _extractive_claims(
         if len(claims) >= limit:
             break
     return claims
+
+
+def _extractive_evidence_items(
+    query: str,
+    ranked_papers: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[EvidenceItem]:
+    """Select at most `limit` exact abstract sentences with verifiable offsets."""
+    terms = query_terms(query)
+    if not terms or limit <= 0:
+        return []
+
+    entities = query_entities(query)
+    candidates: list[tuple[int, float, EvidenceItem]] = []
+    sentence_pattern = re.compile(r"\S.*?(?:[.!?](?=\s|$)|$)", re.DOTALL)
+
+    for paper in ranked_papers[:10]:
+        paper_id = str(paper.get("id") or "")
+        title = paper.get("title") or ""
+        abstract = paper.get("abstract") or ""
+        if not paper_id or not isinstance(title, str) or not isinstance(abstract, str):
+            continue
+
+        document_terms = query_terms(f"{title} {abstract}")
+        if entities and not entities.intersection(document_terms):
+            continue
+
+        raw_score = paper.get("score")
+        try:
+            score = float(raw_score or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        for match in sentence_pattern.finditer(abstract):
+            sentence = match.group(0)
+            if scan_untrusted(sentence):
+                continue
+            overlap = len(terms.intersection(query_terms(sentence)))
+            if not overlap or overlap / len(terms) < 0.34:
+                continue
+
+            start, end = match.span()
+            # Keep the span tied to the exact persisted abstract string.
+            if abstract[start:end] != sentence:
+                continue
+            candidates.append(
+                (
+                    overlap,
+                    score,
+                    EvidenceItem(
+                        paper_id=paper_id,
+                        title=title,
+                        sentence=sentence,
+                        start_offset=start,
+                        end_offset=end,
+                    ),
+                )
+            )
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    evidence: list[EvidenceItem] = []
+    seen: set[tuple[str, int, int]] = set()
+    for _, _, item in candidates:
+        key = (item.paper_id, item.start_offset, item.end_offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        evidence.append(item)
+        if len(evidence) >= limit:
+            break
+    return evidence
+
+
+@router.post("/evidence-map", response_model=EvidenceMapResponse)
+async def research_evidence_map(
+    body: ProjectEvidenceMapRequest,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> EvidenceMapResponse:
+    """Return bounded verbatim evidence from papers attached to an accessible project."""
+    try:
+        papers = await _papers_for_request(body, user, supabase)
+        ranked = hybrid_rank(body.query, papers)[:10]
+        evidence = _extractive_evidence_items(body.query, ranked, limit=5)
+        source_ids = list(dict.fromkeys(
+            str(paper["id"]) for paper in ranked if paper.get("id")
+        ))
+        # Verify both source membership and exact source span before returning it.
+        paper_by_id = {str(paper["id"]): paper for paper in ranked if paper.get("id")}
+        verified: list[EvidenceItem] = []
+        for item in evidence:
+            paper = paper_by_id.get(item.paper_id)
+            abstract = paper.get("abstract") if paper else None
+            if (
+                isinstance(abstract, str)
+                and 0 <= item.start_offset < item.end_offset <= len(abstract)
+                and abstract[item.start_offset:item.end_offset] == item.sentence
+            ):
+                verified.append(item)
+
+        return EvidenceMapResponse(
+            query=body.query,
+            project_id=body.project_id,
+            evidence=verified,
+            source_ids=source_ids,
+            abstained=not verified,
+            explanation=(
+                "Evidence consists of exact abstract sentences from attached project papers; "
+                "no cross-paper synthesis was generated."
+                if verified
+                else "No matching, non-instruction-like abstract evidence was found in the selected project papers."
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("research_evidence_map failed")
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @router.post("/compare")
