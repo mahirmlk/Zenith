@@ -394,7 +394,7 @@ npm test
 
 ### CI Pipeline
 
-The full CI pipeline is defined in `.github/workflows/ci.yml`. Automatic push/PR runs are disabled to control GitHub Actions costs; run it on demand from the Actions tab (Actions → CI → Run workflow):
+The CI pipeline is defined in `.github/workflows/ci.yml` and runs on pushes, pull requests, and manual dispatch:
 - **Backend job:** `ruff check`, `mypy`, `pytest`
 - **Frontend job:** `npm run lint` (ESLint), `npm run typecheck` (tsc), `npm run build`
 - **Docker job:** `docker compose build`

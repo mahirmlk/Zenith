@@ -836,6 +836,16 @@ At the end of the full program, produce a final architecture diagram matching th
 
 ---
 
+## 24. Shipment-readiness re-audit (2026-11-08)
+
+The current tree was reviewed on `codex/shipment-readiness` against the plan and runtime files. The prior 2026-11-05 addendum and `docs/STATUS.md` overstated several capabilities. Current status is **not production-ready**; see the evidence and release blockers in `docs/STATUS.md`.
+
+Confirmed gaps include: run metadata is not stored in the Postgres run tables; Redis queue consumption has no acknowledgement/requeue; cancellation does not stop or suppress completion; project-scoped research answers/comparisons are not implemented; the answer endpoint produces generic relevance statements; eval smoke cases are generated from expected answers rather than invoking the product; recurring watchlist processing is not operationally scheduled; and live/staging RLS, migration, backup, and readiness checks are unverified.
+
+This review removed build-time remote Google Font fetching, corrected stale CI/deployment/migration documentation, clarified that the eval harness is a fixture checker, and made the Compose CI job create a secret-free `.env` file. Those changes do not close the release blockers above. Local validation results and remaining limitations are reported in the shipment-readiness review for this branch; no deployment or live database was changed.
+
+---
+
 ## 23. Implementation addendum (2026-11-05, verified by re-audit)
 
 Honest status — **not everything in this document is implemented yet.** See [docs/STATUS.md](docs/STATUS.md) for the live matrix.

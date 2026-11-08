@@ -1,4 +1,20 @@
-# Evaluations (update.md §10)
+# AI Evaluation Status (`update.md` §10)
 
-Harness: `evals/runners/run_evals.py` (deterministic, no LLM judge) over `evals/datasets/grounded_qa_v1.jsonl`. Gates: fabricated citation IDs = 0 (must-pass), abstention on no-evidence cases, cross-tenant access = 0 (backend security tests). Baseline (2026-11-05): smoke suite 3/3 PASS; backend suite 51 passed / 5 env-dependent failures (need OPENAI_API_KEY + live Supabase). Full golden suite (retrieval recall@k, grounded QA, comparison, red-team) is the `quality/ai-evals-and-ci` PR.
-Run: `python evals/runners/run_evals.py`
+## Current harness
+
+`evals/runners/run_evals.py` is a deterministic fixture/checker smoke test over `evals/datasets/grounded_qa_v1.jsonl`. It currently constructs the retrieved IDs, citations, and abstention decision from the expected fixture fields, then checks citation-ID membership and one fabricated-ID negative control. It does **not** invoke Zenith retrieval, answer synthesis, or the backend API. Its passing cases are not a product quality baseline and must not be used as evidence of grounded-answer quality.
+
+Run the checker with:
+
+```bash
+python evals/runners/run_evals.py
+```
+
+## Required before a release gate
+
+- Invoke the same retrieval and answer code used by the application, with mocked external providers or a fixed local corpus.
+- Version corpus, dataset, prompts, and model configuration alongside results.
+- Measure retrieval recall/precision and claim-level citation support; test abstention, contradictory evidence, prompt injection, project scoping, and cross-tenant isolation.
+- Record the first real baseline before setting thresholds. Retain run output as a CI artifact and document limitations.
+
+Current evaluation coverage is smoke-only. See [STATUS.md](STATUS.md) for the release blockers.

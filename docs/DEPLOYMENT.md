@@ -196,7 +196,7 @@ fly launch --name paper-agent-api --region iad
 When prompted:
 - Choose to deploy now? **No** (we need to set secrets first)
 - Choose a Postgres? **No** (we use Supabase)
-- Choose Redis? If you want managed Redis, yes; otherwise the backend can use in-memory run store.
+- Configure Redis for multi-instance deployments. The in-memory run store is development-only and does not recover queued work after process restarts.
 
 #### 2. Set Secrets
 

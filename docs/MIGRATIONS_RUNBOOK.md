@@ -1,6 +1,6 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0006 live in `supabase/migrations/` (additive, reversible; 0005 uses DROP POLICY IF EXISTS for idempotent re-runs — verified by `backend/tests/test_migrations.py`).
+Migrations 0001–0006 live in `supabase/migrations/`. They are additive SQL migration files and 0005 uses `DROP POLICY IF EXISTS` for idempotent re-runs. No down migrations are provided; rollback requires a reviewed forward migration or restore. Static tests do not prove behavior against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
 **Status:** drafted and statically verified; NOT yet applied to any live database. This is the one remaining manual step before production (see [STATUS.md](STATUS.md)).

@@ -58,5 +58,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Compose expects a local env file for runtime configuration. Image builds
+      # need no production secrets, so supply an empty file on clean CI runners.
+      - name: Create secret-free Compose env file
+        run: touch .env
       - name: Build Docker images
         run: docker compose build
