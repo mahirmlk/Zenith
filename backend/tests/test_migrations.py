@@ -34,3 +34,18 @@ def test_migrations_are_additive():
     for m in MIGRATIONS:
         text = m.read_text()
         assert "BEGIN;" in text and "COMMIT;" in text, m.name
+
+
+def test_project_role_migration_has_narrow_member_policies():
+    migration = (ROOT / "supabase" / "migrations" / "0009_project_role_rls.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "security definer" in normalized
+    assert "set search_path = ''" in normalized
+    assert "projects_select_member" in normalized
+    assert "project_members_select_access" in normalized
+    assert "notes_select_access" in normalized
+    assert "notes_insert_writer" in normalized
+    assert "created_by = auth.uid()" in normalized
+    assert "pm.role in ('owner', 'editor')" in normalized
+    assert "for delete to authenticated" in normalized
+    assert "project_members_delete_owner" in normalized
