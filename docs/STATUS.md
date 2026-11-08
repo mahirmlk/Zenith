@@ -13,7 +13,7 @@ Reviewed 2026-11-08 against `update.md`, the current code, migrations, and local
 | Watchlists and notifications | Scheduled code implemented; live operation unverified | Daily 02:00 UTC polling and API/Fly/manual ingestion triggers share one Redis lease. Retry, overlap, lease-loss, and cancellation behavior have local tests. Live Redis coordination, scheduler uptime, delivery, and alerting are unverified. |
 | Health and production controls | Implemented locally; production unverified | Readiness checks bounded Supabase and Redis connectivity, verifies production run-store schema/RPCs, and probes the live graph checkpoint connection. Startup fails closed without durable checkpoints in production. Production budgets fail closed without Redis. No live dependency, alerting, or outage exercise was run. |
 | Evals | Deterministic regression gate passes | 12 hand-authored cases run the production ranker and extractive selector; all 12 pass and the fabricated-citation negative control passes. This does not establish broad scientific quality or deployed-provider behavior. |
-| CI and local checks | Local checks pass; remote gate unverified | Ruff and backend tests pass locally; eval passes. Frontend lint/typecheck/tests/build passed earlier in this branch. CI runs mypy with `continue-on-error: true`; the current local mypy run reports substantial existing debt. No remote CI run is available. |
+| CI and local checks | Strict local gates pass; remote gate unverified | Ruff passes. Strict mypy passes across 70 application source files; tests and utility scripts are excluded from that gate, and no runtime modules use blanket `ignore_errors`. CI now blocks on mypy. Frontend lint/typecheck/18 tests/build pass. No remote CI run is available. |
 | Deployment and migrations | Not production verified | Migrations 0001–0009 have not been applied to staging/live. Docker image build, staging deployment, migration/rollback, backup restore, security isolation, provider behavior, and operational monitoring evidence are unavailable. |
 
 ## Release blockers
@@ -24,15 +24,13 @@ Reviewed 2026-11-08 against `update.md`, the current code, migrations, and local
 4. Expand the small hand-authored eval corpus and add deployed-service/provider tests. Keep research output extractive until claim-level evidence spans and synthesis quality are evaluated.
 5. Complete the implementation-plan approval and isolated execution workflow before enabling paper-to-code execution; keep arbitrary execution disabled until that review is complete.
 6. Complete invitation delivery and collaboration UX if they are required for the release scope.
-7. Reduce mypy debt and make the type gate blocking before claiming a fully clean CI gate.
-
 The code and local migrations are not evidence that staging or production behavior is safe. Do not describe Zenith as production-ready until the release blockers have verified evidence.
 
 ## Validation evidence
 
-- Frontend lint, typecheck, tests (18 across 4 files), and production build passed earlier in this branch; frontend source has not changed since.
+- Frontend lint, typecheck, tests (18 across 4 files), and production build passed on the current tree. The build tracing root is pinned to the frontend project, so Next.js no longer selects an unrelated parent lockfile.
 - Backend Ruff: passed on the current working tree.
-- Backend pytest: 153 passed, 6 skipped in 15.64 seconds (`python -m pytest -q` from `backend`), including a real LangGraph `MemorySaver` crash/resume check. The sync Starlette TestClient was replaced by an in-process HTTPX ASGI adapter because its local socket pair hung in this Windows sandbox.
+- Backend pytest: 153 passed, 6 skipped in 17.12 seconds (`python -m pytest -q` from `backend`), including a real LangGraph `MemorySaver` crash/resume check and deterministic orchestration tests. The sync Starlette TestClient was replaced by an in-process HTTPX ASGI adapter because its local socket pair hung in this Windows sandbox.
 - Eval: `python evals/runners/run_evals.py` passed 12/12 cases with abstention accuracy, citation validity, exact support, claim coverage, Recall@5, and MRR@5 each at 1.000; fabricated-citation negative control passed.
-- Mypy: strict type checking still needs a clean rerun after the current readiness edits; keep CI non-blocking until it passes, then make the gate blocking.
+- Mypy: `python -m mypy .` passed with no issues across 70 application source files. `tests/` and `scripts/` are excluded; the CI workflow runs this strict gate as blocking.
 - CI: not run remotely. Docker image build, staging/live dependencies, migrations, provider access, backup restore, and deployment were not verified.

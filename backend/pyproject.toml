@@ -55,6 +55,7 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+exclude = '(^|/)(tests|scripts)/'
 
 [[tool.mypy.overrides]]
 module = [
@@ -63,39 +64,8 @@ module = [
     "supabase.*",
     "mem0.*",
     "firecrawl.*",
-    "langchain_mistralai.*",
+    "langfuse.callback",
     "arxiv.*",
     "sse_starlette.*",
-    "langfuse.*",
-    "sentry_sdk.*",
-    "backend.config",
-    "backend.services.embeddings",
-    "backend.services.arxiv",
-    "backend.services.huggingface",
-    "backend.agents.summary_agent",
-    "backend.models.schemas",
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "tests.*",
-    "scripts.*",
-    "services.run_store",
-    "services.mem0_client",
-    "services.arxiv",
-    "services.huggingface",
-    "services.semantic_scholar",
-    "services.papers_with_code",
-    "services.firecrawl",
-    "services.retry",
-    "services.jwt_validator",
-    "services.citation_cache",
-    "services.ingestion",
-    "services.observability",
-    "services.llm_router",
-    "agents.*",
-    "models.schemas",
-    "dependencies",
-]
-ignore_errors = true

@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import Callable
+from typing import Protocol, cast
 
 from fastapi import APIRouter, Response
 
@@ -8,8 +10,14 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 ready_router = APIRouter(prefix="/api", tags=["health"])
 
 
+class RedisHealthClient(Protocol):
+    async def ping(self) -> bool: ...
+
+    async def aclose(self) -> None: ...
+
+
 @router.get("")
-async def health_check() -> dict:
+async def health_check() -> dict[str, object]:
     """Liveness: cheap, never masks dependency failures with a bare 200
     claim — `checks` reports configured dependencies (update.md §16)."""
     settings = get_settings()
@@ -25,7 +33,7 @@ async def health_check() -> dict:
 
 
 @ready_router.get("/ready")
-async def readiness(response: Response) -> dict:
+async def readiness(response: Response) -> dict[str, object]:
     """Check required runtime dependencies; never expose connection details."""
     settings = get_settings()
     checks = {"supabase": False, "redis": False}
@@ -44,11 +52,18 @@ async def readiness(response: Response) -> dict:
             checks["supabase"] = False
 
     if settings.redis_url:
-        client = None
+        client: RedisHealthClient | None = None
         try:
             import redis.asyncio as redis_mod
 
-            client = redis_mod.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+            redis_from_url = cast(
+                Callable[..., RedisHealthClient], redis_mod.from_url
+            )
+            client = redis_from_url(
+                settings.redis_url,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
             checks["redis"] = bool(await asyncio.wait_for(client.ping(), timeout=3.0))
         except Exception:
             checks["redis"] = False
