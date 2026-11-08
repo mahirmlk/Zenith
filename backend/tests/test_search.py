@@ -1,15 +1,15 @@
 import jwt
-from fastapi.testclient import TestClient
-
 from main import app
+from tests.asgi_client import ASGITestClient
 
-client = TestClient(app)
+client = ASGITestClient(app)
 
 
 def _auth_headers(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-for-search")
-    token = jwt.encode({"sub": "test-user-1"}, "test-secret-for-search", algorithm="HS256")
+    secret = "test-secret-for-search-long-enough-for-hs256"
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", secret)
+    token = jwt.encode({"sub": "test-user-1"}, secret, algorithm="HS256")
     return {"Authorization": f"Bearer {token}"}
 
 

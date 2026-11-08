@@ -46,9 +46,13 @@ async def test_hs256_legacy_path(monkeypatch):
     _set_env(
         monkeypatch,
         SUPABASE_URL="",
-        SUPABASE_JWT_SECRET="legacy-secret",
+        SUPABASE_JWT_SECRET="legacy-secret-that-is-long-enough-for-hs256",
     )
-    token = jwt.encode({"sub": "user-1", "email": "a@b.c"}, "legacy-secret", algorithm="HS256")
+    token = jwt.encode(
+        {"sub": "user-1", "email": "a@b.c"},
+        "legacy-secret-that-is-long-enough-for-hs256",
+        algorithm="HS256",
+    )
     payload = await jwt_validator.decode_supabase_token(token)
     assert payload["sub"] == "user-1"
 
@@ -59,7 +63,7 @@ async def test_es256_jwks_path(monkeypatch, ec_keypair):
     _set_env(
         monkeypatch,
         SUPABASE_URL="https://example.supabase.co",
-        SUPABASE_JWT_SECRET="legacy-secret",  # must NOT be used for ES256 token
+        SUPABASE_JWT_SECRET="legacy-secret-that-is-long-enough-for-hs256",  # must NOT be used for ES256 token
     )
     token = jwt.encode({"sub": "user-2"}, pem, algorithm="ES256", headers={"kid": "test-kid"})
 
@@ -77,7 +81,7 @@ async def test_es256_unknown_kid_rejected(monkeypatch, ec_keypair):
     _set_env(
         monkeypatch,
         SUPABASE_URL="https://example.supabase.co",
-        SUPABASE_JWT_SECRET="legacy-secret",
+        SUPABASE_JWT_SECRET="legacy-secret-that-is-long-enough-for-hs256",
     )
     token = jwt.encode({"sub": "user-3"}, pem, algorithm="ES256", headers={"kid": "other-kid"})
 
@@ -92,13 +96,21 @@ async def test_es256_unknown_kid_rejected(monkeypatch, ec_keypair):
 @pytest.mark.asyncio
 async def test_not_configured_rejected(monkeypatch):
     _set_env(monkeypatch, SUPABASE_URL=None, SUPABASE_JWT_SECRET=None)
-    token = jwt.encode({"sub": "user"}, "irrelevant", algorithm="HS256")
+    token = jwt.encode(
+        {"sub": "user"},
+        "irrelevant-key-that-is-long-enough-for-hs256",
+        algorithm="HS256",
+    )
     with pytest.raises(InvalidTokenError):
         await jwt_validator.decode_supabase_token(token)
 
 
 @pytest.mark.asyncio
 async def test_invalid_token_rejected(monkeypatch):
-    _set_env(monkeypatch, SUPABASE_URL=None, SUPABASE_JWT_SECRET="secret")
+    _set_env(
+        monkeypatch,
+        SUPABASE_URL=None,
+        SUPABASE_JWT_SECRET="test-secret-that-is-long-enough-for-hs256",
+    )
     with pytest.raises(InvalidTokenError):
         await jwt_validator.decode_supabase_token("not-a-jwt")

@@ -3,12 +3,12 @@ import os
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
 from main import app
+from tests.asgi_client import ASGITestClient
 
-client = TestClient(app)
+client = ASGITestClient(app)
 
 needs_supabase = pytest.mark.skipif(
     not os.environ.get("SUPABASE_URL"), reason="needs live Supabase"
@@ -17,8 +17,9 @@ needs_supabase = pytest.mark.skipif(
 
 def _headers(monkeypatch, user="u1"):
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-account")
-    token = jwt.encode({"sub": user}, "test-secret-account", algorithm="HS256")
+    secret = "test-secret-account-key-long-enough-for-hs256"
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", secret)
+    token = jwt.encode({"sub": user}, secret, algorithm="HS256")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -46,9 +47,13 @@ def test_stream_session_exchange_requires_auth(monkeypatch):
 
 def test_sse_session_token_verifies_without_process_local_state(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-auth-secret-long-enough")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-auth-secret-long-enough-for-hs256")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key-long-enough")
-    auth_token = jwt.encode({"sub": "u-stateless"}, "test-auth-secret-long-enough", algorithm="HS256")
+    auth_token = jwt.encode(
+        {"sub": "u-stateless"},
+        "test-auth-secret-long-enough-for-hs256",
+        algorithm="HS256",
+    )
 
     response = client.post(
         "/api/stream/session",

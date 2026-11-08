@@ -1,11 +1,18 @@
+from __future__ import annotations
+
 import asyncio
 from functools import lru_cache
-from mem0 import MemoryClient
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mem0 import MemoryClient
 from config import get_settings
 
 
 @lru_cache
 def _get_client_cached() -> MemoryClient:
+    from mem0 import MemoryClient
+
     settings = get_settings()
     if not settings.mem0_api_key:
         raise RuntimeError("MEM0_API_KEY not configured")

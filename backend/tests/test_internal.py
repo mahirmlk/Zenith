@@ -1,8 +1,7 @@
-from fastapi.testclient import TestClient
-
 from main import app
+from tests.asgi_client import ASGITestClient
 
-client = TestClient(app)
+client = ASGITestClient(app)
 
 
 def test_ingest_requires_admin_key_when_unconfigured(monkeypatch):

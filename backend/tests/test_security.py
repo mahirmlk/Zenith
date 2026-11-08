@@ -12,7 +12,7 @@ from services.ssrf import validate_public_url
 @pytest.mark.asyncio
 async def test_alg_none_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "secret")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-long-enough-for-hs256-signing")
     # alg=none token crafted manually
     token = jwt.encode({"sub": "u1"}, key="", algorithm="none")
     with pytest.raises(InvalidTokenError):
@@ -22,8 +22,12 @@ async def test_alg_none_rejected(monkeypatch):
 @pytest.mark.asyncio
 async def test_wrong_audience_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret")
-    token = jwt.encode({"sub": "u1", "aud": "some-other-app"}, "legacy-secret", algorithm="HS256")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret-long-enough-for-hs256-signing")
+    token = jwt.encode(
+        {"sub": "u1", "aud": "some-other-app"},
+        "legacy-secret-long-enough-for-hs256-signing",
+        algorithm="HS256",
+    )
     with pytest.raises(InvalidTokenError):
         await jwt_validator.decode_supabase_token(token)
 
@@ -31,10 +35,10 @@ async def test_wrong_audience_rejected(monkeypatch):
 @pytest.mark.asyncio
 async def test_wrong_issuer_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret-long-enough-for-hs256-signing")
     token = jwt.encode(
         {"sub": "u1", "iss": "https://evil.supabase.co/auth/v1"},
-        "legacy-secret",
+        "legacy-secret-long-enough-for-hs256-signing",
         algorithm="HS256",
     )
     with pytest.raises(InvalidTokenError):

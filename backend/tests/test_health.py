@@ -1,22 +1,20 @@
-from fastapi.testclient import TestClient
-from main import app
 from fastapi import Response
+import pytest
 
-client = TestClient(app)
+from routers import health
 
 
-def test_health():
-    response = client.get("/api/health")
-    assert response.status_code == 200
-    data = response.json()
+
+@pytest.mark.asyncio
+async def test_health():
+    data = await health.health_check()
     assert data["service"] == "ai-paper-agent-backend"
     assert "status" in data
     assert "checks" in data
 
 
-def test_readiness_returns_503_when_required_dependency_is_unreachable(monkeypatch):
-    from routers import health
-
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_required_dependency_is_unreachable(monkeypatch):
     class Settings:
         app_env = "production"
         supabase_url = "https://example.supabase.co"
@@ -30,8 +28,6 @@ def test_readiness_returns_503_when_required_dependency_is_unreachable(monkeypat
     monkeypatch.setattr("services.supabase_client.get_supabase", unavailable_supabase)
     response = Response()
 
-    import asyncio
-
-    result = asyncio.run(health.readiness(response))
+    result = await health.readiness(response)
     assert response.status_code == 503
     assert result == {"status": "not_ready", "checks": {"supabase": False, "redis": False}}

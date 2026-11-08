@@ -1,5 +1,9 @@
-from typing import Optional
-from langchain_core.language_models.chat_models import BaseChatModel
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
 from config import get_settings
 
 AGENT_MODEL_MAP = {

@@ -1,10 +1,10 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
 from main import app
+from tests.asgi_client import ASGITestClient
 
-client = TestClient(app)
+client = ASGITestClient(app)
 
 needs_supabase = pytest.mark.skipif(
     not os.environ.get("SUPABASE_URL"), reason="needs live Supabase"

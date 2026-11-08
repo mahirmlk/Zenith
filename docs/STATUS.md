@@ -4,7 +4,7 @@ Reviewed 2026-11-08 against `update.md` and the runtime code. **Release status: 
 
 | Capability | Verified state | Evidence / remaining gap |
 |---|---|---|
-| Paper feed, auth, and search | Implemented; latest backend verification incomplete | Authenticated search, distributed per-user UTC daily budgets, hashed idempotency keys, and run queueing exist. Production run state remains Redis, not the canonical Postgres tables. |
+| Paper feed, auth, and search | Implemented; backend suite passed locally | Authenticated search, distributed per-user UTC daily budgets, hashed idempotency keys, and run queueing exist. Production run state remains Redis, not the canonical Postgres tables. |
 | Streaming and run lifecycle | Improved; durable Postgres state remains open | Redis Streams keep jobs pending until ack and reclaim abandoned work; run leases prevent concurrent execution; cancellation suppresses late results; the UI deduplicates replay and supports cancel. Production startup requires shared Redis for rate limits and budgets. |
 | Tenant security | Partial; production unverified | JWT validation and RLS migration files exist. Project access is owner/member scoped, viewers are read-only, editors can write, and only owners can invite/delete. Migration application, RLS behavior, and negative isolation tests remain unverified against staging/live Supabase. |
 | Projects | Partial | CRUD, notes, member-role authorization, and project listing for owners and members exist alongside a basic list/create page. Invitation delivery and a complete collaboration UX are not implemented. |
@@ -36,5 +36,5 @@ The feature branches and local migration files are not evidence that these items
 - Frontend tests: passed, 18 tests across 4 files.
 - Frontend production build: passed with elevated filesystem access after ordinary sandboxed builds failed with `EPERM` creating `.next` output directories.
 - Backend Ruff: passed (`python -m ruff check .`) on the current working tree.
-- Backend pytest: an earlier run passed 111 tests with 6 skipped before the latest role, health, orchestration, and rate-limit request edits. The latest full-suite attempt returned no result; a verbose targeted run reached `test_health` and stalled on its TestClient request. A separate `langchain_core` import diagnostic was also unusually slow. Current changes therefore do not have a fresh full-suite pass.
+- Backend pytest: passed, 116 tests with 6 skipped (`python -m pytest -q`, 85.83 seconds). The sync Starlette TestClient was replaced by an in-process HTTPX ASGI adapter because its local socket pair hung in this sandbox. Optional Mem0/Qdrant and LangChain chat-model type imports no longer run eagerly at app startup. The Pydantic v2 settings deprecation was also removed.
 - CI: not run remotely. Docker image build: not run because the local Docker daemon is unavailable. Live/staging database, migrations, provider access, and deployment: not run.
