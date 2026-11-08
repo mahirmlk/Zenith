@@ -844,7 +844,7 @@ Since the prior audit, production runs/events now use Supabase Postgres as the c
 
 This follow-up adds a managed async Postgres LangGraph checkpointer, makes production fail closed without `DATABASE_URL`, resumes pending work from the latest node checkpoint, reuses completed state if a worker dies before run finalization, and rejects checkpoint/run identity mismatches. Strict msgpack deserialization is enabled before LangGraph imports. Readiness probes the actual checkpoint connection, and retention deletes expired checkpoints only for terminal runs before deleting their run records. Development keeps an in-memory saver when `DATABASE_URL` is omitted. A node interrupted mid-call may repeat external calls on recovery; provider-side idempotency and crash behavior still require staging validation.
 
-The final backend suite passed (153 passed, 6 skipped in 17.12 seconds), Ruff and diff checks passed, and strict mypy passed across 70 application source files with `tests/` and `scripts/` excluded; CI now blocks on mypy. The eval passed 12/12 cases, with all reported metrics at 1.000 and the fabricated-citation negative control passing. Frontend lint, typecheck, 18 tests, and production build passed on the current tree after pinning Next.js tracing to the frontend project. Docker build, remote CI, live/staging migration and RLS verification, checkpoint restart/retention verification, backup restore, provider integration, and deployment remain unverified. No live database or deployment was changed.
+The prior backend suite passed (153 passed, 6 skipped in 17.12 seconds), Ruff and diff checks passed, and strict mypy passed across 70 application source files with `tests/` and `scripts/` excluded; CI now blocks on mypy. The eval passed 12/12 cases, with all reported metrics at 1.000 and the fabricated-citation negative control passing. Frontend lint, typecheck, 18 tests, and production build passed on the current tree after pinning Next.js tracing to the frontend project. Docker build, remote CI, live/staging migration and RLS verification, checkpoint restart/retention verification, backup restore, provider integration, and deployment remain unverified. No live database or deployment was changed.
 
 ---
 
@@ -858,5 +858,15 @@ Honest status — **not everything in this document is implemented yet.** See [d
 - [x] §6 guardrails policy layer (`backend/security/`, `backend/guardrails/`, `test_guardrails.py`)
 - [x] §8 projects API (CRUD + notes) + `/projects` page; §10 eval smoke harness in CI; §18 docs (GUARDRAILS/EVALUATIONS/CHANGELOG/STATUS)
 - [~] §7 Redis queue/worker, Postgres-canonical run/event store, and durable LangGraph checkpoints implemented; live cross-process replay and retention validation remain open.
-- [~] §8 hybrid retrieval and extractive selection implemented; claim-level evidence spans remain open. §9 deep research, §11 isolated paper-to-code workflow, and §13 collaboration/MCP remain incomplete. §12 daily watchlist scheduler is implemented but live operation is unverified.
+- [~] §8 hybrid retrieval and extractive selection implemented; claim-level evidence spans remain open. §9 deep research and §13 collaboration/MCP remain incomplete. §11 now has an evidence-backed implementation brief and Markdown export, but is not a reproduction workflow; repository associations are unverified and execution remains disabled. §12 daily watchlist scheduler is implemented but live operation is unverified.
 - [ ] Push/PRs: branches are **local only** (push blocked: no GitHub credentials in sandbox). Run `git push -u origin audit/baseline-and-threat-model security/auth-rls-and-tenancy infra/durable-runs-and-sse security/guardrails-tool-policy feature/research-workspaces` from a credentialed shell, open PRs, retain branches after merge.
+
+### §11 follow-up — evidence-backed implementation brief (2026-11-08)
+
+- [x] Extract implementation facts from exact abstract sentences with source offsets and paper IDs; model-generated summaries are not treated as evidence.
+- [x] Add an authenticated paper implementation page and Markdown export with source evidence, explicit missing-detail gaps, candidate repository labeling, and no execution control.
+- [x] Fail closed in the sandbox runner regardless of `SANDBOX_ENABLED`; arbitrary execution remains unavailable pending a separate isolation review.
+- [x] Backend targeted tests: 9 passed. Full backend suite: 159 passed, 6 skipped. Ruff, strict mypy (70 application source files), and 12/12 deterministic eval cases passed. Frontend lint/typecheck, 18 tests, and production build passed (frontend commits `04abf89` and `1451e9d`).
+- [~] This is a source-grounded planning slice only. PDF/page-level evidence, code/dataset validation, approval flow, secure execution, and end-to-end reproduction remain incomplete.
+
+This follow-up does not change the shipment status in `docs/STATUS.md`: migrations, RLS, durable worker/checkpoint recovery, provider behavior, Docker, deployment, monitoring, backup restore, and remote CI still require staging or remote evidence.
