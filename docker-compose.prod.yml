@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   frontend:
     build:
@@ -43,7 +41,7 @@ services:
       - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
       - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY:-}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
-      - REDIS_URL=${REDIS_URL:-}
+      - REDIS_URL=${REDIS_URL}
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
       - MAX_SUMMARIES_PER_RUN=${MAX_SUMMARIES_PER_RUN:-20}
       - MAX_SEARCHES_PER_DAY_PER_USER=${MAX_SEARCHES_PER_DAY_PER_USER:-100}
@@ -56,7 +54,7 @@ services:
       - APP_ENV=production
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ready')"]
       interval: 30s
       timeout: 10s
       retries: 3

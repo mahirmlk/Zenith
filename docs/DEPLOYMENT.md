@@ -41,7 +41,7 @@ The platform approach is recommended for production. The Docker Compose approach
 Before deploying, ensure you have:
 
 ### Accounts & API Keys
-- [Supabase](https://supabase.com) project with `schema.sql` applied
+- [Supabase](https://supabase.com) project with the reviewed migrations applied and tenant policies verified
 - [OpenRouter](https://openrouter.ai) API key (`OPENROUTER_API_KEY`)
 - [OpenAI](https://platform.openai.com) API key (`OPENAI_API_KEY`) — required for embeddings
 - [Fly.io](https://fly.io) account (if using Fly.io for backend)
@@ -190,13 +190,13 @@ Fly.io runs Docker containers close to your users on their global edge network. 
 
 ```bash
 cd backend
-fly launch --name paper-agent-api --region iad
+fly launch --name ai-paper-agent-backend --region iad
 ```
 
 When prompted:
 - Choose to deploy now? **No** (we need to set secrets first)
 - Choose a Postgres? **No** (we use Supabase)
-- Configure Redis for multi-instance deployments. The in-memory run store is development-only and does not recover queued work after process restarts.
+- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, and run state; in-memory mode is development-only.
 
 #### 2. Set Secrets
 
@@ -221,10 +221,10 @@ fly secrets set \
 
 #### 3. Configure fly.toml
 
-Fly.io generates a `fly.toml` during `fly launch`. Ensure these settings are correct:
+Use the checked-in `backend/fly.toml`; it sets `APP_ENV=production` and uses `/api/ready` for dependency checks. Configure Redis and Supabase secrets before deployment.
 
 ```toml
-app = "paper-agent-api"
+app = "ai-paper-agent-backend"
 primary_region = "iad"
 
 [build]
@@ -239,7 +239,7 @@ primary_region = "iad"
 
   [[http_service.checks]]
     method = "GET"
-    path = "/api/health"
+    path = "/api/ready"
     interval = "15s"
     timeout = "5s"
     grace_period = "10s"
@@ -289,7 +289,7 @@ In the Vercel dashboard (or via CLI):
 
 ```bash
 vercel env add NEXT_PUBLIC_API_URL production
-# Enter: https://paper-agent-api.fly.dev
+# Enter: https://ai-paper-agent-backend.fly.dev
 
 vercel env add NEXT_PUBLIC_SUPABASE_URL production
 # Enter: https://yourproject.supabase.co
@@ -333,7 +333,7 @@ Create a separate Supabase project for production (do not use your dev project).
 
 ### 2. Apply Schema
 
-Run the full `supabase/schema.sql` in the SQL Editor.
+Apply the ordered `supabase/migrations/` against staging first, then production, using the migration runbook. Treat `schema.sql` as a schema reference snapshot.
 
 ### 3. Configure Auth
 
@@ -355,32 +355,9 @@ From **Project Settings > API**:
 From **Project Settings > API > JWT Settings**:
 - JWT Secret → `SUPABASE_JWT_SECRET`
 
-### 5. Set RLS Policies
+### 5. Apply and Verify Migrations
 
-Enable Row Level Security on the `user_papers` and `user_prefs` tables with appropriate policies:
-
-```sql
--- user_papers: only insert/update/delete own rows
-ALTER TABLE user_papers ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can manage own papers"
-  ON user_papers
-  FOR ALL
-  USING (auth.uid() = user_id);
-
--- user_prefs: only read/update own row
-ALTER TABLE user_prefs ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can read own prefs"
-  ON user_prefs
-  FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own prefs"
-  ON user_prefs
-  FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-```
+Apply the reviewed migration sequence from `supabase/migrations/` in staging first, then production. Do not rely on `schema.sql` alone. Verify owner/member/outsider/anonymous behavior with `docs/security/SECURITY_TEST_PLAN.md` before serving users. Migration files do not prove the database has been updated.
 
 ---
 
@@ -403,7 +380,7 @@ OPENAI_API_KEY=<your key>
 # App
 APP_URL=https://your-frontend-domain.com
 
-# Redis (optional, uses in-memory store if not set)
+# Redis (required in production)
 REDIS_URL=redis://your-redis:6379
 
 # Optional but recommended
@@ -431,16 +408,16 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 
 ### Backend Health
 
-The backend exposes `GET /api/health` which returns checks for Supabase connectivity and OpenRouter API key presence.
+`GET /api/health` is a liveness endpoint. `GET /api/ready` performs bounded reachability checks against Supabase and Redis and returns 503 when required dependencies are unavailable.
 
 ```bash
-curl https://api.yourdomain.com/api/health
-# {"status":"ok","service":"ai-paper-agent-backend","checks":{"supabase":true,"openrouter":true}}
+curl https://api.yourdomain.com/api/ready
+# {"status":"ready","checks":{"supabase":true,"redis":true}}
 ```
 
 **Monitoring recommendations:**
-- Set up an uptime monitor (UptimeRobot, Better Uptime, or Fly.io built-in checks) hitting `/api/health` every 1 minute
-- Alert if status is `"degraded"` or response takes > 5 seconds
+- Set up an uptime monitor hitting `/api/ready` every minute
+- Alert when readiness is not `ready` or response takes > 5 seconds
 - Monitor `X-Response-Time` header from the `TimingMiddleware` for latency trends
 
 ### Docker Health Check
@@ -448,7 +425,7 @@ curl https://api.yourdomain.com/api/health
 The production Docker Compose includes a health check:
 ```yaml
 healthcheck:
-  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ready')"]
   interval: 30s
   timeout: 10s
   retries: 3
@@ -553,7 +530,7 @@ fly scale count 4
 # Ensure REDIS_URL is set for shared run state across instances
 ```
 
-If running multiple backend instances, set `REDIS_URL` to ensure agent run states are shared across instances. Without Redis, each instance has its own in-memory `RunStore`, and SSE streams will fail if the request lands on a different instance.
+Production always requires Redis, even with one backend instance. Redis-backed run records and Streams make work visible across replicas; Postgres-canonical run metadata remains a release blocker tracked in `docs/STATUS.md`.
 
 ### Frontend (Next.js)
 
