@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { fetchPaper, fetchPaperCode } from '@/lib/api';
 import Link from 'next/link';
+import type { Route } from 'next';
 
 function ArrowLeft({ className }: { className?: string }) {
   return (
@@ -187,8 +188,14 @@ export default function PaperDetailPage() {
           )}
 
           {/* Actions */}
-          {paper.url && (
-            <div className="flex items-center gap-3 border-t border-zenith-border/60 pt-6">
+          <div className="flex flex-wrap items-center gap-3 border-t border-zenith-border/60 pt-6">
+              <Link
+                href={`/paper/${encodeURIComponent(id)}/implement` as Route}
+                className="inline-flex items-center gap-2 rounded-lg border border-zenith-border bg-white px-5 py-2.5 text-[13px] font-semibold text-ink-900 transition duration-200 hover:border-zenith-secondary/50 hover:bg-zenith-surface"
+              >
+                Reproducibility plan
+              </Link>
+              {paper.url && (
               <a
                 href={paper.url}
                 target="_blank"
@@ -198,8 +205,8 @@ export default function PaperDetailPage() {
                 View PDF
                 <ArrowUpRight className="h-3.5 w-3.5" />
               </a>
-            </div>
-          )}
+              )}
+          </div>
         </article>
       </div>
     </main>

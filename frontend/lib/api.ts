@@ -1,4 +1,4 @@
-import { AgentStep, Paper, PaperSearchResult, UserPrefs } from '@/types';
+import { AgentStep, ImplementationPlan, Paper, PaperSearchResult, UserPrefs } from '@/types';
 import { getJWT } from './auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -82,6 +82,18 @@ export async function fetchPaper(id: string): Promise<Paper> {
   const res = await fetch(`${API_BASE}/api/papers/${id}`, {
     headers: await getHeaders(),
   });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
+  return res.json();
+}
+
+export async function fetchImplementationPlan(paperId: string): Promise<ImplementationPlan> {
+  const res = await fetch(
+    `${API_BASE}/api/implementations/${encodeURIComponent(paperId)}/plan`,
+    { headers: await getHeaders() },
+  );
   if (!res.ok) {
     handleAuthRedirect(res);
     throw new ApiError(await parseError(res), res.status);
