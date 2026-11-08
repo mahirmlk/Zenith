@@ -20,7 +20,7 @@
 
 Zenith discovers papers from arXiv and Hugging Face Daily Papers, adds LLM summaries and citation graphs, and ranks papers against your personal memory profile. You can then organise them into research projects with grounded, cited answers.
 
-Status: shipping (`zenith-v0.3-final`). Previously called "AI Paper Research Agent". The infra IDs (`ai-paper-agent-backend`) were kept for deployment compatibility.
+Status: feature-complete local slices are under review; **not production-ready**. Staging migration/RLS checks, provider validation, recovery exercises, backup restore, Docker/remote CI, monitoring, and deployment remain unverified. Previously called "AI Paper Research Agent". The infra IDs (`ai-paper-agent-backend`) were kept for deployment compatibility.
 
 ## Features
 
@@ -31,8 +31,8 @@ Status: shipping (`zenith-v0.3-final`). Previously called "AI Paper Research Age
 | Streaming | SSE with start-once durable runs, event replay, reconnect-safe, cancel |
 | Citation graph | Cached Semantic Scholar edges, deterministic layout |
 | Projects | CRUD, notes, sources, members (owner/editor/viewer), soft-delete |
-| Deep research | Task routing (feed/explain/compare/deep), comparison tables, abstaining grounded answers |
-| Paper-to-code | Implementation plans + Markdown export; sandbox execution off by default |
+| Research evidence | Task routing, comparison rows, abstaining answers, and a bounded project evidence map; no multi-paper synthesis |
+| Paper-to-code | Evidence-backed abstract-level brief + Markdown export; arbitrary execution is always disabled |
 | Monitoring | Watchlists (daily/weekly) + in-app notifications |
 | Guardrails | Deny-by-default tool policy, backend approvals, citation validation, SSRF defence |
 | Security | JWT allowlist + iss/aud, RLS migrations, ownership on every endpoint, rate limits + daily budget |
@@ -126,7 +126,7 @@ Full stack with Docker: `docker compose up --build` (frontend :3000, backend :80
 | `SANDBOX_ENABLED` | No (default `false`) | Paper-code execution |
 | `MAX_SEARCHES_PER_DAY_PER_USER` | No (default `100`) | Spend budget |
 
-Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0005` to staging and verify RLS.
+Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0009` to staging and verify RLS.
 
 ## API
 
@@ -138,7 +138,7 @@ Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0005` to
 | `GET /api/papers` · `/saved` · `/{id}` · `POST /{id}/save` | JWT | Papers + personal library |
 | `GET /api/graph/{id}` | JWT | Citation graph (cached) |
 | `POST /api/retrieval/search` | JWT | Hybrid (BM25 + vector), project-scoped |
-| `POST /api/research/{plan,compare,answer}` | JWT | Deep research, grounded answers |
+| `POST /api/research/{plan,compare,answer,evidence-map}` | JWT | Task routing and bounded extractive research evidence; no synthesis |
 | `GET /api/implementations/{id}/{plan,export}` | JWT | Paper-to-code plan (no execution) |
 | `/api/projects` · `/notes` · `/members` | JWT (owner/member) | Research workspace |
 | `/api/watchlists` · `/notifications` | JWT | Monitoring + in-app alerts |
@@ -197,8 +197,9 @@ GitHub Actions run on every PR/push: lint, typecheck, tests, eval smoke, Docker 
 |---|---|
 | Security, guardrails, durable runs, evals | Shipped |
 | Research workspaces, hybrid retrieval, deep research | Shipped |
-| Paper-to-code (plan/export), monitoring, collaboration | Shipped (execution gated) |
-| Multi-instance Postgres checkpointer, full eval golden suite | Next |
+| Evidence map and paper-to-code plan/export | Implemented locally; evaluation and staging verification remain |
+| Multi-paper synthesis, secure paper-code execution, invitation UX, integrations | Not implemented |
+| Staging release gates and production deployment | Blocked on live infrastructure and remote CI evidence |
 
 Live status matrix: [docs/STATUS.md](docs/STATUS.md). Full plan: [update.md](update.md).
 

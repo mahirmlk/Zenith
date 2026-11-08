@@ -126,6 +126,7 @@ All routes below require a user JWT.
 | `POST /api/research/plan` | Deterministic task classification (`feed`, `explain`, `compare`, `deep_research`) |
 | `POST /api/research/compare` | Comparison rows for retrieved papers; optional `project_id` is owner/member authorized and source-scoped |
 | `POST /api/research/answer` | Extractive answer: returns exact matching sentences from retrieved abstracts with paper ID citations; abstains when no sentence matches |
+| `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; max 10 attached papers and 5 exact abstract spans |
 
 Request body for these endpoints:
 
@@ -133,9 +134,16 @@ Request body for these endpoints:
 {"query":"What method is used?","project_id":"<optional-project-uuid>"}
 ```
 
-The answer endpoint currently performs keyword overlap selection. It is not
-LLM synthesis, does not verify scientific claims, and does not provide
-claim-level page/section spans.
+`/api/research/evidence-map` requires `project_id`. It returns `query`,
+`project_id`, `source_ids`, `abstained`, an explanation, and `evidence` entries
+with `paper_id`, `title`, exact `sentence`, and half-open character offsets
+(`start_offset`, `end_offset`) into that paper's stored abstract. It does not
+generate a cross-paper synthesis. Outsiders receive `404` for inaccessible
+projects; only papers attached to the project are considered.
+
+The answer and evidence-map endpoints perform keyword overlap selection. They
+are not LLM synthesis, do not verify scientific claims, and do not provide
+page/section spans. Evidence-map offsets refer to the stored abstract string.
 
 ## Projects, watchlists, and notifications
 
@@ -169,15 +177,16 @@ for current verification evidence and live-infrastructure limitations.
 
 | Method and path | Auth | Behavior |
 |---|---|---|
-| `GET /api/implementations/{paper_id}/plan` | Yes | Create a non-executing implementation checklist |
-| `GET /api/implementations/{paper_id}/export` | Yes | Export the plan as Markdown |
-| `POST /api/implementations/{paper_id}/run` | Yes | Currently returns `not attempted`; execution is not an available product workflow |
+| `GET /api/implementations/{paper_id}/plan` | Yes | Return a non-executing brief with exact abstract evidence, source offsets, gaps, and unverified repository candidates |
+| `GET /api/implementations/{paper_id}/export` | Yes | Export the brief as Markdown |
+| `POST /api/implementations/{paper_id}/run` | Yes | Returns `not attempted`; execution is unavailable |
 | `GET /api/account/export` | Yes | Export caller-scoped account data |
 | `DELETE /api/account` | Yes | Delete caller account data |
 | `POST /api/internal/ingest` | Admin key | Start ingestion background task |
 
-Paper-to-code run execution is not implemented as a secure isolated workflow;
-keep `SANDBOX_ENABLED=false`.
+Paper-to-code run execution always refuses to execute, including if a stale
+`SANDBOX_ENABLED=true` setting is present. The brief only has abstract-level
+evidence; verify the full paper and candidate repositories manually.
 
 ## Errors and rate limits
 
