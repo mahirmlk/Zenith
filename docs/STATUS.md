@@ -1,6 +1,6 @@
 # Shipment Readiness Status
 
-Reviewed 2026-11-08 against `update.md`, the current code, migrations, and local checks. **Release status: not ready for production.** Core local paths have improved, but production evidence and several requested product capabilities are still missing.
+Reviewed 2026-11-11 against `update.md`, the current code, migrations, local checks, and PR #3 CI. **Release status: not ready for production.** The branch's CI is green; staging evidence and several requested product capabilities are still missing.
 
 | Capability | Verified state | Evidence / remaining gap |
 |---|---|---|
@@ -13,14 +13,14 @@ Reviewed 2026-11-08 against `update.md`, the current code, migrations, and local
 | Watchlists and notifications | Scheduled code implemented; live operation unverified | Daily 02:00 UTC polling and API/Fly/manual ingestion triggers share one Redis lease. Retry, overlap, lease-loss, and cancellation behavior have local tests. Live Redis coordination, scheduler uptime, delivery, and alerting are unverified. |
 | Health and production controls | Implemented locally; production unverified | Readiness checks bounded Supabase and Redis connectivity, verifies production run-store schema/RPCs, and probes the live graph checkpoint connection. Startup fails closed without durable checkpoints in production. Production budgets fail closed without Redis. No live dependency, alerting, or outage exercise was run. |
 | Evals | Deterministic regression gate passes | 12 hand-authored cases run the production ranker and extractive selector; all 12 pass and the fabricated-citation negative control passes. This does not establish broad scientific quality or deployed-provider behavior. |
-| CI and local checks | Strict local gates pass; remote gate unverified | Ruff passes. Strict mypy passes across 70 application source files; tests and utility scripts are excluded from that gate, and no runtime modules use blanket `ignore_errors`. CI now blocks on mypy. Frontend lint/typecheck/18 tests/build pass. No remote CI run is available. |
-| Deployment and migrations | Not production verified | Migrations 0001–0009 have not been applied to staging/live. Docker image build, staging deployment, migration/rollback, backup restore, security isolation, provider behavior, and operational monitoring evidence are unavailable. |
+| CI and local checks | PR CI green on `24a725e` | GitHub Actions run #48 passed backend (Ruff, mypy, pytest, eval), frontend (lint, typecheck, tests, build), and Docker Compose image builds. Local backend suite: 163 passed, 6 skipped; eval: 12/12. CI validates this branch's code, not live service behavior. |
+| Deployment and migrations | Not production verified | Migrations 0001–0009 have not been applied to staging/live. Staging deployment, migration/rollback, backup restore, tenant isolation against Supabase, provider behavior, and operational monitoring evidence are unavailable. |
 
 ## Release blockers
 
 1. Apply migrations 0001–0009 in staging; verify Postgres RPC behavior, RLS with owner/member/editor/viewer/outsider/anon cases, rollback, and backup restore.
 2. Exercise Redis queue recovery, scheduler/API/Fly overlap, lease loss, cancellation, checkpoint resume, and retention behavior with real shared Redis and Supabase services. A crash within a graph node can repeat that node's external calls, so validate provider/idempotency behavior.
-3. Run remote CI, Docker image build, and a staging deployment; verify readiness, provider integration, migrations, alerts, and recovery under dependency outages.
+3. Deploy to a staging environment; verify readiness, provider integration, migrations, alerts, and recovery under dependency outages. PR CI and Docker image builds passed on the current branch but do not replace this gate.
 4. Expand the small hand-authored eval corpus and add deployed-service/provider tests. Keep research output extractive until claim-level evidence spans and synthesis quality are evaluated.
 5. Complete the implementation-plan approval and isolated execution workflow before enabling paper-to-code execution; keep arbitrary execution disabled until that review is complete.
 6. Complete invitation delivery and collaboration UX if they are required for the release scope.
@@ -35,4 +35,4 @@ The code and local migrations are not evidence that staging or production behavi
 - Mypy: `python -m mypy .` passed with no issues across 70 application source files. `tests/` and `scripts/` are excluded; the CI workflow runs this strict gate as blocking.
 - Paper-to-code tests cover exact abstract offsets, unsupported-summary exclusion, instruction-like text filtering, missing-detail gaps, repository candidate allowlisting, Markdown escaping, and the fail-closed runner (including with `SANDBOX_ENABLED=true`).
 - Evidence-map tests cover project membership/source scope, exact source offsets, prompt-injection filtering, abstention, and the 10-paper/5-span cap.
-- CI: not run remotely. Docker image build, staging/live dependencies, migrations, provider access, backup restore, and deployment were not verified.
+- Remote CI: GitHub Actions run #48 passed on PR #3 HEAD `24a725e` (backend, frontend, Docker). Docker image build is verified in CI. Staging/live dependencies, migrations, provider access, backup restore, and deployment remain unverified.

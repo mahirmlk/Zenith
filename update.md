@@ -859,7 +859,7 @@ Honest status — **not everything in this document is implemented yet.** See [d
 - [x] §8 projects API (CRUD + notes) + `/projects` page; §10 eval smoke harness in CI; §18 docs (GUARDRAILS/EVALUATIONS/CHANGELOG/STATUS)
 - [~] §7 Redis queue/worker, Postgres-canonical run/event store, and durable LangGraph checkpoints implemented; live cross-process replay and retention validation remain open.
 - [~] §8 hybrid retrieval and extractive selection implemented; broader claim-level evaluation remains open. §9 has a bounded project-scoped extractive evidence map, but deep research planning, synthesis, and claim verification remain incomplete. §13 collaboration/MCP remains incomplete. §11 has an evidence-backed implementation brief and Markdown export, but is not a reproduction workflow; repository associations are unverified and execution remains disabled. §12 daily watchlist scheduler is implemented but live operation is unverified.
-- [ ] Push/PRs: branches are **local only** (push blocked: no GitHub credentials in sandbox). Run `git push -u origin audit/baseline-and-threat-model security/auth-rls-and-tenancy infra/durable-runs-and-sse security/guardrails-tool-policy feature/research-workspaces` from a credentialed shell, open PRs, retain branches after merge.
+- [~] PR: the prior local-only note was superseded on 2026-11-11. `codex/shipment-readiness` is pushed and tracked remotely; draft [PR #3](https://github.com/mahirmlk/Zenith/pull/3) is open for review. It aggregates 36 commits / 105 files and must not be merged without review of scope/PR organization and the remaining staging gates.
 
 ### §11 follow-up — evidence-backed implementation brief (2026-11-08)
 
@@ -877,3 +877,12 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [x] Cap selection at 10 attached papers and 5 exact abstract spans; verify returned offsets against source text, filter instruction-like sentences, and abstain when no supported evidence is found.
 - [x] Tests cover member/outsider access, attached-source scope, offsets, injection filtering, abstention, and caps. Full backend suite: 163 passed, 6 skipped; Ruff and strict mypy passed.
 - [~] The endpoint is extractive evidence collection only. It does not plan multi-step research, synthesize or reconcile cross-paper findings, or establish scientific claim correctness. Broader retrieval and claim-support evaluations remain required.
+
+### §24.1 CI and documentation follow-up (2026-11-11)
+
+- [x] The first draft-PR run identified strict-mypy errors in Redis adapter typing and a Docker-only npm peer-resolution mismatch. Redis factory typing/shutdown were corrected, and the frontend Docker dependency stage now copies its `.npmrc`.
+- [x] GitHub Actions run #48 passed on HEAD `24a725ea368855f6a446acf8bd462bdb12e64ddf`: backend, frontend, and Docker jobs all succeeded. The full backend suite in the approved Windows execution context passed 163 tests with 6 skips; Ruff, strict mypy (70 application files), 12-case eval, frontend lint/typecheck/18 tests/build passed.
+- [x] Updated `README.md`, `docs/API.md`, and `docs/STATUS.md` to reflect implemented scope and current CI evidence.
+- [ ] Review and merge PR #3 after human review. Do not deploy until staging migrations/RLS, provider behavior, recovery, backup restore, monitoring, and deployment gates are demonstrated.
+
+**Current status remains not production-ready.** Green CI proves the code passed those automated jobs; it does not prove staging or production service behavior. PR #3 is a draft aggregate and needs reviewer direction on splitting the accumulated vertical slices.
