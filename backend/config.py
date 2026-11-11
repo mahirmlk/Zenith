@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     database_url: str = ""
 
     app_url: str = "http://localhost:3000"
+    cors_origins: str = ""
     next_public_api_url: str = "http://localhost:8000"
     redis_url: str = ""
 

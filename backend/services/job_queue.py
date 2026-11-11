@@ -77,6 +77,46 @@ async def enqueue(run_id: str) -> None:
     await _get_queue().put(run_id)
 
 
+async def remove_runs(run_ids: set[str]) -> None:
+    """Remove queued IDs for runs being erased; no user payload is stored here."""
+    if not run_ids:
+        return
+    if not _use_redis():
+        queue = _get_queue()
+        retained: list[str] = []
+        while True:
+            try:
+                run_id = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            queue.task_done()
+            if run_id not in run_ids:
+                retained.append(run_id)
+        for run_id in retained:
+            queue.put_nowait(run_id)
+        return
+
+    client = await _redis_client()
+    await _ensure_group(client)
+    cursor = "-"
+    while True:
+        batch = await client.xrange(QUEUE_KEY, min=cursor, count=500)
+        if not batch:
+            break
+        ids_to_delete = [
+            message_id
+            for message_id, fields in batch
+            if fields.get("run_id") in run_ids
+        ]
+        if ids_to_delete:
+            await client.xack(QUEUE_KEY, CONSUMER_GROUP, *ids_to_delete)
+            await client.xdel(QUEUE_KEY, *ids_to_delete)
+        last_id = batch[-1][0]
+        cursor = f"({last_id}"
+        if len(batch) < 500:
+            break
+
+
 def queue_depth() -> int:
     return _get_queue().qsize() if _queue else 0
 

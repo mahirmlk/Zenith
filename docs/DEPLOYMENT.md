@@ -208,6 +208,7 @@ fly secrets set \
   SUPABASE_SERVICE_ROLE_KEY="eyJ..." \
   SUPABASE_JWT_SECRET="your-jwt-secret" \
   APP_URL="https://your-frontend-domain.vercel.app" \
+  CORS_ORIGINS="https://your-frontend-domain.vercel.app" \
   REDIS_URL="redis://your-redis:6379" \
   DATABASE_URL="postgresql://zenith_app:***@your-db-host:5432/postgres?sslmode=require"
 
@@ -380,6 +381,7 @@ OPENAI_API_KEY=<your key>
 
 # App
 APP_URL=https://your-frontend-domain.com
+CORS_ORIGINS=https://your-frontend-domain.com
 
 # Redis (required in production)
 REDIS_URL=redis://your-redis:6379
@@ -402,6 +404,12 @@ NEXT_PUBLIC_API_URL=https://your-backend-domain.com
 NEXT_PUBLIC_SUPABASE_URL=https://yourproject.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 ```
+
+`APP_URL` must be one canonical URL because it is also sent as OpenRouter's
+`HTTP-Referer`. Configure additional browser origins only in the backend's
+comma-separated `CORS_ORIGINS`; each entry must be an exact `http(s)` origin
+without a path. If an older deployment put multiple values in `APP_URL`, move
+them to `CORS_ORIGINS` and keep one canonical value in `APP_URL`.
 
 ---
 

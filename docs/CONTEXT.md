@@ -6,31 +6,32 @@
 
 ## What this project is
 
-The **AI Paper Research Agent** is a multi-agent research assistant that turns "paper exists" into "here's why it matters to you" with zero manual effort. It continuously discovers academic papers from ArXiv and HuggingFace Daily Papers, summarises them with LLMs, and personalises the feed to each user's interests via Mem0 memory and vector-similarity ranking.
+**Zenith** is a research workspace for discovering and understanding academic papers. It ingests ArXiv and Hugging Face Daily Papers, supports paper projects, ranks and summarizes papers, and provides extractive research evidence with source references. Provider behavior and live ingestion still require staging verification.
 
-It is a **full-stack, AI-orchestrated, production-ready reference system** built on a strict four-layer architecture (see [ADR-001](./adr/0001-four-layer-architecture.md)).
+It is a **full-stack reference application under active development**, built around the four-layer architecture in [ADR-001](./adr/0001-four-layer-architecture.md). The current branch's backend, frontend, evaluation, and Docker CI gates pass, but the product is **not production-ready** until staging migrations/RLS, distributed recovery, provider behavior, backup restore, monitoring, and deployment are verified. See the live [shipment status](./STATUS.md).
 
 ## Who it is for
 
 | Audience | What they get |
 |----------|---------------|
-| **End users** | A personalised, continuously-updated feed of research papers with AI summaries, difficulty ratings, a 3-D citation graph, and code links |
-| **Developers** | A well-documented, four-layer codebase with CI, tests, and decision records to learn from or extend |
-| **Operators** | A deployable stack (Docker Compose, Fly.io, Vercel) with caching, rate limiting, observability, and cost guardrails baked in |
+| **End users** | A paper feed, project libraries, summaries, citation graph, extractive answers, evidence map, and non-executing implementation briefs |
+| **Developers** | A four-layer codebase with API documentation, tests, CI, and decision records |
+| **Operators** | Docker/Fly/Vercel configuration and readiness checks; live deployment and operational recovery still require staging validation |
 
 ## The problem it solves
 
-Researchers and ML engineers are overwhelmed by the volume of new papers. The system removes the manual triage loop:
+Researchers and ML engineers are overwhelmed by the volume of new papers. Zenith aims to reduce the manual triage loop:
 
 1. **Discovery** — pulls new papers daily from ArXiv and HuggingFace Daily Papers (see [FLOW.md](./FLOW.md) and [ADR-004](./adr/0004-daily-ingestion-scheduler.md)).
 2. **Summarisation** — LLM-generated TL;DR, three key contributions, and a difficulty rating per paper (see [ADR-002](./adr/0002-llm-routing.md), [ADR-008](./adr/0008-summary-cost-cap.md)).
-3. **Personalisation** — ranks papers against the user's learned interests (Mem0) and embedding similarity, falling back to keyword overlap when no profile exists.
-4. **Presentation** — a streaming, interactive UI: paper feed, detail pages, and a 3-D citation graph (Semantic Scholar, cached — see [ADR-007](./adr/0007-citation-cache.md)).
+3. **Personalisation** — ranks papers against user interests and available embeddings, with deterministic retrieval fallbacks.
+4. **Research and implementation** — returns extractive evidence from attached project papers and source-grounded, abstract-level implementation briefs. It does not generate a verified literature synthesis or reproduce code.
+5. **Presentation** — a web UI for the feed, paper details, project workspace, streaming research runs, and citation graph.
 
 ## Non-goals (explicitly out of scope)
 
-- **Hosted multi-tenancy** — this is a self-deployable reference product; each operator runs their own Supabase/LLM accounts.
-- **Paper writing / literature reviews** — we summarise and rank papers; we do not generate papers or full reviews.
+- **Organization-wide collaboration** — project membership exists, but invitation delivery and complete collaboration workflows are not implemented.
+- **Verified scientific synthesis or reproduction** — current research responses are extractive and implementation briefs are not experimental reproductions.
 - **Desktop / mobile apps** — web-only (Next.js).
 - **Closed model lock-in** — every LLM path routes through a provider-agnostic gateway (see [ADR-002](./adr/0002-llm-routing.md)).
 
@@ -44,9 +45,9 @@ These constraints recur in every decision in this repo and should be assumed unl
 | **Third-party rate limits are real** | Centralised retry with backoff ([ADR-005](./adr/0005-retry-strategy.md)), Supabase-backed caches ([ADR-007](./adr/0007-citation-cache.md)) |
 | **Secrets never reach the client** | Four-layer boundaries ([ADR-001](./adr/0001-four-layer-architecture.md)); anon key only in the frontend |
 | **Works on new and legacy Supabase** | JWT validation supports ES256/JWKS and HS256 fallback ([ADR-003](./adr/0003-jwt-validation.md)) |
-| **Multi-instance safe** | Redis-backed rate limiting and run state ([ADR-006](./adr/0006-rate-limiting.md)) |
+| **Multi-instance design** | Redis-backed coordination and Postgres-backed run/checkpoint persistence; multi-instance recovery remains to be verified against shared staging services ([ADR-006](./adr/0006-rate-limiting.md)) |
 | **Observability is optional, never blocking** | Langfuse + Sentry are opt-in no-ops without keys ([ADR-009](./adr/0009-observability.md)) |
-| **Failure is never silent** | Retriable errors are retried, non-retriable ones surface as structured HTTP errors; citation failures return empty graphs, never fabricated data |
+| **Failures are surfaced where handled** | API errors are structured and extractive research abstains when matching evidence is absent; provider fallbacks and outage behavior still need staging validation |
 
 ## Repository map
 
@@ -54,8 +55,9 @@ These constraints recur in every decision in this repo and should be assumed unl
 |------|---------|
 | `frontend/` | Next.js 15 app (feed, graph, paper detail, settings, auth) |
 | `backend/` | FastAPI app: routers, LangGraph agents, services, middleware |
-| `supabase/schema.sql` | Single source of truth for the database schema |
-| `.github/workflows/` | CI pipeline and daily ingestion trigger (both manual dispatch only) |
+| `supabase/migrations/` | Ordered schema history; apply to staging and verify before production |
+| `supabase/schema.sql` | Schema reference snapshot; not a substitute for versioned migrations |
+| `.github/workflows/` | Pull-request/push CI gates and scheduled/manual workflows |
 | `docs/` | API, schema, deployment, developer guide, flows, context |
 | `docs/adr/` | Architecture Decision Records |
 | `.plans/` | Execution plans from improvement reviews (private, git-ignored) |

@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -86,9 +87,44 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) 
     )
 
 
-cors_origins = [o.strip() for o in settings.app_url.split(",") if o.strip()]
-if not cors_origins:
-    cors_origins = ["http://localhost:3000"]
+def _configured_cors_origins(app_url: str, cors_origins_setting: str) -> list[str]:
+    """Use APP_URL only as a backwards-compatible single-origin default."""
+    if cors_origins_setting.strip():
+        origins = [
+            origin.strip().rstrip("/")
+            for origin in cors_origins_setting.split(",")
+            if origin.strip()
+        ]
+    else:
+        origins = [app_url.strip().rstrip("/")] if app_url.strip() else []
+    if not origins:
+        return ["http://localhost:3000"]
+    validated: list[str] = []
+    for origin in origins:
+        parsed = urlsplit(origin)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or not parsed.hostname
+            or "," in origin
+            or any(char.isspace() for char in origin)
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("CORS_ORIGINS must contain exact http(s) origins")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("CORS_ORIGINS must contain exact http(s) origins") from exc
+        if origin not in validated:
+            validated.append(origin)
+    return validated
+
+
+cors_origins = _configured_cors_origins(settings.app_url, settings.cors_origins)
 
 app.add_middleware(
     CORSMiddleware,

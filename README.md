@@ -9,7 +9,7 @@
 [![Next.js](https://img.shields.io/badge/next.js-15-black?style=flat-square&logo=next.js&logoColor=white)](frontend/package.json)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/main.py)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-1C3C3C?style=flat-square)](backend/agents/orchestrator.py)
-[![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=black)](supabase/schema.sql)
+[![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=black)](supabase/migrations/)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [API](#api) · [Security](#security) · [Roadmap](#roadmap)
@@ -20,7 +20,7 @@
 
 Zenith discovers papers from arXiv and Hugging Face Daily Papers, adds LLM summaries and citation graphs, and ranks papers against your personal memory profile. You can then organise them into research projects with grounded, cited answers.
 
-Status: feature-complete local slices are under review; **not production-ready**. Staging migration/RLS checks, provider validation, recovery exercises, backup restore, Docker/remote CI, monitoring, and deployment remain unverified. Previously called "AI Paper Research Agent". The infra IDs (`ai-paper-agent-backend`) were kept for deployment compatibility.
+Status: feature slices are under review; **not production-ready**. Run #48 passed backend, frontend, and Docker CI; run #50 failed a backend retry-clock test, whose fix is local pending a fresh CI run. Staging migration/RLS checks, provider validation, recovery exercises, backup restore, monitoring, and deployment remain unverified. Previously called "AI Paper Research Agent". The infra IDs (`ai-paper-agent-backend`) were kept for deployment compatibility.
 
 ## Features
 
@@ -119,11 +119,13 @@ Full stack with Docker: `docker compose up --build` (frontend :3000, backend :80
 | `OPENROUTER_API_KEY` | Yes (LLM) | Primary LLM routing |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Yes | DB + vector store |
 | `SUPABASE_JWT_SECRET` | Legacy only | HS256 fallback (new projects use JWKS) |
+| `APP_URL` | Yes | One canonical frontend origin; sent as OpenRouter HTTP-Referer |
+| `CORS_ORIGINS` | No (defaults to `APP_URL`) | Comma-separated exact browser origins |
 | `FIRECRAWL_API_KEY` | Optional | Full-text crawling |
 | `MEM0_API_KEY` | Optional | User memory |
 | `REDIS_URL` | Prod | Shared queue + rate limits |
 | `ADMIN_API_KEY` | Scheduler | `POST /api/internal/ingest` |
-| `SANDBOX_ENABLED` | No (default `false`) | Paper-code execution |
+| `SANDBOX_ENABLED` | Ignored | Paper-code execution is always disabled in the current runner |
 | `MAX_SEARCHES_PER_DAY_PER_USER` | No (default `100`) | Spend budget |
 
 Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0009` to staging and verify RLS.
@@ -142,7 +144,7 @@ Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0009` to
 | `GET /api/implementations/{id}/{plan,export}` | JWT | Paper-to-code plan (no execution) |
 | `/api/projects` · `/notes` · `/members` | JWT (owner/member) | Research workspace |
 | `/api/watchlists` · `/notifications` | JWT | Monitoring + in-app alerts |
-| `GET /api/account/export` · `DELETE /api/account` | JWT | GDPR export / deletion |
+| `GET /api/account/export` · `DELETE /api/account` | JWT | Caller account-data export and deletion endpoints; see the documented coverage limits |
 | `GET /api/models` | Public | Model registry |
 | `GET /api/health` · `/api/ready` | Public | Liveness / readiness |
 
@@ -160,7 +162,7 @@ Zenith/
 │   ├── security/      authorization · policies · input/output validation
 │   ├── guardrails/    pipeline · action approvals
 │   └── tests/         pytest (security · guardrails · retrieval · research)
-├── supabase/migrations/  0001–0005 (RLS, projects, watchlists, notifications)
+├── supabase/migrations/  0001–0009 (RLS, projects, runs, watchlists, notifications)
 ├── evals/             deterministic eval harness (CI smoke)
 └── docs/              API · architecture · security · runbooks · STATUS
 ```
@@ -169,7 +171,7 @@ Zenith/
 
 JWT verification allows ES256/RS256/EdDSA, plus HS256 for legacy tokens. Issuer and audience are checked, JWKS rotation refetches keys, and `service_role` tokens are rejected as user sessions.
 
-Isolation comes from RLS on all 13 tables and server-side ownership checks on every endpoint. Ownerless runs are inaccessible.
+RLS policies are defined in the ordered migrations, with server-side ownership checks on protected resources. Live RLS behavior remains unverified until the migration set and tenant-access matrix pass in staging. Ownerless runs are inaccessible.
 
 Guardrails run in trusted Python code: a tool allowlist, backend-recorded approvals for high-risk actions, and rejection of fabricated citations.
 

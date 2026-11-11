@@ -224,6 +224,14 @@ async def cleanup_expired_checkpoints(batch_size: int = 200) -> int:
     return deleted
 
 
+async def delete_checkpoints_for_runs(run_ids: list[str]) -> None:
+    """Delete checkpoint threads belonging to runs being erased."""
+    if not _durable_checkpointer or _checkpointer is None:
+        return
+    for run_id in run_ids:
+        await _checkpointer.adelete_thread(run_id)
+
+
 async def _invoke_or_resume(
     graph: Any,
     initial_state: OrchestratorState,

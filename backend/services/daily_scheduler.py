@@ -271,7 +271,10 @@ async def run_due_once(
             raise
         if attempt < MAX_ATTEMPTS:
             retry_delay = RETRY_BASE_SECONDS * (2 ** (attempt - 1))
-            failed_at = max(current.timestamp(), datetime.now(timezone.utc).timestamp())
+            # `current` is wall-clock time in production and the injected
+            # scheduler clock in tests. Do not mix it with ambient time here;
+            # that can move retries into a different day bucket.
+            failed_at = current.timestamp()
             await client.set(
                 retry_key,
                 str(failed_at + retry_delay),

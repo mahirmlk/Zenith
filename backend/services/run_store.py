@@ -61,6 +61,10 @@ class RunStoreProtocol(Protocol):
 
     async def get_events(self, run_id: str) -> list[dict[str, Any]]: ...
 
+    async def has_active_run(self, run_id: str) -> bool: ...
+
+    async def delete_run(self, run_id: str) -> None: ...
+
     async def cleanup(self) -> None: ...
 
 
@@ -176,6 +180,15 @@ class RunStore:
         async with self._lock:
             state = self._store.get(run_id)
             return list(state.events) if state else []
+
+    async def has_active_run(self, run_id: str) -> bool:
+        async with self._lock:
+            return run_id in self._active_runs
+
+    async def delete_run(self, run_id: str) -> None:
+        async with self._lock:
+            self._active_runs.discard(run_id)
+            self._store.pop(run_id, None)
 
     async def cleanup(self) -> None:
         async with self._lock:
@@ -413,6 +426,20 @@ class RedisRunStore:
     async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         state = await self.get(run_id)
         return list(state.events) if state else []
+
+    async def has_active_run(self, run_id: str) -> bool:
+        await self._ensure_connected()
+        return bool(await self._redis.exists(self._lease_key(run_id)))
+
+    async def delete_run(self, run_id: str) -> None:
+        """Remove Redis state, lease, and any user-scoped idempotency index."""
+        await self._ensure_connected()
+        state = await self.get(run_id)
+        keys = [run_id, self._lease_key(run_id)]
+        if state and state.user_id and state.idempotency_key:
+            keys.append(self._idempotency_index_key(state.user_id, state.idempotency_key))
+        await self._redis.delete(*keys)
+        self._lease_tokens.pop(run_id, None)
 
     async def cleanup(self) -> None:
         pass

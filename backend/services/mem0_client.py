@@ -40,3 +40,19 @@ async def get_user_profile(user_id: str) -> list[MemoryRecord]:
 
 async def add_memory(user_id: str, messages: list[MemoryRecord]) -> None:
     await asyncio.to_thread(_add_memory_sync, user_id, messages)
+
+
+def is_configured() -> bool:
+    """Whether user memories are stored in the configured Mem0 service."""
+    return bool(get_settings().mem0_api_key)
+
+
+def _delete_user_memories_sync(user_id: str) -> Any:
+    # Mem0's Platform MemoryClient supports delete_all(user_id=...). Keep the
+    # user filter explicit so account deletion cannot cross tenant boundaries.
+    return _get_client().delete_all(user_id=user_id)
+
+
+async def delete_user_memories(user_id: str) -> None:
+    """Delete every Mem0 memory for this user; errors must reach the caller."""
+    await asyncio.to_thread(_delete_user_memories_sync, user_id)

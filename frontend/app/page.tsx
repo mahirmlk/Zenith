@@ -29,7 +29,7 @@ const steps = [
   {
     n: '3',
     title: 'Keep',
-    body: 'Save what matters. Export your data or delete your account at any time.',
+    body: 'Save the papers that matter and organize your reading into projects.',
   },
 ];
 

@@ -462,7 +462,8 @@ provider's transient failure, fallback handles provider unavailability.
   in-memory fallback; development may use memory.
 
 **CORS:**
-- Allowed origins come from `APP_URL` (comma-separated for multiple origins).
+- Allowed origins come from the backend-only comma-separated `CORS_ORIGINS`; when unset, the single `APP_URL` origin is used.
+- `APP_URL` remains one canonical URL and is also sent as OpenRouter's `HTTP-Referer`.
 - Credentials enabled; methods and headers use explicit allowlists in `main.py`.
 
 ---
@@ -514,4 +515,4 @@ See `.env.example` for the full list. Key categories:
 - **Scheduler:** `ADMIN_API_KEY` (authenticates `/api/internal/ingest`)
 - **Cost guardrails:** `MAX_SUMMARIES_PER_RUN`
 - **Observability:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `APP_ENV`
-- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL` (queue, budgets, and leases); `DATABASE_URL` (required in production for durable graph checkpoints)
+- **App:** `APP_URL` (canonical frontend URL / LLM referer), `CORS_ORIGINS` (comma-separated exact frontend origins), `NEXT_PUBLIC_API_URL`, `REDIS_URL` (queue, budgets, and leases); `DATABASE_URL` (required in production for durable graph checkpoints)

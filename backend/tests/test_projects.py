@@ -94,14 +94,15 @@ async def test_member_project_list_includes_shared_projects():
 
 
 @pytest.mark.asyncio
-async def test_editor_can_update_project():
+async def test_editor_cannot_update_project_metadata():
     supabase = FakeSupabase([{"user_id": "editor-1", "role": "editor"}])
 
-    result = await update_project(
-        "project-1", ProjectUpdate(title="Changed"), {"user_id": "editor-1"}, supabase
-    )
+    with pytest.raises(HTTPException) as error:
+        await update_project(
+            "project-1", ProjectUpdate(title="Changed"), {"user_id": "editor-1"}, supabase
+        )
 
-    assert result == [{"title": "Changed"}]
+    assert error.value.status_code == 403
 
 
 @pytest.mark.asyncio

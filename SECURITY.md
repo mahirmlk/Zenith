@@ -124,7 +124,7 @@ npm audit fix   # Auto-fix non-breaking patches
 
 ### CI Integration
 
-The GitHub Actions CI workflow (`ci.yml`) is manual-only (`workflow_dispatch`) to control Actions costs, so it does not run automatically on push/PR. Trigger it from the Actions tab when you want the lint, type-check, and test checks. Dependency auditing should be added as a pre-release gate:
+The GitHub Actions CI workflow (`ci.yml`) runs on pushes, pull requests, and manual dispatch. It covers lint, type-check, tests, eval smoke, frontend build, and Docker image builds. Dependency/SCA auditing remains a separate pre-release gate:
 
 ```yaml
 # Example addition to .github/workflows/ci.yml
@@ -155,13 +155,13 @@ Follow this checklist when deploying to production:
 
 ### CORS & Networking
 
-- [ ] **Restrict CORS origins** in production. Update the `allow_origins` list in `backend/main.py` to include only your actual frontend domain(s). Never use `["*"]` in production.
+- [ ] **Restrict CORS origins** in production. Set backend `CORS_ORIGINS` to comma-separated exact frontend origins; keep `APP_URL` as one canonical frontend URL because it is sent as OpenRouter's `HTTP-Referer`. Never use wildcards or paths.
 - [ ] **Enable HTTPS** for all external traffic. The frontend (Vercel) and Supabase provide TLS by default. If self-hosting the backend, put it behind a reverse proxy (nginx, Caddy) that terminates TLS.
-- [ ] **Use a dedicated Redis instance** with authentication. Set `REDIS_URL` with a password (e.g., `redis://:password@host:6379`). Otherwise, the system falls back to in-memory run state storage, which is lost on restart and incompatible with multi-instance deployments.
+- [ ] **Use a dedicated Redis instance** with authentication. Set `REDIS_URL` with a password (e.g., `redis://:password@host:6379`). Development may use in-memory state when Redis is omitted; production fails closed when Redis, Supabase run-store RPCs, or the durable Postgres graph checkpointer is unavailable. Staging outage/recovery behavior remains to be validated.
 
 ### Database
 
-- [ ] **Review Row-Level Security (RLS) policies** on your Supabase tables. The `schema.sql` creates tables but does not define RLS policies — you must add them manually via the Supabase dashboard or SQL editor.
+- [ ] **Apply and verify Row-Level Security (RLS) policies** on your Supabase tables. Versioned policies are in `supabase/migrations/0001`–`0009`; `schema.sql` is a reference snapshot. Apply the ordered migration set to staging and test owner/member/editor/viewer/outsider/anonymous access before production. The presence of policy SQL does not prove live RLS is enabled or correct.
 - [ ] **Enable backups** for your Supabase project (available on Pro plan and above).
 - [ ] **Use the Supabase service role key** (`SUPABASE_SERVICE_ROLE_KEY`) only in the backend — never expose it in client-side code. The frontend should only use `SUPABASE_ANON_KEY`.
 

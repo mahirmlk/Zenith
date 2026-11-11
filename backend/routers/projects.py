@@ -126,15 +126,10 @@ async def update_project(
     supabase: Any = Depends(get_supabase),
 ) -> Any:
     project = await _owned_project(supabase, project_id, user["user_id"])
-    members = await (
-        supabase.table("project_members")
-        .select("user_id,role")
-        .eq("project_id", project_id)
-        .execute()
-    )
-    member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
-    if not can_write_project(project["owner_id"], member_roles, user["user_id"]):
-        raise HTTPException(status_code=403, detail="Project is read-only")
+    # Project metadata is owner-controlled. Editors may add notes/sources, but
+    # migration 0009 intentionally limits title/description updates to owners.
+    if project["owner_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the project owner can update project metadata")
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
         # C3: bind the mutation to the owner as defence-in-depth.

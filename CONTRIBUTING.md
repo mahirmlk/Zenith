@@ -99,7 +99,7 @@ cp .env.example .env
    ```sql
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
-3. Run the schema migration: copy the contents of `supabase/schema.sql` into the SQL Editor and execute.
+3. Apply the ordered migrations from `supabase/migrations/` using the [migration runbook](docs/MIGRATIONS_RUNBOOK.md). Use a disposable development project; `schema.sql` is a reference snapshot, not the migration history.
 4. Copy your project's URL, anon key, service role key, and JWT secret into `.env`.
 
 ### 5. Run Locally
@@ -147,7 +147,8 @@ ai-paper-research-agent/
 │   ├── middleware/           # Rate limiting (slowapi), response timing
 │   └── models/              # Pydantic schemas (schemas.py)
 ├── supabase/
-│   └── schema.sql           # Database migration (tables + match_papers function)
+│   ├── migrations/          # Ordered versioned schema changes
+│   └── schema.sql           # Reference snapshot, not migration history
 ├── docs/                    # API, developer guide, deployment guide, schema
 ├── .github/workflows/       # CI (lint, type-check, test, Docker build)
 ├── docker-compose.yml       # Local dev stack
@@ -211,7 +212,7 @@ npm run lint        # ESLint
 npx tsc --noEmit    # TypeScript type-check
 ```
 
-All linters and type checks must pass before opening a PR. Run them locally; the CI workflow (`ci.yml`) is manual-only (`workflow_dispatch`) to control GitHub Actions costs, so it won't run automatically on push or PR.
+All linters and type checks must pass before opening a PR. The CI workflow (`ci.yml`) runs on pushes, pull requests, and manual dispatch; wait for the remote gate before merging.
 
 ### 5. Commit
 

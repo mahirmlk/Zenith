@@ -886,3 +886,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Review and merge PR #3 after human review. Do not deploy until staging migrations/RLS, provider behavior, recovery, backup restore, monitoring, and deployment gates are demonstrated.
 
 **Current status remains not production-ready.** Green CI proves the code passed those automated jobs; it does not prove staging or production service behavior. PR #3 is a draft aggregate and needs reviewer direction on splitting the accumulated vertical slices.
+
+### §24.2 Final local shipment audit (2026-11-11)
+
+- [x] Re-audited implemented APIs, account cleanup, project authorization, CORS configuration, migrations, frontend routes, tests, and PR CI against this plan.
+- [x] Fixed retry scheduling to use the injected scheduler clock consistently; this addresses run #50's failure on historical-time test input.
+- [x] Fixed an editor authorization gap: project metadata updates are owner-only, consistent with migration 0009; added a regression test.
+- [x] Account deletion now cancels owned pending runs before lease checks and deletes run events in 200-ID chunks. Account export and deletion backend tests cover pagination, active lease handling, scoped cleanup, and large histories.
+- [x] Split `CORS_ORIGINS` from canonical `APP_URL`, validate exact origins, and cover the configuration with focused tests.
+- [x] Local validation: backend 178 passed / 6 skipped; Ruff passed; strict mypy passed for 70 application files; deterministic eval 12/12; frontend lint, typecheck, and 18 tests passed. Local Next.js production build attempts were blocked by Windows `EPERM` while creating protected output directories; run #48 had passed the production build on the earlier pushed revision. Run #50 remains failed remotely until the local fixes are pushed and CI is rerun.
+- [ ] Product completion remains open against this plan: project detail/workspace UX, watchlist and notifications UI, account export/delete controls, page-level evidence citations, synthesis and claim verification, and complete collaboration/invitation UX are missing or partial.
+- [ ] Production release remains blocked on staging migration/RLS checks, real Supabase/Redis/provider and recovery exercises, backup restore, deployment, alerting, reviewer approval, and successful CI on the current fixes. No live data or deployment was changed.

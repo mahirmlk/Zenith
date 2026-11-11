@@ -72,11 +72,7 @@ SUPABASE_JWT_SECRET=your-jwt-secret-from-supabase-dashboard
 ### 3. Set Up Supabase
 
 1. Create a [Supabase](https://supabase.com) project (free tier works).
-2. Go to the SQL Editor and run the migration from `supabase/schema.sql`. This creates:
-   - `papers` table with pgvector embedding support
-   - `user_papers` table for saved/dismissed papers
-   - `user_prefs` table for user preferences
-   - `match_papers()` function for vector similarity search
+2. Apply the ordered migrations in `supabase/migrations/` using [MIGRATIONS_RUNBOOK.md](MIGRATIONS_RUNBOOK.md). `supabase/schema.sql` is a reference snapshot, not an install or migration script. Apply and verify migrations in a disposable development project first.
 3. Get your `SUPABASE_JWT_SECRET` from **Project Settings > API > JWT Secret**.
 4. Enable Google/GitHub OAuth in **Authentication > Providers** if desired.
 
@@ -134,9 +130,10 @@ All environment variables are defined in `.env.example`. Here is what each does:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `APP_URL` | `http://localhost:3000` | Sent as HTTP-Referer to OpenRouter |
+| `APP_URL` | `http://localhost:3000` | One canonical frontend URL; sent as HTTP-Referer to OpenRouter and used as the CORS default |
+| `CORS_ORIGINS` | empty (defaults to `APP_URL`) | Comma-separated exact `http(s)` browser origins; do not include paths or trailing application routes |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL for frontend API calls |
-| `REDIS_URL` | (empty) | Redis connection URL; falls back to in-memory store if not set |
+| `REDIS_URL` | (empty) | Redis connection URL; optional for local development, required by production run queue, leases, rate limits, and budgets |
 | `ADMIN_API_KEY` | (empty) | Gate for `POST /api/internal/ingest` (scheduled ingestion) |
 | `MAX_SUMMARIES_PER_RUN` | `20` | Per-run summary fan-out cap |
 
@@ -299,10 +296,11 @@ ai-paper-research-agent/
 │   └── Dockerfile
 │
 ├── supabase/
-│   └── schema.sql                    # Database migration (tables, indexes, functions)
+│   ├── migrations/                   # Ordered, versioned schema history
+│   └── schema.sql                    # Reference snapshot (not migration history)
 │
 ├── .github/workflows/
-│   ├── ci.yml                        # GitHub Actions CI pipeline (manual dispatch)
+│   ├── ci.yml                        # GitHub Actions CI on push, pull request, and manual dispatch
 │   └── daily_fetch.yml               # Daily ingestion trigger (manual dispatch)
 │
 ├── docker-compose.yml                # Local development stack
@@ -335,16 +333,13 @@ The project enforces a strict four-layer architecture:
 
 ## Database Setup
 
-### Apply the Migration
+### Apply Migrations
 
-The Supabase schema is defined in `supabase/schema.sql`. Run it in the Supabase SQL Editor:
+The versioned database history is in `supabase/migrations/`. Apply every migration in numerical order with the Supabase CLI or the procedure in [MIGRATIONS_RUNBOOK.md](MIGRATIONS_RUNBOOK.md). Do not apply `schema.sql` as a substitute: it is a reference snapshot and does not encode the installed migration history.
 
-1. Open your Supabase project dashboard
-2. Go to **SQL Editor**
-3. Paste the contents of `supabase/schema.sql`
-4. Click **Run**
+Apply to a disposable development project first. For staging or production, follow the runbook's backup, verification, rollback, and RLS checks; the local migration files do not prove that a remote database has been updated.
 
-This creates the following tables:
+The schema snapshot documents these core tables (the ordered migrations are authoritative for upgrades):
 
 | Table | Purpose |
 |-------|---------|
@@ -354,7 +349,7 @@ This creates the following tables:
 | `citations` | Cached Semantic Scholar citation edges (feed + graph) |
 | `crawled_content` | Cached Firecrawl full-text extractions |
 
-It also creates:
+The snapshot also documents:
 - `match_papers()` — PostgreSQL function for vector similarity search
 - `idx_papers_embedding` — IVFFlat index on the embedding column
 - `idx_papers_published_at` — B-tree index for chronological sorting
@@ -512,7 +507,7 @@ Check that `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are correct. Verify yo
 
 ### "Redis unavailable, falling back to in-memory store"
 
-This is logged when Redis is not reachable. The backend will use an in-memory `RunStore` instead. Run states will be lost when the backend restarts. To fix, ensure the Redis container is running:
+In development, missing Redis can select the in-memory `RunStore`; run states are lost on restart. Production fails closed when required Redis or Postgres dependencies are unavailable. Start the local Redis container for multi-process development:
 
 ```bash
 docker compose up redis
