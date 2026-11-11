@@ -158,13 +158,16 @@ mutations apply endpoint-specific authorization.
 | `PATCH /api/projects/{project_id}` | Update project fields |
 | `DELETE /api/projects/{project_id}` | Soft-delete project |
 | `POST /api/projects/{project_id}/members` | Add/update a project member by user ID and role |
+| `GET /api/projects/{project_id}/sources?limit=&offset=` | List attached papers with metadata (maximum 200 per page) |
+| `POST /api/projects/{project_id}/sources` | Attach an existing paper (`paper_id`); duplicate attachments are idempotent |
+| `DELETE /api/projects/{project_id}/sources/{source_id}` | Remove an attached paper |
 | `POST /api/projects/{project_id}/notes` | Add a note, optionally linked to a project source |
 | `GET /api/projects/{project_id}/notes` | List project notes |
 | `POST /api/watchlists` | Create a daily/weekly watchlist, optionally project-scoped |
 | `GET /api/watchlists` | List caller's watchlists |
 | `PATCH /api/watchlists/{watch_id}` | Update enabled state or cadence |
 | `DELETE /api/watchlists/{watch_id}` | Delete watchlist |
-| `GET /api/notifications` | List up to 50 caller notifications |
+| `GET /api/notifications` | List up to 50 caller notifications, including optional linked `project_id` |
 | `POST /api/notifications/read` | Mark caller notifications as read |
 
 Ingestion creates schema-compatible notifications with database-backed

@@ -69,6 +69,7 @@ async def _papers_for_request(
             supabase.table("projects")
             .select("owner_id")
             .eq("id", body.project_id)
+            .is_("deleted_at", "null")
             .maybe_single()
             .execute()
         )

@@ -23,6 +23,7 @@ async def list_notifications(
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
 ) -> Any:
+    """List caller-owned alerts, including optional linked project context."""
     try:
         resp = await supabase.table("notifications").select("*").eq("user_id", user["user_id"]).order("created_at", desc=True).range(0, 49).execute()
         return resp.data or []

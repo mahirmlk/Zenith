@@ -6,7 +6,7 @@ server-side (RLS in migration 0001 is defence-in-depth, not the only check).
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
@@ -32,6 +32,10 @@ class NoteCreate(BaseModel):
     source_id: Optional[str] = None
 
 
+class ProjectSourceCreate(BaseModel):
+    paper_id: str = Field(..., min_length=1, max_length=200)
+
+
 async def _owned_project(
     supabase: Any,
     project_id: str,
@@ -40,7 +44,14 @@ async def _owned_project(
     """Owner OR member access (H2 fix: members were locked out)."""
     from security.authorization import can_access_project
 
-    resp = await supabase.table("projects").select("*").eq("id", project_id).maybe_single().execute()
+    resp = await (
+        supabase.table("projects")
+        .select("*")
+        .eq("id", project_id)
+        .is_("deleted_at", "null")
+        .maybe_single()
+        .execute()
+    )
     project = resp.data
     if not isinstance(project, dict):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -50,6 +61,30 @@ async def _owned_project(
     member_roles = {m["user_id"]: m["role"] for m in (members.data or [])}
     if not can_access_project(project["owner_id"], member_roles, user_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+async def _writable_project(
+    supabase: Any,
+    project_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    project = await _owned_project(supabase, project_id, user_id)
+    if project.get("owner_id") == user_id:
+        return project
+    members = await (
+        supabase.table("project_members")
+        .select("user_id,role")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    member_roles = {
+        row["user_id"]: row["role"]
+        for row in (members.data or [])
+        if row.get("user_id") and row.get("role")
+    }
+    if not can_write_project(project["owner_id"], member_roles, user_id):
+        raise HTTPException(status_code=403, detail="Project is read-only")
     return project
 
 
@@ -236,4 +271,147 @@ async def list_notes(
         return resp.data or []
     except Exception:
         logger.exception("list_notes failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.get("/{project_id}/sources")
+async def list_project_sources(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
+    await _owned_project(supabase, project_id, user["user_id"])
+    try:
+        response = await (
+            supabase.table("project_sources")
+            .select("*")
+            .eq("project_id", project_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        sources = response.data or []
+        paper_ids = list(dict.fromkeys(
+            str(source["paper_id"])
+            for source in sources
+            if isinstance(source, dict) and source.get("paper_id")
+        ))
+        paper_by_id: dict[str, dict[str, Any]] = {}
+        if paper_ids:
+            papers = await (
+                supabase.table("papers")
+                .select("id,title,authors,url,published_at")
+                .in_("id", paper_ids)
+                .execute()
+            )
+            paper_by_id = {
+                str(paper["id"]): paper
+                for paper in (papers.data or [])
+                if isinstance(paper, dict) and paper.get("id")
+            }
+        return [
+            {**source, "paper": paper_by_id.get(str(source.get("paper_id") or ""))}
+            for source in sources
+            if isinstance(source, dict)
+        ]
+    except Exception:
+        logger.exception("list_project_sources failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.post("/{project_id}/sources")
+async def attach_project_source(
+    project_id: str,
+    body: ProjectSourceCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
+    """Attach an existing paper record to a writable project."""
+    await _writable_project(supabase, project_id, user["user_id"])
+    try:
+        paper = await (
+            supabase.table("papers")
+            .select("id")
+            .eq("id", body.paper_id)
+            .maybe_single()
+            .execute()
+        )
+        if not paper.data:
+            raise HTTPException(status_code=404, detail="Paper not found")
+
+        existing = await (
+            supabase.table("project_sources")
+            .select("*")
+            .eq("project_id", project_id)
+            .eq("paper_id", body.paper_id)
+            .maybe_single()
+            .execute()
+        )
+        if existing.data:
+            return [existing.data]
+
+        payload = {
+            "project_id": project_id,
+            "paper_id": body.paper_id,
+            "source_type": "paper",
+            "created_by": user["user_id"],
+        }
+        try:
+            response = await supabase.table("project_sources").insert(payload).execute()
+            return response.data or []
+        except Exception as exc:
+            # The unique index added by migration 0010 closes the race between
+            # concurrent attach requests. Resolve that conflict as an
+            # idempotent success without changing the original creator.
+            if getattr(exc, "code", None) != "23505" and "duplicate key" not in str(exc).lower():
+                raise
+            duplicate = await (
+                supabase.table("project_sources")
+                .select("*")
+                .eq("project_id", project_id)
+                .eq("paper_id", body.paper_id)
+                .maybe_single()
+                .execute()
+            )
+            return [duplicate.data] if duplicate.data else []
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("attach_project_source failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.delete("/{project_id}/sources/{source_id}")
+async def remove_project_source(
+    project_id: str,
+    source_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
+    await _writable_project(supabase, project_id, user["user_id"])
+    try:
+        source = await (
+            supabase.table("project_sources")
+            .select("id")
+            .eq("id", source_id)
+            .eq("project_id", project_id)
+            .maybe_single()
+            .execute()
+        )
+        if not source.data:
+            raise HTTPException(status_code=404, detail="Project source not found")
+        await (
+            supabase.table("project_sources")
+            .delete()
+            .eq("id", source_id)
+            .eq("project_id", project_id)
+            .execute()
+        )
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("remove_project_source failed")
         raise HTTPException(status_code=500, detail="Internal error")

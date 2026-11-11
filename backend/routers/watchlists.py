@@ -35,8 +35,17 @@ async def create_watch(
 ) -> Any:
     if body.project_id:
         # H5: project must be owned by (or shared with) the caller.
-        proj = await supabase.table("projects").select("owner_id").eq("id", body.project_id).maybe_single().execute()
-        if not proj.data or proj.data.get("owner_id") != user["user_id"]:
+        proj = await (
+            supabase.table("projects")
+            .select("owner_id")
+            .eq("id", body.project_id)
+            .is_("deleted_at", "null")
+            .maybe_single()
+            .execute()
+        )
+        if not proj.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if proj.data.get("owner_id") != user["user_id"]:
             members = await supabase.table("project_members").select("user_id").eq("project_id", body.project_id).eq("user_id", user["user_id"]).execute()
             if not (members.data or []):
                 raise HTTPException(status_code=404, detail="Project not found")

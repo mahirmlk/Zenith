@@ -43,6 +43,7 @@ class _FakeQuery:
         self.table_name = table
         self.filters = {}
         self.ids = None
+        self.require_null = set()
 
     def select(self, *_args):
         return self
@@ -53,6 +54,11 @@ class _FakeQuery:
 
     def in_(self, _key, values):
         self.ids = set(values)
+        return self
+
+    def is_(self, key, value):
+        assert value == "null"
+        self.require_null.add(key)
         return self
 
     def maybe_single(self):
@@ -67,6 +73,8 @@ class _FakeQuery:
     async def execute(self):
         if self.table_name == "projects":
             data = self.database.project
+            if data and any(data.get(key) is not None for key in self.require_null):
+                data = None
         elif self.table_name == "project_members":
             data = [
                 row for row in self.database.members
@@ -125,6 +133,21 @@ async def test_project_retrieval_hides_project_from_nonmember():
             HybridSearchRequest(query="diffusion", project_id="p"),
             object(),
             {"user_id": "outsider"},
+            db,
+        )
+
+    assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_project_retrieval_hides_soft_deleted_project_from_owner():
+    db = _FakeDatabase(project={"owner_id": "owner", "deleted_at": "2026-11-01T00:00:00Z"})
+
+    with pytest.raises(HTTPException) as error:
+        await hybrid_search(
+            HybridSearchRequest(query="diffusion", project_id="p"),
+            object(),
+            {"user_id": "owner"},
             db,
         )
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { Route } from 'next';
 import { supabase } from '@/lib/supabase';
 import { signOut } from '@/lib/auth';
 
@@ -47,12 +48,14 @@ export function Navbar() {
     }
   };
 
-  const navLinks = [
-    { href: '/' as const, label: 'Discover' },
-    { href: '/feed' as const, label: 'Feed' },
-    { href: '/graph' as const, label: 'Graph' },
-    { href: '/saved' as const, label: 'Saved' },
-    { href: '/settings' as const, label: 'Settings' },
+  const navLinks: { href: Route; label: string }[] = [
+    { href: '/', label: 'Discover' },
+    { href: '/feed', label: 'Feed' },
+    { href: '/graph', label: 'Graph' },
+    { href: '/saved', label: 'Saved' },
+    { href: '/watchlists' as Route, label: 'Watchlists' },
+    { href: '/notifications' as Route, label: 'Notifications' },
+    { href: '/settings', label: 'Settings' },
   ];
 
   const isActive = (href: string) => pathname === href;

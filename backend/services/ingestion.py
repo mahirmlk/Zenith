@@ -67,7 +67,7 @@ async def _notify_watchlists(
     try:
         response = await (
             supabase.table("watchlists")
-            .select("id,user_id,query,cadence,enabled,last_checked_at")
+            .select("id,user_id,query,cadence,enabled,last_checked_at,project_id")
             .eq("enabled", True)
             .execute()
         )
@@ -97,6 +97,7 @@ async def _notify_watchlists(
                     {
                         "user_id": watch["user_id"],
                         "watchlist_id": watch["id"],
+                        "project_id": watch.get("project_id"),
                         "kind": "watchlist",
                         "title": f"New paper for {query}"[:200],
                         "body": str(paper.get("title") or "")[:200],

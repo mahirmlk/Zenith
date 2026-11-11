@@ -38,6 +38,7 @@ async def hybrid_search(
                 supabase.table("projects")
                 .select("owner_id")
                 .eq("id", body.project_id)
+                .is_("deleted_at", "null")
                 .maybe_single()
                 .execute()
             )

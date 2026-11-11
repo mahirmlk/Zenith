@@ -49,3 +49,20 @@ def test_project_role_migration_has_narrow_member_policies():
     assert "pm.role in ('owner', 'editor')" in normalized
     assert "for delete to authenticated" in normalized
     assert "project_members_delete_owner" in normalized
+
+
+def test_project_paper_sources_are_unique_and_migration_is_reversible():
+    migration = (ROOT / "supabase" / "migrations" / "0010_unique_project_paper_sources.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "create unique index if not exists idx_project_sources_project_paper" in normalized
+    assert "on public.project_sources (project_id, paper_id)" in normalized
+    assert "where paper_id is not null" in normalized
+    assert "drop index if exists public.idx_project_sources_project_paper" in normalized
+
+
+def test_notifications_can_retain_watchlist_project_context():
+    migration = (ROOT / "supabase" / "migrations" / "0011_notifications_project_scope.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "add column if not exists project_id uuid" in normalized
+    assert "references public.projects(id) on delete set null" in normalized
+    assert "drop index if exists public.idx_notifications_project" in normalized

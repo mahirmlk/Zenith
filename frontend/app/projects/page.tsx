@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import type { Route } from 'next';
 import { getJWT } from '@/lib/auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -67,7 +69,9 @@ export default function ProjectsPage() {
       <ul className="space-y-2">
         {projects.map((p) => (
           <li key={p.id} className="rounded border p-3">
-            <strong>{p.title}</strong>
+            <Link href={`/projects/${encodeURIComponent(p.id)}` as Route} className="font-semibold underline-offset-4 hover:underline">
+              {p.title}
+            </Link>
             {p.description && <p className="text-sm text-gray-600">{p.description}</p>}
           </li>
         ))}

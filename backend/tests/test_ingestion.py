@@ -117,9 +117,28 @@ async def test_notifications_match_migration_schema_and_are_idempotent_on_retry(
     notification = db.notifications[0]
     assert notification["kind"] == "watchlist"
     assert notification["watchlist_id"] == "watch-1"
+    assert notification["project_id"] is None
     assert notification["paper_id"] == "paper-1"
     assert "title" in notification and "body" in notification
     assert "type" not in notification and "data" not in notification
+
+
+@pytest.mark.asyncio
+async def test_project_watchlist_notification_preserves_project_context():
+    now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "watch-project",
+        "user_id": "u1",
+        "query": "transformer",
+        "cadence": "daily",
+        "enabled": True,
+        "project_id": "project-1",
+    }])
+    papers = [make_paper("paper-1", "Transformer Models", now - timedelta(hours=1))]
+
+    await _notify_watchlists(db, papers, now=now)
+
+    assert db.notifications[0]["project_id"] == "project-1"
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,7 @@ class FakeQuery:
         self.name = table
         self.filters = {}
         self.paper_ids = None
+        self.require_null = set()
 
     def select(self, *_args):
         return self
@@ -44,6 +45,11 @@ class FakeQuery:
     def in_(self, key, values):
         assert key == "id"
         self.paper_ids = set(values)
+        return self
+
+    def is_(self, key, value):
+        assert value == "null"
+        self.require_null.add(key)
         return self
 
     def maybe_single(self):
@@ -58,6 +64,8 @@ class FakeQuery:
     async def execute(self):
         if self.name == "projects":
             data = self.db.project
+            if data and any(data.get(key) is not None for key in self.require_null):
+                data = None
         elif self.name == "project_members":
             data = [row for row in self.db.members if row.get("project_id") == self.filters.get("project_id")]
         elif self.name == "project_sources":
@@ -172,6 +180,21 @@ async def test_project_research_hides_projects_from_nonmembers():
             ResearchRequest(query="diffusion", project_id="proj"),
             object(),
             {"user_id": "outsider"},
+            supabase,
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_research_hides_soft_deleted_project_from_owner():
+    supabase = FakeSupabase(project={"owner_id": "owner", "deleted_at": "2026-11-01T00:00:00Z"})
+
+    with pytest.raises(HTTPException) as exc_info:
+        await research_answer(
+            ResearchRequest(query="diffusion", project_id="proj"),
+            object(),
+            {"user_id": "owner"},
             supabase,
         )
 
