@@ -40,6 +40,15 @@ interface EvidenceItem {
 
 interface EvidenceResponse {
   evidence: EvidenceItem[];
+  pdf_evidence?: {
+    document_id: string;
+    filename: string;
+    page_number: number;
+    citation_id: string;
+    sentence: string;
+    start_offset: number;
+    end_offset: number;
+  }[];
   abstained: boolean;
   explanation: string;
 }
@@ -54,11 +63,11 @@ interface AnswerResponse {
 
 interface ComparisonRow {
   paper_id: string;
-  problem: string;
-  methods: string;
-  datasets: string;
-  metrics: string;
-  limitations: string;
+  problem: string | null;
+  methods: string | null;
+  datasets: string | null;
+  metrics: string | null;
+  limitations: string | null;
   code_status: string;
 }
 
@@ -77,15 +86,36 @@ interface ProjectSearchResponse {
   results: ProjectSearchResult[];
 }
 
+interface ProjectDocument {
+  id: string;
+  filename: string;
+  page_count: number;
+  created_at?: string;
+}
+
+interface ProjectDocumentPage {
+  page_number: number;
+  text: string;
+  citation_id: string;
+}
+
+interface ProjectDocumentPages {
+  id: string;
+  filename: string;
+  page_count: number;
+  pages: ProjectDocumentPage[];
+}
+
 type ResearchMode = 'search' | 'evidence' | 'answer' | 'compare';
 type ResearchResponse = EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse;
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getJWT();
+  const isMultipart = typeof FormData !== 'undefined' && init?.body instanceof FormData;
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isMultipart ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
@@ -155,6 +185,8 @@ export default function ProjectWorkspacePage() {
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<ResearchMode>('evidence');
   const [researchResults, setResearchResults] = useState<ResearchResponse | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedPaperSearch(paperSearch.trim()), 250);
@@ -183,6 +215,37 @@ export default function ProjectWorkspacePage() {
     queryKey: ['project-sources', projectId],
     queryFn: () => fetchProjectSources(projectId),
     enabled: !!projectId,
+  });
+
+  const documentsQuery = useQuery({
+    queryKey: ['project-documents', projectId],
+    queryFn: () => apiRequest<ProjectDocument[]>(`/api/projects/${encodeURIComponent(projectId)}/documents`),
+    enabled: !!projectId,
+  });
+
+  const documentPagesQuery = useQuery({
+    queryKey: ['project-document-pages', projectId, selectedDocumentId],
+    queryFn: () => apiRequest<ProjectDocumentPages>(
+      `/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(selectedDocumentId!)}/pages`,
+    ),
+    enabled: !!projectId && !!selectedDocumentId,
+  });
+
+  const uploadDocument = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return apiRequest<ProjectDocument>(
+        `/api/projects/${encodeURIComponent(projectId)}/documents`,
+        { method: 'POST', body: formData },
+      );
+    },
+    onSuccess: async (document) => {
+      setPdfFile(null);
+      setSelectedDocumentId(document.id);
+      await queryClient.invalidateQueries({ queryKey: ['project-documents', projectId] });
+      await queryClient.invalidateQueries({ queryKey: ['project-document-pages', projectId] });
+    },
   });
 
   const paperChoicesQuery = useQuery({
@@ -340,7 +403,7 @@ export default function ProjectWorkspacePage() {
           </div>
 
           <div className="mb-4 rounded-xl border border-zenith-border bg-zenith-surface/60 p-4 text-sm leading-6 text-zenith-body">
-            Answers quote abstracts from attached papers. Uploading documents and page-level citations are not available yet.
+            Answers quote abstracts from attached papers. Uploaded PDFs are available as page-addressable source text; research answers do not yet search PDF text.
           </div>
 
           <form onSubmit={handleResearchSubmit} className="space-y-4">
@@ -399,7 +462,14 @@ export default function ProjectWorkspacePage() {
                       <p className="mt-2 font-mono text-[10px] text-zenith-muted">{item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
                     </article>
                   ))}
-                  {result.abstained && <p className="rounded-lg bg-zenith-surface p-3 text-sm text-zenith-muted">No matching abstract evidence was found. Attach papers to this project or try a more specific query.</p>}
+                  {result.pdf_evidence?.map((item) => (
+                    <article key={`${item.citation_id}:${item.start_offset}`} className="rounded-xl border border-zenith-secondary/30 bg-zenith-surface/60 p-4">
+                      <h4 className="text-sm font-semibold text-ink-900">{item.filename} · page {item.page_number}</h4>
+                      <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
+                      <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{item.citation_id}] · page offsets {item.start_offset}–{item.end_offset}</p>
+                    </article>
+                  ))}
+                  {result.abstained && <p className="rounded-lg bg-zenith-surface p-3 text-sm text-zenith-muted">No matching abstract or PDF page evidence was found. Attach papers or upload a text-based PDF, then try a more specific query.</p>}
                 </div>
               )}
               {isAnswerResponse(result) && (
@@ -414,10 +484,11 @@ export default function ProjectWorkspacePage() {
                 result.rows.length ? (
                   <div className="overflow-x-auto rounded-xl border border-zenith-border">
                     <table className="min-w-full text-left text-xs">
-                      <caption className="sr-only">Extracted metadata comparison of attached papers</caption>
-                      <thead className="bg-zenith-surface text-zenith-muted"><tr>{['Paper', 'Problem / abstract', 'Method', 'Datasets', 'Metrics', 'Limitations', 'Code'].map((heading) => <th key={heading} scope="col" className="px-3 py-2 font-semibold">{heading}</th>)}</tr></thead>
-                      <tbody>{result.rows.map((row) => <tr key={row.paper_id} className="border-t border-zenith-border align-top"><th scope="row" className="px-3 py-2 font-mono text-zenith-secondary">{row.paper_id}</th><td className="max-w-xs px-3 py-2 text-zenith-body">{row.problem || 'Not available'}</td><td className="px-3 py-2 text-zenith-body">{row.methods || 'Not available'}</td><td className="px-3 py-2 text-zenith-muted">{row.datasets || 'Not reported'}</td><td className="px-3 py-2 text-zenith-muted">{row.metrics || 'Not reported'}</td><td className="px-3 py-2 text-zenith-muted">{row.limitations || 'Not reported'}</td><td className="px-3 py-2 text-zenith-muted">{row.code_status}</td></tr>)}</tbody>
+                      <caption className="sr-only">Heuristic comparison using exact abstract sentences from attached papers</caption>
+                      <thead className="bg-zenith-surface text-zenith-muted"><tr>{['Paper', 'Research focus (abstract)', 'Methods (abstract)', 'Datasets (abstract)', 'Metrics (abstract)', 'Limitations (abstract)', 'Code status'].map((heading) => <th key={heading} scope="col" className="px-3 py-2 font-semibold">{heading}</th>)}</tr></thead>
+                      <tbody>{result.rows.map((row) => <tr key={row.paper_id} className="border-t border-zenith-border align-top"><th scope="row" className="px-3 py-2 font-mono text-zenith-secondary">{row.paper_id}</th><td className="max-w-xs px-3 py-2 text-zenith-body">{row.problem ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-body">{row.methods ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.datasets ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.metrics ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.limitations ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">Unverified</td></tr>)}</tbody>
                     </table>
+                    <p className="border-t border-zenith-border bg-white px-3 py-2 text-xs text-zenith-muted">Heuristic keyword matches return exact abstract sentences. Empty fields mean no matching sentence was found; the extracted categories are not independently verified.</p>
                   </div>
                 ) : <p className="text-sm text-zenith-muted">No papers are attached to this project yet.</p>
               )}
@@ -491,7 +562,7 @@ export default function ProjectWorkspacePage() {
               <option value="">{paperChoicesQuery.isLoading ? 'Searching…' : 'Choose a paper…'}</option>
               {(paperChoicesQuery.data ?? []).filter((paper) => !(sourceQuery.data ?? []).some((source) => source.paper_id === paper.id)).map((paper) => <option key={paper.id} value={paper.id}>{paper.title}</option>)}
             </select>
-            <p className="text-xs text-zenith-muted">Search covers paper titles and shows up to 50 matches. PDF upload is not available yet.</p>
+            <p className="text-xs text-zenith-muted">Search covers paper titles and shows up to 50 matches.</p>
             {paperChoicesQuery.isError && <p role="alert" className="text-xs text-red-700">Could not load paper choices.</p>}
             {attachSource.isError && <p role="alert" className="text-xs text-red-700">{attachSource.error instanceof Error ? attachSource.error.message : 'Could not attach paper.'}</p>}
             <button type="submit" disabled={!paperToAttach || attachSource.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
@@ -517,6 +588,55 @@ export default function ProjectWorkspacePage() {
               ))}
             </ul>
           </div>
+        </section>
+
+        <section className="surface-card p-5 sm:p-6" aria-labelledby="documents-heading">
+          <div className="mb-4">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Primary sources</p>
+            <h2 id="documents-heading" className="mt-1 font-serif text-xl text-ink-900">PDF documents</h2>
+          </div>
+          {canWrite ? (
+            <form onSubmit={(event) => { event.preventDefault(); if (pdfFile) uploadDocument.mutate(pdfFile); }} className="space-y-3">
+              <label htmlFor="project-pdf" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Upload a PDF you have permission to use</label>
+              <input id="project-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)} className="block w-full text-xs text-zenith-body file:mr-3 file:rounded-lg file:border file:border-zenith-border file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-ink-900" />
+              <p className="text-xs leading-5 text-zenith-muted">Maximum 20 MiB and 500 pages. Text is extracted per page; the original PDF is not retained. Scanned pages need OCR, which is not available.</p>
+              {uploadDocument.isError && <p role="alert" className="text-sm text-red-700">{uploadDocument.error instanceof Error ? uploadDocument.error.message : 'Could not process this PDF.'}</p>}
+              <button type="submit" disabled={!pdfFile || uploadDocument.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+                {uploadDocument.isPending ? 'Extracting pages…' : 'Upload and extract pages'}
+              </button>
+            </form>
+          ) : <p className="text-sm text-zenith-muted">Only project owners and editors can upload documents.</p>}
+          <div className="mt-5 border-t border-zenith-border pt-4">
+            {documentsQuery.isLoading && <p role="status" className="text-sm text-zenith-muted">Loading documents…</p>}
+            {documentsQuery.isError && <p role="alert" className="text-sm text-red-700">Could not load project documents.</p>}
+            {!documentsQuery.isLoading && !documentsQuery.isError && (documentsQuery.data ?? []).length === 0 && <p className="text-sm text-zenith-muted">No PDF documents uploaded yet.</p>}
+            <ul className="space-y-2">
+              {(documentsQuery.data ?? []).map((document) => (
+                <li key={document.id} className="flex items-center justify-between gap-3 rounded-lg border border-zenith-border bg-white p-3">
+                  <div className="min-w-0">
+                    <p className="break-all text-sm font-medium text-ink-900">{document.filename}</p>
+                    <p className="mt-1 font-mono text-[10px] text-zenith-muted">{document.page_count} {document.page_count === 1 ? 'page' : 'pages'}</p>
+                  </div>
+                  <button type="button" onClick={() => setSelectedDocumentId(document.id)} className="shrink-0 text-xs font-medium text-zenith-secondary underline underline-offset-2" aria-label={`View pages in ${document.filename}`}>View pages</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {documentPagesQuery.isLoading && <p role="status" className="mt-4 text-sm text-zenith-muted">Loading extracted pages…</p>}
+          {documentPagesQuery.isError && <p role="alert" className="mt-4 text-sm text-red-700">Could not load extracted pages.</p>}
+          {documentPagesQuery.data && (
+            <div className="mt-5 space-y-3 border-t border-zenith-border pt-4" aria-label={`Extracted pages from ${documentPagesQuery.data.filename}`}>
+              {documentPagesQuery.data.pages.map((page) => (
+                <article key={page.page_number} className="rounded-xl border border-zenith-border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-ink-900">Page {page.page_number}</h3>
+                    <code className="font-mono text-[10px] text-zenith-secondary">[{page.citation_id}]</code>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zenith-body">{page.text || 'No selectable text found on this page.'}</p>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="surface-card p-5 sm:p-6" aria-labelledby="notes-heading">

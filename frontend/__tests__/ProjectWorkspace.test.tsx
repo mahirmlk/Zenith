@@ -12,6 +12,7 @@ describe('ProjectWorkspacePage', () => {
   let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
   let notes: { id: string; content: string; created_at: string }[];
   let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
+  let documents: { id: string; filename: string; page_count: number }[];
   let currentRole: 'owner' | 'editor' | 'viewer';
   let request: ReturnType<typeof vi.fn>;
 
@@ -19,6 +20,7 @@ describe('ProjectWorkspacePage', () => {
     sources = [];
     notes = [];
     members = [];
+    documents = [];
     currentRole = 'owner';
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -56,6 +58,20 @@ describe('ProjectWorkspacePage', () => {
       } else if (url.pathname === '/api/projects/project-1/sources/source-1' && method === 'DELETE') {
         sources = [];
         body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/documents' && method === 'GET') {
+        body = documents;
+      } else if (url.pathname === '/api/projects/project-1/documents' && method === 'POST') {
+        const formData = init?.body as FormData;
+        const file = formData.get('file') as File;
+        documents = [{ id: 'document-1', filename: file.name, page_count: 1 }];
+        body = documents[0];
+      } else if (url.pathname === '/api/projects/project-1/documents/document-1/pages' && method === 'GET') {
+        body = {
+          id: 'document-1',
+          filename: 'methods.pdf',
+          page_count: 1,
+          pages: [{ page_number: 1, text: 'The experiment used a held-out benchmark.', citation_id: 'document-1:page:1' }],
+        };
       } else if (url.pathname === '/api/papers' && method === 'GET') {
         body = [{ id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'] }];
       } else if (url.pathname === '/api/papers/paper-1' && method === 'GET') {
@@ -63,6 +79,7 @@ describe('ProjectWorkspacePage', () => {
       } else if (url.pathname === '/api/research/evidence-map' && method === 'POST') {
         body = {
           evidence: [{ paper_id: 'paper-1', title: 'Reliable Retrieval', sentence: 'Retrieval quality improved on the benchmark.', start_offset: 5, end_offset: 48 }],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the same benchmark.', start_offset: 0, end_offset: 35 }],
           abstained: false,
           explanation: 'Exact abstract evidence from attached papers.',
         };
@@ -98,6 +115,8 @@ describe('ProjectWorkspacePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
     await waitFor(() => expect(request.mock.calls.some(([input]) => String(input).endsWith('/api/research/evidence-map'))).toBe(true));
     expect(await screen.findByText('“Retrieval quality improved on the benchmark.”')).toBeInTheDocument();
+    expect(await screen.findByText('“The PDF reports the same benchmark.”')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:4] · page offsets 0–35')).toBeInTheDocument();
 
     await waitFor(() => {
       const researchRequest = request.mock.calls.find(([input, init]) =>
@@ -146,6 +165,29 @@ describe('ProjectWorkspacePage', () => {
     expect(screen.queryByRole('button', { name: 'Add paper' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save note' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Project members' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Upload a PDF you have permission to use')).not.toBeInTheDocument();
+  });
+
+  it('uploads a PDF, reloads its metadata, and renders page text with a citation ID', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const file = new File(['pdf bytes'], 'methods.pdf', { type: 'application/pdf' });
+    fireEvent.change(await screen.findByLabelText('Upload a PDF you have permission to use'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload and extract pages' }));
+
+    expect(await screen.findByText('The experiment used a held-out benchmark.')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:1]')).toBeInTheDocument();
+    expect(screen.getByText('methods.pdf')).toBeInTheDocument();
+    expect(screen.getByText('1 page')).toBeInTheDocument();
+
+    const uploadRequest = request.mock.calls.find(([input, init]) =>
+      String(input).endsWith('/api/projects/project-1/documents') && init?.method === 'POST',
+    );
+    expect(uploadRequest).toBeDefined();
+    expect(uploadRequest?.[1]?.body).toBeInstanceOf(FormData);
+    expect(new Headers(uploadRequest?.[1]?.headers).has('Content-Type')).toBe(false);
+    expect(request.mock.calls.some(([input]) => String(input).endsWith('/documents/document-1/pages'))).toBe(true);
   });
 
   it('lets the project owner add and remove an existing member', async () => {
