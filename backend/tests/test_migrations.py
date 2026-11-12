@@ -19,7 +19,10 @@ def test_migrations_exist():
 
 def test_every_user_table_has_rls():
     text = " ".join(" ".join(m.read_text().split()) for m in MIGRATIONS)
-    for table in ("user_papers", "user_prefs", "projects", "notes", "watchlists", "notifications"):
+    for table in (
+        "user_papers", "user_prefs", "projects", "notes", "watchlists",
+        "notifications", "project_documents", "project_document_pages",
+    ):
         assert f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY" in text, table
         assert f"{table}_owner" in text or "owner" in text
     assert "CREATE POLICY" in text
@@ -77,3 +80,16 @@ def test_project_rls_helpers_reject_soft_deleted_projects():
     assert normalized.count("p.deleted_at is null") == 3
     assert "pm.role in ('owner', 'editor')" in normalized
     assert "set search_path = ''" in normalized
+
+
+def test_project_pdf_page_migration_is_scoped_and_page_bounded():
+    migration = (ROOT / "supabase" / "migrations" / "0013_project_pdf_pages.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "create table if not exists public.project_documents" in normalized
+    assert "create table if not exists public.project_document_pages" in normalized
+    assert "alter table public.project_documents enable row level security" in normalized
+    assert "alter table public.project_document_pages enable row level security" in normalized
+    assert "public.can_access_project(project_id)" in normalized
+    assert "public.can_write_project(project_id)" in normalized
+    assert "page_number integer not null check (page_number between 1 and 500)" in normalized
+    assert "char_length(text) <= 100000" in normalized

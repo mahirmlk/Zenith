@@ -7,12 +7,17 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
 from security.authorization import can_write_project
 from services.supabase_client import get_supabase
+from services.pdf_ingestion import (
+    MAX_PDF_BYTES,
+    PdfIngestionError,
+    extract_pdf_pages,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -87,6 +92,126 @@ async def _writable_project(
     if not can_write_project(project["owner_id"], member_roles, user_id):
         raise HTTPException(status_code=403, detail="Project is read-only")
     return project
+
+
+@router.post("/{project_id}/documents", status_code=201)
+async def upload_project_pdf(
+    project_id: str,
+    file: UploadFile = File(...),
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
+    """Extract bounded page text from a user-provided PDF into project evidence."""
+    await _writable_project(supabase, project_id, user["user_id"])
+    if file.content_type not in {"application/pdf", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="Upload must be a PDF")
+    payload = await file.read(MAX_PDF_BYTES + 1)
+    await file.close()
+    try:
+        pages = extract_pdf_pages(payload)
+    except PdfIngestionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    document_id: str | None = None
+    try:
+        created = await supabase.table("project_documents").insert({
+            "project_id": project_id,
+            "created_by": user["user_id"],
+            "filename": (file.filename or "upload.pdf")[:255],
+            "page_count": len(pages),
+        }).execute()
+        rows = created.data or []
+        if not rows or not isinstance(rows[0], dict) or not rows[0].get("id"):
+            raise RuntimeError("Document insert returned no identity")
+        document_id = str(rows[0]["id"])
+        await supabase.table("project_document_pages").insert([
+            {
+                "document_id": document_id,
+                "page_number": page["page_number"],
+                "text": page["text"],
+            }
+            for page in pages
+        ]).execute()
+        return {
+            "id": document_id,
+            "project_id": project_id,
+            "filename": (file.filename or "upload.pdf")[:255],
+            "page_count": len(pages),
+            "pages": pages,
+            "citation_format": f"[{document_id}:page:N]",
+        }
+    except Exception as exc:
+        if document_id:
+            try:
+                await supabase.table("project_documents").delete().eq("id", document_id).execute()
+            except Exception:
+                logger.exception("Failed to clean up partial PDF ingest %s", document_id)
+        logger.exception("PDF ingestion failed")
+        raise HTTPException(status_code=500, detail="Document ingestion failed") from exc
+
+
+@router.get("/{project_id}/documents/{document_id}/pages")
+async def list_project_pdf_pages(
+    project_id: str,
+    document_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, Any]:
+    """Read exact extracted page text with page-addressable citation identifiers."""
+    await _owned_project(supabase, project_id, user["user_id"])
+    try:
+        document = await (
+            supabase.table("project_documents")
+            .select("id,project_id,filename,page_count")
+            .eq("id", document_id)
+            .eq("project_id", project_id)
+            .maybe_single()
+            .execute()
+        )
+        if not isinstance(document.data, dict):
+            raise HTTPException(status_code=404, detail="Document not found")
+        response = await (
+            supabase.table("project_document_pages")
+            .select("page_number,text")
+            .eq("document_id", document_id)
+            .order("page_number")
+            .execute()
+        )
+        return {
+            **document.data,
+            "pages": [
+                {**page, "citation_id": f"{document_id}:page:{page['page_number']}"}
+                for page in (response.data or [])
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("PDF page retrieval failed")
+        raise HTTPException(status_code=500, detail="Document retrieval failed") from exc
+
+
+@router.get("/{project_id}/documents")
+async def list_project_documents(
+    project_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> list[dict[str, Any]]:
+    """List extracted PDF documents for an accessible project."""
+    await _owned_project(supabase, project_id, user["user_id"])
+    try:
+        response = await (
+            supabase.table("project_documents")
+            .select("id,project_id,filename,page_count,created_at")
+            .eq("project_id", project_id)
+            .order("created_at", desc=True)
+            .range(0, 99)
+            .execute()
+        )
+        return response.data or []
+    except Exception as exc:
+        logger.exception("Project document listing failed")
+        raise HTTPException(status_code=500, detail="Document listing failed") from exc
 
 
 @router.post("")

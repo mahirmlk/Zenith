@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from agents.research_types import (
     EvidenceItem,
     EvidenceMapResponse,
+    PdfEvidenceItem,
     ResearchAnswer,
     build_comparison,
     classify_task,
@@ -229,6 +230,75 @@ def _extractive_evidence_items(
     return evidence
 
 
+def _extractive_pdf_evidence(
+    query: str,
+    documents: list[dict[str, Any]],
+    pages: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[PdfEvidenceItem]:
+    """Select exact matching PDF page sentences and retain page-local offsets."""
+    terms = query_terms(query)
+    if not terms or limit <= 0:
+        return []
+    document_by_id = {
+        str(document.get("id")): document
+        for document in documents
+        if document.get("id")
+    }
+    entities = query_entities(query)
+    candidates: list[tuple[int, PdfEvidenceItem]] = []
+    sentence_pattern = re.compile(r"\S.*?(?:[.!?](?=\s|$)|$)", re.DOTALL)
+    for page in pages:
+        document_id = str(page.get("document_id") or "")
+        document = document_by_id.get(document_id)
+        text = page.get("text")
+        page_number = page.get("page_number")
+        if (
+            not document
+            or not isinstance(text, str)
+            or not isinstance(page_number, int)
+            or page_number < 1
+        ):
+            continue
+        if entities and not entities.intersection(query_terms(text)):
+            continue
+        for match in sentence_pattern.finditer(text):
+            sentence = match.group(0)
+            if scan_untrusted(sentence):
+                continue
+            overlap = len(terms.intersection(query_terms(sentence)))
+            if not overlap or overlap / len(terms) < 0.34:
+                continue
+            start, end = match.span()
+            if text[start:end] != sentence:
+                continue
+            candidates.append((
+                overlap,
+                PdfEvidenceItem(
+                    document_id=document_id,
+                    filename=str(document.get("filename") or "document.pdf"),
+                    page_number=page_number,
+                    citation_id=f"{document_id}:page:{page_number}",
+                    sentence=sentence,
+                    start_offset=start,
+                    end_offset=end,
+                ),
+            ))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected: list[PdfEvidenceItem] = []
+    seen: set[tuple[str, int, int, int]] = set()
+    for _, item in candidates:
+        key = (item.document_id, item.page_number, item.start_offset, item.end_offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 @router.post("/evidence-map", response_model=EvidenceMapResponse)
 async def research_evidence_map(
     body: ProjectEvidenceMapRequest,
@@ -240,10 +310,52 @@ async def research_evidence_map(
     try:
         papers = await _papers_for_request(body, user, supabase)
         ranked = hybrid_rank(body.query, papers)[:10]
-        evidence = _extractive_evidence_items(body.query, ranked, limit=5)
-        source_ids = list(dict.fromkeys(
+        abstract_evidence = _extractive_evidence_items(body.query, ranked, limit=5)
+        documents_result = await (
+            supabase.table("project_documents")
+            .select("id,filename,page_count")
+            .eq("project_id", body.project_id)
+            .order("created_at", desc=True)
+            .range(0, 9)
+            .execute()
+        )
+        documents = [
+            row for row in (documents_result.data or [])
+            if isinstance(row, dict) and row.get("id")
+        ]
+        document_ids = [str(row["id"]) for row in documents]
+        pages: list[dict[str, Any]] = []
+        if document_ids:
+            pages_result = await (
+                supabase.table("project_document_pages")
+                .select("document_id,page_number,text")
+                .in_("document_id", document_ids)
+                .range(0, 499)
+                .execute()
+            )
+            pages = [row for row in (pages_result.data or []) if isinstance(row, dict)]
+
+        pdf_candidates = _extractive_pdf_evidence(body.query, documents, pages, limit=5)
+        if pdf_candidates and abstract_evidence:
+            # Keep both source types visible while respecting the shared five-span cap.
+            abstract_count = min(2, len(abstract_evidence))
+            pdf_count = min(5 - abstract_count, len(pdf_candidates))
+            abstract_count = min(5 - pdf_count, len(abstract_evidence))
+        else:
+            pdf_count = min(5, len(pdf_candidates))
+            abstract_count = min(5 - pdf_count, len(abstract_evidence))
+        pdf_evidence = pdf_candidates[:pdf_count]
+        evidence = abstract_evidence[:abstract_count]
+
+        pdf_source_ids = list(dict.fromkeys(item.document_id for item in pdf_evidence))
+        evidence_paper_ids = list(dict.fromkeys(
+            item.paper_id for item in evidence
+        ))
+        ranked_paper_ids = list(dict.fromkeys(
             str(paper["id"]) for paper in ranked if paper.get("id")
         ))
+        paper_source_ids = list(dict.fromkeys(evidence_paper_ids + ranked_paper_ids))
+        source_ids = (pdf_source_ids + paper_source_ids)[:10]
         # Verify both source membership and exact source span before returning it.
         paper_by_id = {str(paper["id"]): paper for paper in ranked if paper.get("id")}
         verified: list[EvidenceItem] = []
@@ -257,17 +369,34 @@ async def research_evidence_map(
             ):
                 verified.append(item)
 
+        verified_pdf: list[PdfEvidenceItem] = []
+        page_by_key = {
+            (str(page.get("document_id") or ""), page.get("page_number")): page
+            for page in pages
+        }
+        for pdf_item in pdf_evidence:
+            page = page_by_key.get((pdf_item.document_id, pdf_item.page_number))
+            text = page.get("text") if page else None
+            if (
+                isinstance(text, str)
+                and 0 <= pdf_item.start_offset < pdf_item.end_offset <= len(text)
+                and text[pdf_item.start_offset:pdf_item.end_offset] == pdf_item.sentence
+                and pdf_item.document_id in pdf_source_ids
+            ):
+                verified_pdf.append(pdf_item)
+
         return EvidenceMapResponse(
             query=body.query,
             project_id=body.project_id,
             evidence=verified,
+            pdf_evidence=verified_pdf,
             source_ids=source_ids,
-            abstained=not verified,
+            abstained=not verified and not verified_pdf,
             explanation=(
-                "Evidence consists of exact abstract sentences from attached project papers; "
-                "no cross-paper synthesis was generated."
-                if verified
-                else "No matching, non-instruction-like abstract evidence was found in the selected project papers."
+                "Evidence consists of exact sentences from attached paper abstracts and/or extracted PDF pages; "
+                "no cross-source synthesis was generated."
+                if verified or verified_pdf
+                else "No matching, non-instruction-like abstract or PDF page evidence was found in this project."
             ),
         )
     except HTTPException:
