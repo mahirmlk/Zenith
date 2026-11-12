@@ -85,6 +85,15 @@ describe('ProjectWorkspacePage', () => {
         };
       } else if (url.pathname === '/api/retrieval/search' && method === 'POST') {
         body = { results: [{ id: 'paper-1', title: 'Reliable Retrieval', abstract: 'A useful project paper.', score: 0.9 }] };
+      } else if (url.pathname === '/api/research/answer' && method === 'POST') {
+        body = {
+          summary: 'Extractive evidence from a project PDF.',
+          claims: ['Retrieval quality improved on the benchmark. [document-1:page:4]'],
+          citation_ids: ['document-1:page:4'],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'Retrieval quality improved on the benchmark.', start_offset: 12, end_offset: 57 }],
+          abstained: false,
+          confidence_explanation: 'Extractive evidence only.',
+        };
       }
 
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -140,6 +149,12 @@ describe('ProjectWorkspacePage', () => {
       expect(searchRequest).toBeDefined();
       expect(JSON.parse(String(searchRequest?.[1]?.body))).toEqual({ query: 'retrieval', project_id: 'project-1', limit: 10 });
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('[document-1:page:4] · page offsets 12–57')).toBeInTheDocument();
+    expect(screen.getByText('“Retrieval quality improved on the benchmark.”')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();

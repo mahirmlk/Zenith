@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased (2026-11-05, branches `audit/*`, `security/*`, `infra/*`, `feature/*`)
-- Research: project evidence maps now include bounded, exact PDF page spans with stable page citation IDs; project PDFs support owner/editor upload and member page viewing. OCR and general-answer PDF retrieval remain unavailable.
+- Research: project evidence maps and answers now include bounded, exact PDF page spans with stable page citation IDs; project PDFs support owner/editor upload and member page viewing. OCR, general retrieval, and comparison PDF support remain unavailable.
 - Research: comparison columns now use exact abstract sentences selected by conservative keyword heuristics, with missing fields explicit and code status unverified.
 - Evals: added `grounded_qa_v3` with 18 deterministic retrieval/grounding cases.
 - Security: migration 0013 adds project-scoped extracted PDF documents/pages and RLS policies.

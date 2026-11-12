@@ -8,7 +8,7 @@
 
 Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings and account privacy controls, citation graph, project workspaces, topic watchlists, notifications, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search requests enter a Redis Streams worker queue; the worker runs the LangGraph Research → Summary → Memory pipeline. The pipeline uses ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive evidence maps, answers, and comparisons. A Redis-leased scheduler triggers watchlist ingestion and creates caller-scoped in-app notifications.
 
-**Current limitation:** `/api/research/answer` returns exact abstract sentences and `/api/research/evidence-map` can also return exact extracted PDF page sentences, selected by keyword overlap. Neither route produces a synthesized scientific conclusion. See `docs/STATUS.md` for release blockers.
+**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. Non-project answers, general retrieval, and comparisons remain abstract/metadata based. No route produces a synthesized scientific conclusion. See `docs/STATUS.md` for release blockers.
 
 ---
 
@@ -46,7 +46,7 @@ flowchart TB
 
 Production run metadata, results, ordered events, and LangGraph graph state are stored in Postgres. The run store uses Supabase service-role RPCs; the graph checkpointer uses `AsyncPostgresSaver` with `DATABASE_URL`. Redis carries queued work and short-lived worker leases. Development may omit `DATABASE_URL` and use process memory; production startup fails closed if Postgres graph checkpointing is unavailable. On worker recovery, the graph resumes from its last completed node checkpoint; a failure inside a node may repeat that node's external calls.
 
-Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The original bytes are discarded; extracted page text is stored in project-scoped `project_documents` and `project_document_pages` tables under RLS (migration 0013). Owners/editors can upload; accessible project members can list and read pages. The evidence-map route considers up to 10 uploaded documents/500 page rows alongside attached paper abstracts and returns at most five exact spans with page-local offsets and stable `document_id:page:N` citation IDs. General search and `/api/research/answer` do not search PDF pages. OCR is not implemented.
+Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The original bytes are discarded; extracted page text is stored in project-scoped `project_documents` and `project_document_pages` tables under RLS (migration 0013). Owners/editors can upload; accessible project members can list and read pages. Project evidence-map and answer routes consider up to 10 uploaded documents/500 page rows alongside attached paper abstracts and return at most five exact spans with page-local offsets and stable `document_id:page:N` citation IDs. General search and comparison do not search PDF pages. OCR is not implemented.
 
 ---
 

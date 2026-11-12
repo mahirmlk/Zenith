@@ -125,7 +125,7 @@ All routes below require a user JWT.
 | `POST /api/retrieval/search` | Hybrid keyword ranking; optional `project_id` restricts results to papers attached to an accessible project |
 | `POST /api/research/plan` | Deterministic task classification (`feed`, `explain`, `compare`, `deep_research`) |
 | `POST /api/research/compare` | Comparison rows for retrieved papers; optional `project_id` is owner/member authorized and source-scoped |
-| `POST /api/research/answer` | Extractive answer: returns exact matching sentences from retrieved abstracts with paper ID citations; abstains when no sentence matches |
+| `POST /api/research/answer` | Extractive answer: returns exact matching abstract sentences, and for project requests exact PDF page sentences with document/page citations; abstains when no sentence matches |
 | `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
 
 Request body for these endpoints:
@@ -144,9 +144,11 @@ response is capped at five evidence spans. It does not generate a cross-paper
 synthesis. Outsiders receive `404` for inaccessible projects; only attached
 papers and documents belonging to the accessible project are considered.
 
-The answer and evidence-map endpoints perform keyword overlap selection. The
-answer endpoint and comparison use abstracts only; the evidence map also checks
-extracted PDF page text. These routes are not LLM synthesis and do not verify
+The answer and evidence-map endpoints perform keyword overlap selection. For a
+project request, the answer checks up to 10 project documents/500 page rows and
+returns at most five combined abstract/PDF claims; without `project_id`, it
+remains abstract-only. Comparison and general retrieval also use paper metadata
+and abstracts only. These routes are not LLM synthesis and do not verify
 scientific claims. PDF page offsets refer to extracted page text, not byte
 positions in the original PDF.
 
@@ -191,10 +193,10 @@ PDF upload accepts `application/pdf` (or generic binary content type after
 checking the PDF signature), up to 20 MiB and 500 pages. It extracts selectable
 text per page with per-page and total character limits; encrypted or malformed
 files are rejected. Scanned pages have no OCR. Extracted text is project-scoped
-and available in the document viewer and project evidence map, but is not yet
-included in general retrieval, answer, or comparison routes. The original PDF
-bytes are not retained. Migration 0013 creates the document and page tables; it
-must be applied in staging before using these routes against a deployed database.
+and available in the document viewer, project evidence map, and project answer
+route. It is not yet included in general retrieval or comparisons. The original
+PDF bytes are not retained. Migration 0013 creates the document and page tables;
+it must be applied in staging before using these routes against a deployed database.
 
 ## Implementation planning and account
 
