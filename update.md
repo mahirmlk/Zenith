@@ -932,6 +932,16 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 
 **Current status remains not production-ready.**
 
+### §24.7 Existing-account project roster management (2026-11-12)
+
+- [x] Added owner-controlled roster listing and member removal endpoints. Existing `POST /members` now validates UUID inputs and supports add/role update; owners cannot add or remove themselves as a member row. Roster mutations keep backend authorization and audit logging.
+- [x] Added project-owner UI to add/update existing accounts by UUID, view roles, and remove members. The UI clearly states that email invitations and account discovery are not configured; non-owners do not see roster mutation controls.
+- [x] Validation: backend 198 passed / 6 skipped; frontend 31 passed; lint/typecheck/build passed; Ruff and strict mypy passed; deterministic eval 12/12 passed.
+- [ ] Complete email invitation delivery, member account discovery, and onboarding/acceptance flow. Do not claim invitation support from UUID-based membership alone.
+- [ ] Staging migration/RLS, provider/recovery, backup/restore, monitoring, deployment, current-head CI, human review, and the remaining PDF/synthesis/evaluation scope remain open.
+
+**Current status remains not production-ready.**
+
 ### §24.6 Per-notification read state (2026-11-12)
 
 - [x] Added an authenticated per-notification read route that scopes updates to both the notification ID and caller ID, and only changes unread rows. The operation is idempotent and does not reveal whether another user's ID exists.

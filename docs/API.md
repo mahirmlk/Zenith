@@ -157,7 +157,9 @@ mutations apply endpoint-specific authorization.
 | `GET /api/projects/{project_id}` | Read an accessible project and caller `current_role` (`owner`, `editor`, or `viewer`) |
 | `PATCH /api/projects/{project_id}` | Update project fields |
 | `DELETE /api/projects/{project_id}` | Soft-delete project |
-| `POST /api/projects/{project_id}/members` | Add/update a project member by user ID and role |
+| `GET /api/projects/{project_id}/members` | List members of an accessible project |
+| `POST /api/projects/{project_id}/members` | Add/update an existing account by user UUID and role (owner-only) |
+| `DELETE /api/projects/{project_id}/members/{member_user_id}` | Remove a member (owner-only) |
 | `GET /api/projects/{project_id}/sources?limit=&offset=` | List attached papers with metadata (maximum 200 per page) |
 | `POST /api/projects/{project_id}/sources` | Attach an existing paper (`paper_id`); duplicate attachments are idempotent |
 | `DELETE /api/projects/{project_id}/sources/{source_id}` | Remove an attached paper |

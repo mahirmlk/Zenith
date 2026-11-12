@@ -5,6 +5,7 @@ server-side (RLS in migration 0001 is defence-in-depth, not the only check).
 """
 import logging
 from typing import Any, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -212,7 +213,7 @@ async def delete_project(
 
 
 class MemberInvite(BaseModel):
-    user_id: str = Field(..., min_length=1, max_length=100)
+    user_id: UUID
     role: str = Field(..., pattern="^(viewer|editor)$")
 
 
@@ -228,16 +229,70 @@ async def add_member(
     if project["owner_id"] != user["user_id"]:
         raise HTTPException(status_code=403, detail="Only the project owner can invite members")
     try:
+        if str(body.user_id) == str(project["owner_id"]):
+            raise HTTPException(status_code=422, detail="The project owner is already a member")
+        resp = await supabase.table("project_members").upsert({
+            "project_id": project_id, "user_id": str(body.user_id), "role": body.role,
+        }).execute()
         from security.audit import audit
         audit(user["user_id"], "project:invite", "allowed", project_id)
-        resp = await supabase.table("project_members").upsert({
-            "project_id": project_id, "user_id": body.user_id, "role": body.role,
-        }).execute()
         return resp.data
     except HTTPException:
         raise
     except Exception:
         logger.exception("add_member failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.get("/{project_id}/members")
+async def list_project_members(
+    project_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> Any:
+    """List project membership for an accessible project."""
+    await _owned_project(supabase, project_id, user["user_id"])
+    try:
+        response = await (
+            supabase.table("project_members")
+            .select("project_id,user_id,role")
+            .eq("project_id", project_id)
+            .order("user_id")
+            .execute()
+        )
+        return response.data or []
+    except Exception:
+        logger.exception("list_project_members failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.delete("/{project_id}/members/{member_user_id}")
+async def remove_project_member(
+    project_id: str,
+    member_user_id: UUID,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
+    """Remove a project member; only the project owner can change the roster."""
+    project = await _owned_project(supabase, project_id, user["user_id"])
+    if project["owner_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the project owner can remove members")
+    if str(member_user_id) == str(project["owner_id"]):
+        raise HTTPException(status_code=422, detail="The project owner cannot be removed")
+    try:
+        from security.audit import audit
+
+        await (
+            supabase.table("project_members")
+            .delete()
+            .eq("project_id", project_id)
+            .eq("user_id", str(member_user_id))
+            .execute()
+        )
+        audit(user["user_id"], "project:member_remove", "allowed", project_id)
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("remove_project_member failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
 

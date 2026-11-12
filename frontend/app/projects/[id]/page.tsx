@@ -19,6 +19,12 @@ interface Project {
   created_at?: string;
 }
 
+interface ProjectMember {
+  project_id: string;
+  user_id: string;
+  role: 'viewer' | 'editor';
+}
+
 type ProjectNote = ProjectExportNote & { created_by?: string };
 type ProjectSource = Pick<ProjectExportSource, 'id' | 'paper_id'>;
 type ProjectSourceWithPaper = ProjectExportSource;
@@ -143,6 +149,8 @@ export default function ProjectWorkspacePage() {
   const [noteDraft, setNoteDraft] = useState('');
   const [paperToAttach, setPaperToAttach] = useState('');
   const [paperSearch, setPaperSearch] = useState('');
+  const [memberId, setMemberId] = useState('');
+  const [memberRole, setMemberRole] = useState<'viewer' | 'editor'>('viewer');
   const [debouncedPaperSearch, setDebouncedPaperSearch] = useState('');
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<ResearchMode>('evidence');
@@ -157,6 +165,12 @@ export default function ProjectWorkspacePage() {
     queryKey: ['project', projectId],
     queryFn: () => apiRequest<Project>(`/api/projects/${encodeURIComponent(projectId)}`),
     enabled: !!projectId,
+  });
+
+  const membersQuery = useQuery({
+    queryKey: ['project-members', projectId],
+    queryFn: () => apiRequest<ProjectMember[]>(`/api/projects/${encodeURIComponent(projectId)}/members`),
+    enabled: projectQuery.data?.current_role === 'owner',
   });
 
   const notesQuery = useQuery({
@@ -215,6 +229,25 @@ export default function ProjectWorkspacePage() {
     },
   });
 
+  const addMember = useMutation({
+    mutationFn: (input: { user_id: string; role: 'viewer' | 'editor' }) => apiRequest<ProjectMember[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/members`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+    onSuccess: async () => {
+      setMemberId('');
+      await queryClient.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+
+  const removeMember = useMutation({
+    mutationFn: (userId: string) => apiRequest<{ status: string }>(
+      `/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-members', projectId] }),
+  });
+
   const research = useMutation({
     mutationFn: ({ query, mode }: { query: string; mode: ResearchMode }) => {
       const path = mode === 'search' ? '/api/retrieval/search' : `/api/research/${mode === 'evidence' ? 'evidence-map' : mode}`;
@@ -263,6 +296,7 @@ export default function ProjectWorkspacePage() {
 
   const project = projectQuery.data;
   const canWrite = project.current_role === 'owner' || project.current_role === 'editor';
+  const canManageMembers = project.current_role === 'owner';
   const notes = notesQuery.data ?? [];
   const result = researchResults;
 
@@ -405,6 +439,45 @@ export default function ProjectWorkspacePage() {
         </section>
 
         <div className="space-y-5">
+        {canManageMembers && (
+          <section className="surface-card p-5 sm:p-6" aria-labelledby="members-heading">
+            <div className="mb-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Collaboration</p>
+              <h2 id="members-heading" className="mt-1 font-serif text-xl text-ink-900">Project members</h2>
+            </div>
+            <form onSubmit={(event) => { event.preventDefault(); const id = memberId.trim(); if (id) addMember.mutate({ user_id: id, role: memberRole }); }} className="space-y-3">
+              <label htmlFor="member-id" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Existing account user ID</label>
+              <input id="member-id" value={memberId} onChange={(event) => setMemberId(event.target.value)} maxLength={36} pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" title="Enter a valid user UUID" required placeholder="00000000-0000-4000-8000-000000000000" className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 font-mono text-xs text-ink-900 placeholder:text-zenith-muted-light focus:border-zenith-secondary focus:outline-none focus:ring-2 focus:ring-zenith-secondary/20" />
+              <label htmlFor="member-role" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Project role</label>
+              <select id="member-role" value={memberRole} onChange={(event) => setMemberRole(event.target.value as 'viewer' | 'editor')} className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900">
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+              </select>
+              <p className="text-xs text-zenith-muted">Adds an existing Zenith account. Email invitations are not configured.</p>
+              {addMember.isError && <p role="alert" className="text-xs text-red-700">{addMember.error instanceof Error ? addMember.error.message : 'Could not add member.'}</p>}
+              <button type="submit" disabled={!memberId.trim() || addMember.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+                {addMember.isPending ? 'Adding…' : 'Add or update member'}
+              </button>
+            </form>
+            <div className="mt-5 border-t border-zenith-border pt-4">
+              {membersQuery.isLoading && <p role="status" className="text-sm text-zenith-muted">Loading members…</p>}
+              {membersQuery.isError && <p role="alert" className="text-sm text-red-700">Could not load project members.</p>}
+              {removeMember.isError && <p role="alert" className="text-sm text-red-700">Could not remove this member.</p>}
+              {!membersQuery.isLoading && !membersQuery.isError && (membersQuery.data ?? []).length === 0 && <p className="text-sm text-zenith-muted">No members have been added yet.</p>}
+              <ul className="space-y-2">
+                {(membersQuery.data ?? []).map((member) => (
+                  <li key={member.user_id} className="flex items-center justify-between gap-3 rounded-lg border border-zenith-border bg-white p-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-xs text-ink-900">{member.user_id}</p>
+                      <p className="mt-1 text-xs capitalize text-zenith-muted">{member.role}</p>
+                    </div>
+                    <button type="button" onClick={() => removeMember.mutate(member.user_id)} disabled={removeMember.isPending} className="shrink-0 text-xs font-medium text-red-700 underline decoration-red-300 underline-offset-2 disabled:opacity-50" aria-label={`Remove member ${member.user_id}`}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
         <section className="surface-card p-5 sm:p-6" aria-labelledby="sources-heading">
           <div className="mb-5">
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Project library</p>

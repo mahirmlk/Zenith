@@ -3,8 +3,21 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
-from routers.projects import MemberInvite, NoteCreate, ProjectUpdate, add_member, create_note, delete_project, get_project, list_projects, update_project
+from routers.projects import (
+    MemberInvite,
+    NoteCreate,
+    ProjectUpdate,
+    add_member,
+    create_note,
+    delete_project,
+    get_project,
+    list_project_members,
+    list_projects,
+    remove_project_member,
+    update_project,
+)
 
 
 class FakeQuery:
@@ -40,6 +53,18 @@ class FakeQuery:
         self.payload = payload
         return self
 
+    def upsert(self, payload):
+        self.action = "upsert"
+        self.payload = payload
+        return self
+
+    def delete(self):
+        self.action = "delete"
+        return self
+
+    def order(self, *_args, **_kwargs):
+        return self
+
     async def execute(self):
         if self.table_name == "projects" and self.action == "select":
             if self.is_single:
@@ -50,6 +75,23 @@ class FakeQuery:
                     data = [p for p in data if p["owner_id"] == self.filters["owner_id"]]
                 if "id" in self.filters:
                     data = [p for p in data if p["id"] in self.filters["id"]]
+        elif self.table_name == "project_members" and self.action == "upsert":
+            match = next((
+                row for row in self.database.members
+                if row.get("project_id") == self.payload["project_id"]
+                and row.get("user_id") == self.payload["user_id"]
+            ), None)
+            if match:
+                match.update(self.payload)
+            else:
+                self.database.members.append(self.payload)
+            data = [self.payload]
+        elif self.table_name == "project_members" and self.action == "delete":
+            self.database.members[:] = [
+                row for row in self.database.members
+                if not all(row.get(key) == value for key, value in self.filters.items())
+            ]
+            data = []
         elif self.table_name == "project_members":
             data = [
                 row for row in self.database.members
@@ -145,12 +187,76 @@ async def test_viewer_cannot_invite_project_members():
     with pytest.raises(HTTPException) as error:
         await add_member(
             "project-1",
-            MemberInvite(user_id="invitee", role="viewer"),
+            MemberInvite(user_id="00000000-0000-4000-8000-000000000001", role="viewer"),
             {"user_id": "viewer-1"},
             supabase,
         )
 
     assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_owner_can_add_and_list_project_members():
+    supabase = FakeSupabase([])
+    member_id = "00000000-0000-4000-8000-000000000001"
+
+    created = await add_member(
+        "project-1",
+        MemberInvite(user_id=member_id, role="editor"),
+        {"user_id": "owner-1"},
+        supabase,
+    )
+    roster = await list_project_members("project-1", {"user_id": "owner-1"}, supabase)
+
+    assert created[0]["user_id"] == member_id
+    assert roster == [{"project_id": "project-1", "user_id": member_id, "role": "editor"}]
+
+
+@pytest.mark.asyncio
+async def test_only_owner_can_remove_project_member():
+    member_id = "00000000-0000-4000-8000-000000000001"
+    supabase = FakeSupabase([{"project_id": "project-1", "user_id": member_id, "role": "viewer"}])
+
+    with pytest.raises(HTTPException) as error:
+        await remove_project_member(
+            "project-1", member_id, {"user_id": member_id}, supabase
+        )
+
+    assert error.value.status_code == 403
+    assert len(supabase.members) == 1
+
+
+@pytest.mark.asyncio
+async def test_owner_can_remove_member_without_touching_other_projects():
+    member_id = "00000000-0000-4000-8000-000000000001"
+    supabase = FakeSupabase([
+        {"project_id": "project-1", "user_id": member_id, "role": "viewer"},
+        {"project_id": "project-shared", "user_id": member_id, "role": "editor"},
+    ])
+
+    result = await remove_project_member(
+        "project-1", member_id, {"user_id": "owner-1"}, supabase
+    )
+
+    assert result == {"status": "ok"}
+    assert supabase.members == [{"project_id": "project-shared", "user_id": member_id, "role": "editor"}]
+
+
+@pytest.mark.asyncio
+async def test_owner_cannot_remove_self_from_project():
+    owner_id = "00000000-0000-4000-8000-000000000002"
+    supabase = FakeSupabase([])
+    supabase.project["owner_id"] = owner_id
+
+    with pytest.raises(HTTPException) as error:
+        await remove_project_member("project-1", owner_id, {"user_id": owner_id}, supabase)
+
+    assert error.value.status_code == 422
+
+
+def test_member_invite_rejects_malformed_user_id():
+    with pytest.raises(ValidationError):
+        MemberInvite(user_id="not-a-uuid", role="viewer")
 
 
 @pytest.mark.asyncio

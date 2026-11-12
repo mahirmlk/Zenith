@@ -11,12 +11,14 @@ vi.mock('@/lib/auth', () => ({ getJWT: async () => 'test-token' }));
 describe('ProjectWorkspacePage', () => {
   let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
   let notes: { id: string; content: string; created_at: string }[];
+  let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
   let currentRole: 'owner' | 'editor' | 'viewer';
   let request: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     sources = [];
     notes = [];
+    members = [];
     currentRole = 'owner';
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -31,6 +33,16 @@ describe('ProjectWorkspacePage', () => {
         const payload = JSON.parse(String(init?.body)) as { content: string };
         notes = [{ id: 'note-1', content: payload.content, created_at: '2026-11-11T12:00:00Z' }];
         body = notes;
+      } else if (url.pathname === '/api/projects/project-1/members' && method === 'GET') {
+        body = members;
+      } else if (url.pathname === '/api/projects/project-1/members' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { user_id: string; role: 'viewer' | 'editor' };
+        members = [{ project_id: 'project-1', ...payload }];
+        body = members;
+      } else if (url.pathname.startsWith('/api/projects/project-1/members/') && method === 'DELETE') {
+        const userId = decodeURIComponent(url.pathname.split('/').at(-1) ?? '');
+        members = members.filter((member) => member.user_id !== userId);
+        body = { status: 'ok' };
       } else if (url.pathname === '/api/projects/project-1/sources' && method === 'GET') {
         body = sources;
       } else if (url.pathname === '/api/projects/project-1/sources' && method === 'POST') {
@@ -133,6 +145,22 @@ describe('ProjectWorkspacePage', () => {
     expect(screen.queryByRole('button', { name: /remove reliable retrieval/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add paper' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save note' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project members' })).not.toBeInTheDocument();
+  });
+
+  it('lets the project owner add and remove an existing member', async () => {
+    const memberId = '00000000-0000-4000-8000-000000000001';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.change(await screen.findByLabelText('Existing account user ID'), { target: { value: memberId } });
+    fireEvent.change(screen.getByLabelText('Project role'), { target: { value: 'editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add or update member' }));
+    expect(await screen.findByText(memberId)).toBeInTheDocument();
+    expect(screen.getByText('editor')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: `Remove member ${memberId}` }));
+    expect(await screen.findByText('No members have been added yet.')).toBeInTheDocument();
   });
 });
 
