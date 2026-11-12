@@ -299,6 +299,40 @@ def _extractive_pdf_evidence(
     return selected
 
 
+async def _project_pdf_evidence(
+    query: str,
+    project_id: str,
+    supabase: Any,
+    limit: int = 5,
+) -> list[PdfEvidenceItem]:
+    """Load bounded extracted pages for an already-authorized project request."""
+    documents_result = await (
+        supabase.table("project_documents")
+        .select("id,filename,page_count")
+        .eq("project_id", project_id)
+        .order("created_at", desc=True)
+        .range(0, 9)
+        .execute()
+    )
+    documents = [
+        row for row in (documents_result.data or [])
+        if isinstance(row, dict) and row.get("id")
+    ]
+    document_ids = [str(row["id"]) for row in documents]
+    if not document_ids:
+        return []
+
+    pages_result = await (
+        supabase.table("project_document_pages")
+        .select("document_id,page_number,text")
+        .in_("document_id", document_ids)
+        .range(0, 499)
+        .execute()
+    )
+    pages = [row for row in (pages_result.data or []) if isinstance(row, dict)]
+    return _extractive_pdf_evidence(query, documents, pages, limit=limit)
+
+
 @router.post("/evidence-map", response_model=EvidenceMapResponse)
 async def research_evidence_map(
     body: ProjectEvidenceMapRequest,
@@ -435,18 +469,47 @@ async def research_answer(
     try:
         papers = await _papers_for_request(body, user, supabase)
         ranked = hybrid_rank(body.query, papers)[:5]
-        claims = _extractive_claims(body.query, ranked)
+        abstract_claims = _extractive_claims(body.query, ranked)
         retrieved_ids = {str(paper["id"]) for paper in ranked if paper.get("id")}
-        fabricated = validate_citations(" ".join(claims), retrieved_ids)
+        fabricated = validate_citations(" ".join(abstract_claims), retrieved_ids)
         if fabricated:
             logger.error("Extractive answer citation validation failed: %s", fabricated)
-            claims = []
+            abstract_claims = []
+
+        pdf_candidates = (
+            await _project_pdf_evidence(body.query, body.project_id, supabase, limit=5)
+            if body.project_id
+            else []
+        )
+        if abstract_claims and pdf_candidates:
+            abstract_count = min(2, len(abstract_claims))
+            pdf_count = min(5 - abstract_count, len(pdf_candidates))
+            abstract_count = min(5 - pdf_count, len(abstract_claims))
+        else:
+            pdf_count = min(5, len(pdf_candidates))
+            abstract_count = min(5 - pdf_count, len(abstract_claims))
+        selected_abstract_claims = abstract_claims[:abstract_count]
+        selected_pdf = pdf_candidates[:pdf_count]
+        # The selector checks exact page-local offsets before constructing each item.
+        # Five abstract ranks plus at most five PDF source IDs stay within ten sources.
+        verified_pdf = selected_pdf
+
+        pdf_claims = [f"{item.sentence} [{item.citation_id}]" for item in verified_pdf]
+        claims = selected_abstract_claims + pdf_claims
 
         if not claims:
             return ResearchAnswer(
-                summary="No abstract evidence matched this question. Try a more specific query or add relevant papers to the project.",
+                summary=(
+                    "No abstract or project PDF evidence matched this question. Try a more specific query or add relevant sources."
+                    if body.project_id
+                    else "No abstract evidence matched this question. Try a more specific query or add relevant papers to the project."
+                ),
                 abstained=True,
-                confidence_explanation="Abstained: no retrieved abstract sentence shared a substantive query term.",
+                confidence_explanation=(
+                    "Abstained: no retrieved abstract or project PDF sentence shared a substantive query term."
+                    if body.project_id
+                    else "Abstained: no retrieved abstract sentence shared a substantive query term."
+                ),
             )
 
         citations = list(dict.fromkeys(
@@ -454,11 +517,20 @@ async def research_answer(
             if (match := re.search(r"\[([A-Za-z0-9_\-:.]+)\]$", claim))
         ))
         return ResearchAnswer(
-            summary="Extractive evidence from retrieved paper abstracts; this is not a synthesized conclusion.",
+            summary=(
+                "Extractive evidence from retrieved paper abstracts and project PDF pages; this is not a synthesized conclusion."
+                if verified_pdf
+                else "Extractive evidence from retrieved paper abstracts; this is not a synthesized conclusion."
+            ),
             claims=claims,
             citation_ids=citations,
+            pdf_evidence=verified_pdf,
             abstained=False,
-            confidence_explanation="Claims are verbatim abstract sentences selected by keyword overlap; support has not been independently verified.",
+            confidence_explanation=(
+                "Claims are verbatim abstract sentences or project PDF page spans selected by keyword overlap; support has not been independently verified."
+                if verified_pdf
+                else "Claims are verbatim abstract sentences selected by keyword overlap; support has not been independently verified."
+            ),
         )
     except HTTPException:
         raise

@@ -66,6 +66,7 @@ class ResearchAnswer(BaseModel):
     summary: str
     claims: list[str] = Field(default_factory=list)
     citation_ids: list[str] = Field(default_factory=list)
+    pdf_evidence: list[PdfEvidenceItem] = Field(default_factory=list)
     abstained: bool = False
     confidence_explanation: str = ""
 
