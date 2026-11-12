@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchNotifications, markNotificationsRead, type AppNotification } from '@/lib/monitoring-api';
+import { fetchNotifications, markNotificationRead, markNotificationsRead, type AppNotification } from '@/lib/monitoring-api';
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -13,8 +13,12 @@ function formatDate(value: string): string {
 export default function NotificationsPage() {
   const client = useQueryClient();
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: fetchNotifications });
-  const markRead = useMutation({
+  const markAllRead = useMutation({
     mutationFn: markNotificationsRead,
+    onSuccess: () => client.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+  const markOneRead = useMutation({
+    mutationFn: markNotificationRead,
     onSuccess: () => client.invalidateQueries({ queryKey: ['notifications'] }),
   });
   const unreadCount = (notifications.data ?? []).filter((item) => !item.read_at).length;
@@ -32,15 +36,15 @@ export default function NotificationsPage() {
           </div>
           <button
             type="button"
-            disabled={unreadCount === 0 || markRead.isPending}
-            onClick={() => markRead.mutate()}
+            disabled={unreadCount === 0 || markAllRead.isPending}
+            onClick={() => markAllRead.mutate()}
             className="rounded-xl border border-zenith-border px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >{markRead.isPending ? 'Marking read…' : 'Mark all as read'}</button>
+          >{markAllRead.isPending ? 'Marking read…' : 'Mark all as read'}</button>
         </header>
 
         {notifications.isLoading && <p role="status" className="py-6 text-sm text-zenith-muted">Loading notifications…</p>}
         {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not load notifications: {error}</p>}
-        {markRead.error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not mark notifications as read. Please try again.</p>}
+        {(markAllRead.error || markOneRead.error) && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not update notification status. Please try again.</p>}
         {!notifications.isLoading && !error && (notifications.data?.length ?? 0) === 0 && (
           <div className="surface-card p-6 text-sm text-zenith-muted">No notifications yet. Create a watchlist to follow new matching papers.</div>
         )}
@@ -56,6 +60,7 @@ export default function NotificationsPage() {
                 {item.body && <p className="mt-1 text-sm leading-6 text-zenith-body">{item.body}</p>}
                 {item.paper_id && <Link href={`/paper/${encodeURIComponent(item.paper_id)}`} className="mt-2 inline-block text-xs font-semibold text-ink-900 underline underline-offset-4">Open paper</Link>}
                 {item.project_id && <Link href={`/projects/${encodeURIComponent(item.project_id)}` as Route} className="mt-2 inline-block text-xs font-semibold text-ink-900 underline underline-offset-4">Open linked project</Link>}
+                {!item.read_at && <button type="button" onClick={() => markOneRead.mutate(item.id)} disabled={markOneRead.isPending} className="mt-2 block text-xs font-semibold text-ink-900 underline underline-offset-4 disabled:cursor-wait disabled:opacity-60" aria-label={`Mark ${item.title} as read`}>Mark as read</button>}
               </article>
             </li>
           ))}

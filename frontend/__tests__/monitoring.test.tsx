@@ -10,6 +10,7 @@ import {
   fetchNotifications,
   fetchWatchedProjects,
   fetchWatchlists,
+  markNotificationRead,
   markNotificationsRead,
   updateWatchlist,
 } from '@/lib/monitoring-api';
@@ -20,6 +21,7 @@ vi.mock('@/lib/monitoring-api', () => ({
   fetchNotifications: vi.fn(),
   fetchWatchedProjects: vi.fn(),
   fetchWatchlists: vi.fn(),
+  markNotificationRead: vi.fn(),
   markNotificationsRead: vi.fn(),
   updateWatchlist: vi.fn(),
 }));
@@ -79,5 +81,20 @@ describe('monitoring pages', () => {
     await waitFor(() => expect(markNotificationsRead).toHaveBeenCalledOnce());
     expect(screen.getByRole('link', { name: 'Open paper' })).toHaveAttribute('href', '/paper/paper-1');
     expect(screen.getByRole('link', { name: 'Open linked project' })).toHaveAttribute('href', '/projects/project-1');
+  });
+
+  it('marks one unread notification read without marking all', async () => {
+    vi.mocked(fetchNotifications).mockResolvedValue([{
+      id: 'notification-2', title: 'Another paper', body: null,
+      paper_id: 'paper-2', project_id: null, created_at: '2026-11-11T00:00:00Z', read_at: null,
+    }]);
+    vi.mocked(markNotificationRead).mockResolvedValue({ status: 'ok' });
+
+    renderWithQuery(<NotificationsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark Another paper as read' }));
+
+    await waitFor(() => expect(markNotificationRead).toHaveBeenCalledOnce());
+    expect(vi.mocked(markNotificationRead).mock.calls[0]?.[0]).toBe('notification-2');
+    expect(markNotificationsRead).not.toHaveBeenCalled();
   });
 });

@@ -169,6 +169,7 @@ mutations apply endpoint-specific authorization.
 | `DELETE /api/watchlists/{watch_id}` | Delete watchlist |
 | `GET /api/notifications` | List up to 50 caller notifications, including optional linked `project_id` |
 | `POST /api/notifications/read` | Mark caller notifications as read |
+| `POST /api/notifications/{notification_id}/read` | Mark one unread notification as read, scoped to the caller |
 
 Ingestion creates schema-compatible notifications with database-backed
 watchlist/paper deduplication. The backend starts a Redis-leased daily UTC

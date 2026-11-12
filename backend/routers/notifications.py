@@ -48,3 +48,27 @@ async def mark_read(
     except Exception:
         logger.exception("mark_read failed")
         raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.post("/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
+    """Mark one caller-owned notification read without revealing other IDs."""
+    from datetime import datetime, timezone
+
+    try:
+        await (
+            supabase.table("notifications")
+            .update({"read_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", notification_id)
+            .eq("user_id", user["user_id"])
+            .is_("read_at", "null")
+            .execute()
+        )
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("mark_notification_read failed")
+        raise HTTPException(status_code=500, detail="Internal error")

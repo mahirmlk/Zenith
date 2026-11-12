@@ -931,3 +931,13 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Product gaps and production gates from §24.3 remain open, including PDF/page evidence, synthesis and claim verification, complete collaboration/invitation delivery, expanded watch targets, provider/recovery tests, monitoring, deployment, and current-head CI.
 
 **Current status remains not production-ready.**
+
+### §24.6 Per-notification read state (2026-11-12)
+
+- [x] Added an authenticated per-notification read route that scopes updates to both the notification ID and caller ID, and only changes unread rows. The operation is idempotent and does not reveal whether another user's ID exists.
+- [x] Added the per-item “Mark as read” control and API/backend/frontend regression tests.
+- [x] Refreshed `ARCHITECTURE.md` with the actual current routes, browser/API/data/queue/worker/checkpoint/scheduler flows, and project/monitoring/privacy pages.
+- [x] Validation: backend 193 passed / 6 skipped, frontend 30 passed, lint/typecheck/build passed, Ruff and strict mypy passed, deterministic eval 12/12 passed.
+- [ ] Staging RLS, provider/recovery, backup/restore, monitoring, deployment, current-head CI, human review, and the remaining full-product gaps remain open.
+
+**Current status remains not production-ready.**

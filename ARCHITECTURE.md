@@ -1,12 +1,12 @@
 # Zenith — Current Runtime Architecture
 
-> Reviewed against the checked-in code on 2026-11-08. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
+> Reviewed against the checked-in code on 2026-11-12. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
 
 ---
 
 ## 1. System Context
 
-Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings, citation graph, basic projects, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search requests enter a Redis Streams worker queue when Redis is configured; the worker runs the LangGraph Research → Summary → Memory pipeline. The pipeline uses ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive research answers and comparisons.
+Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings and account privacy controls, citation graph, project workspaces, topic watchlists, notifications, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search requests enter a Redis Streams worker queue; the worker runs the LangGraph Research → Summary → Memory pipeline. The pipeline uses ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive evidence maps, answers, and comparisons. A Redis-leased scheduler triggers watchlist ingestion and creates caller-scoped in-app notifications.
 
 **Current limitation:** research answers are exact abstract sentences selected by keyword overlap; they are not a synthesized scientific conclusion. See `docs/STATUS.md` for release blockers.
 
@@ -14,37 +14,34 @@ Zenith is a research paper discovery and organization app. The current UI provid
 
 ## 2. High-Level Architecture
 
-```
-┌──────────────────────────────────────────────┐
-│          Next.js Frontend                     │
-│  Paper feed · Three.js graph · Auth UI        │
-└─────────────────┬────────────────────────────┘
-                  │ HTTP / SSE
-┌─────────────────▼────────────────────────────┐
-│          FastAPI Backend                      │
-│  API · JWT authz · Redis rate limits          │
-│  Readiness · replay-only SSE · lifecycle       │
-└─────────────────┬────────────────────────────┘
-                  │
-┌─────────────────▼────────────────────────────┐
-│       Redis queue + run/event state            │
-│    Streams consumer group · reclaim/leases    │
-└─────────────────┬────────────────────────────┘
-                  │
-┌─────────────────▼────────────────────────────┐
-│        LangGraph worker pipeline              │
-│  ┌────────────┐  ┌────────────┐  ┌─────────┐ │
-│  │ Research   │  │ Summary    │  │ Memory  │ │
-│  │ Agent      │  │ Agent      │  │ Agent   │ │
-│  │ (discover) │  │ (simplify) │  │(person.)│ │
-│  └─────┬──────┘  └─────┬──────┘  └────┬────┘ │
-└────────┼───────────────┼──────────────┼──────┘
-         │               │              │
-┌────────▼───────────────▼──────────────▼──────┐
-│             External Services                 │
-│  ArXiv+HF │ LLM providers │ S2+PWC │ Firecrawl│
-│  Supabase │ optional Mem0 │ Redis             │
-└──────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  Browser[User browser]
+  Frontend[Next.js App Router<br/>feed · projects · watchlists · notifications · settings · graph]
+  Auth[Supabase Auth<br/>JWT issued to browser]
+  API[FastAPI<br/>JWT verification · authorization · REST · SSE replay]
+  DB[(Supabase Postgres<br/>papers · projects · private user data<br/>canonical run/event records via RPC)]
+  Redis[(Redis<br/>Streams queue · budgets · leases)]
+  Worker[LangGraph worker<br/>Research → Summary → Memory]
+  Checkpoints[(Postgres LangGraph checkpoints<br/>AsyncPostgresSaver)]
+  Scheduler[Watchlist scheduler<br/>daily UTC + shared lease]
+  Providers[External providers<br/>ArXiv · Hugging Face · LLMs<br/>Semantic Scholar · Papers with Code · Firecrawl]
+  Memory[Optional Mem0 preferences]
+
+  Browser --> Frontend
+  Frontend <--> Auth
+  Frontend -->|HTTP / SSE| API
+  API <--> DB
+  API --> Redis
+  API -->|enqueue search| Redis
+  Redis -->|consumer group| Worker
+  Worker --> Providers
+  Worker --> DB
+  Worker --> Checkpoints
+  Worker --> Memory
+  Scheduler --> Redis
+  Scheduler --> Providers
+  Scheduler --> DB
 ```
 
 Production run metadata, results, ordered events, and LangGraph graph state are stored in Postgres. The run store uses Supabase service-role RPCs; the graph checkpointer uses `AsyncPostgresSaver` with `DATABASE_URL`. Redis carries queued work and short-lived worker leases. Development may omit `DATABASE_URL` and use process memory; production startup fails closed if Postgres graph checkpointing is unavailable. On worker recovery, the graph resumes from its last completed node checkpoint; a failure inside a node may repeat that node's external calls.
@@ -70,8 +67,9 @@ Production run metadata, results, ordered events, and LangGraph graph state are 
 - `/graph` — 3-D citation network (force-directed graph)
 - `/paper/[id]` — Paper detail with AI summary, contributions, difficulty, code repos
 - `/login` — Supabase Auth UI
-- `/projects` — Basic project list/create UI
-- `/settings` — User preferences (model selection, research interests)
+- `/projects` and `/projects/[id]` — Project list and role-aware project workspace
+- `/watchlists` and `/notifications` — Topic watch configuration and in-app notification management
+- `/settings` — User preferences, authenticated account export, and typed-confirmation deletion
 
 **Key Components:**
 - `PaperCard` — Title, authors, AI TL;DR, relevance score, save/dismiss actions
@@ -117,10 +115,11 @@ GET    /api/runs/{id}, /events              # Status and replayable events
 POST   /api/runs/{id}/cancel
 POST   /api/retrieval/search                # Hybrid search; optional project scope
 POST   /api/research/plan|compare|answer    # Plan, comparison, extractive answer
-GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, notes
+GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, notes, attached papers
 GET/POST/PATCH/DELETE /api/watchlists/...   # Watchlists
 GET    /api/notifications                   # In-app notifications
-POST   /api/notifications/read
+POST   /api/notifications/read              # Mark all caller notifications read
+POST   /api/notifications/{id}/read         # Mark one caller notification read
 GET    /api/models                          # Supported model registry
 GET    /api/graph/{paper_id}                # Authenticated citation graph
 GET    /api/implementations/{paper_id}/plan|export

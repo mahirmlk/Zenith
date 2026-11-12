@@ -95,3 +95,7 @@ export function fetchNotifications(): Promise<AppNotification[]> {
 export function markNotificationsRead(): Promise<{ status: string }> {
   return request('/api/notifications/read', { method: 'POST' });
 }
+
+export function markNotificationRead(id: string): Promise<{ status: string }> {
+  return request(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+}
