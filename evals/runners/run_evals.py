@@ -10,8 +10,8 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DATASET = ROOT / "evals" / "datasets" / "grounded_qa_v2.jsonl"
-DATASET_VERSION = "grounded_qa_v2"
+DATASET = ROOT / "evals" / "datasets" / "grounded_qa_v3.jsonl"
+DATASET_VERSION = "grounded_qa_v3"
 TOP_K = 5
 sys.path.insert(0, str(ROOT / "backend"))
 

@@ -162,7 +162,7 @@ Zenith/
 │   ├── security/      authorization · policies · input/output validation
 │   ├── guardrails/    pipeline · action approvals
 │   └── tests/         pytest (security · guardrails · retrieval · research)
-├── supabase/migrations/  0001–0012 (RLS, projects, unique paper sources, runs, watchlists, notifications)
+├── supabase/migrations/  0001–0013 (RLS, projects, runs, watchlists, notifications, PDF pages)
 ├── evals/             deterministic eval harness (CI smoke)
 └── docs/              API · architecture · security · runbooks · STATUS
 ```

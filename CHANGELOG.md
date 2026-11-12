@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased (2026-11-05, branches `audit/*`, `security/*`, `infra/*`, `feature/*`)
+- Research: project evidence maps now include bounded, exact PDF page spans with stable page citation IDs; project PDFs support owner/editor upload and member page viewing. OCR and general-answer PDF retrieval remain unavailable.
+- Research: comparison columns now use exact abstract sentences selected by conservative keyword heuristics, with missing fields explicit and code status unverified.
+- Evals: added `grounded_qa_v3` with 18 deterministic retrieval/grounding cases.
+- Security: migration 0013 adds project-scoped extracted PDF documents/pages and RLS policies.
 - Projects: project detail returns the caller's role; workspace hides source and note mutation controls from viewers.
 - Collaboration: owners can list, add/update existing members by UUID, and remove members; membership mutations retain owner-only checks and audit logging.
 - Monitoring: add per-notification read state, scoped to the authenticated caller.

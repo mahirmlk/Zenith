@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:8000` in development, or the deployed backend URL.
 FastAPI OpenAPI at `/docs` is the authoritative machine-readable contract.
-This document describes current router behavior as of 2026-11-08; it does not
+This document describes current router behavior as of 2026-11-12; it does not
 assert that migrations have been applied to a live database.
 
 ## Authentication
@@ -126,7 +126,7 @@ All routes below require a user JWT.
 | `POST /api/research/plan` | Deterministic task classification (`feed`, `explain`, `compare`, `deep_research`) |
 | `POST /api/research/compare` | Comparison rows for retrieved papers; optional `project_id` is owner/member authorized and source-scoped |
 | `POST /api/research/answer` | Extractive answer: returns exact matching sentences from retrieved abstracts with paper ID citations; abstains when no sentence matches |
-| `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; max 10 attached papers and 5 exact abstract spans |
+| `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
 
 Request body for these endpoints:
 
@@ -135,15 +135,20 @@ Request body for these endpoints:
 ```
 
 `/api/research/evidence-map` requires `project_id`. It returns `query`,
-`project_id`, `source_ids`, `abstained`, an explanation, and `evidence` entries
-with `paper_id`, `title`, exact `sentence`, and half-open character offsets
-(`start_offset`, `end_offset`) into that paper's stored abstract. It does not
-generate a cross-paper synthesis. Outsiders receive `404` for inaccessible
-projects; only papers attached to the project are considered.
+`project_id`, `source_ids`, `abstained`, an explanation, abstract `evidence`
+entries with `paper_id`, `title`, exact `sentence`, and half-open character
+offsets into the stored abstract, plus `pdf_evidence` entries with
+`document_id`, `filename`, `page_number`, `citation_id`, exact `sentence`, and
+page-local offsets. PDF citation IDs use `document_id:page:N`. The combined
+response is capped at five evidence spans. It does not generate a cross-paper
+synthesis. Outsiders receive `404` for inaccessible projects; only attached
+papers and documents belonging to the accessible project are considered.
 
-The answer and evidence-map endpoints perform keyword overlap selection. They
-are not LLM synthesis, do not verify scientific claims, and do not provide
-page/section spans. Evidence-map offsets refer to the stored abstract string.
+The answer and evidence-map endpoints perform keyword overlap selection. The
+answer endpoint and comparison use abstracts only; the evidence map also checks
+extracted PDF page text. These routes are not LLM synthesis and do not verify
+scientific claims. PDF page offsets refer to extracted page text, not byte
+positions in the original PDF.
 
 ## Projects, watchlists, and notifications
 
@@ -163,6 +168,9 @@ mutations apply endpoint-specific authorization.
 | `GET /api/projects/{project_id}/sources?limit=&offset=` | List attached papers with metadata (maximum 200 per page) |
 | `POST /api/projects/{project_id}/sources` | Attach an existing paper (`paper_id`); duplicate attachments are idempotent |
 | `DELETE /api/projects/{project_id}/sources/{source_id}` | Remove an attached paper |
+| `POST /api/projects/{project_id}/documents` | Owner/editor uploads a PDF as multipart `file`; extracts bounded page text and discards original bytes |
+| `GET /api/projects/{project_id}/documents` | List up to 100 uploaded PDF document records for an accessible project |
+| `GET /api/projects/{project_id}/documents/{document_id}/pages` | Read extracted page text and stable `document_id:page:N` citation IDs |
 | `POST /api/projects/{project_id}/notes` | Add a note, optionally linked to a project source |
 | `GET /api/projects/{project_id}/notes` | List project notes |
 | `POST /api/watchlists` | Create a daily/weekly watchlist, optionally project-scoped |
@@ -178,6 +186,15 @@ watchlist/paper deduplication. The backend starts a Redis-leased daily UTC
 scheduler when Redis and Supabase are configured. Scheduled, Fly cron, and
 admin-triggered ingestion must use the same lease path; see `docs/STATUS.md`
 for current verification evidence and live-infrastructure limitations.
+
+PDF upload accepts `application/pdf` (or generic binary content type after
+checking the PDF signature), up to 20 MiB and 500 pages. It extracts selectable
+text per page with per-page and total character limits; encrypted or malformed
+files are rejected. Scanned pages have no OCR. Extracted text is project-scoped
+and available in the document viewer and project evidence map, but is not yet
+included in general retrieval, answer, or comparison routes. The original PDF
+bytes are not retained. Migration 0013 creates the document and page tables; it
+must be applied in staging before using these routes against a deployed database.
 
 ## Implementation planning and account
 
