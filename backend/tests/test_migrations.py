@@ -66,3 +66,14 @@ def test_notifications_can_retain_watchlist_project_context():
     assert "add column if not exists project_id uuid" in normalized
     assert "references public.projects(id) on delete set null" in normalized
     assert "drop index if exists public.idx_notifications_project" in normalized
+
+
+def test_project_rls_helpers_reject_soft_deleted_projects():
+    migration = (ROOT / "supabase" / "migrations" / "0012_hide_deleted_projects_in_rls.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "create or replace function public.is_project_owner" in normalized
+    assert "create or replace function public.can_access_project" in normalized
+    assert "create or replace function public.can_write_project" in normalized
+    assert normalized.count("p.deleted_at is null") == 3
+    assert "pm.role in ('owner', 'editor')" in normalized
+    assert "set search_path = ''" in normalized

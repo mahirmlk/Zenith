@@ -154,7 +154,7 @@ mutations apply endpoint-specific authorization.
 |---|---|
 | `POST /api/projects` | Create a project (`title`, optional `description`) |
 | `GET /api/projects` | List owned and shared projects for the caller |
-| `GET /api/projects/{project_id}` | Read an accessible project |
+| `GET /api/projects/{project_id}` | Read an accessible project and caller `current_role` (`owner`, `editor`, or `viewer`) |
 | `PATCH /api/projects/{project_id}` | Update project fields |
 | `DELETE /api/projects/{project_id}` | Soft-delete project |
 | `POST /api/projects/{project_id}/members` | Add/update a project member by user ID and role |

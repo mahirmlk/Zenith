@@ -11,18 +11,20 @@ vi.mock('@/lib/auth', () => ({ getJWT: async () => 'test-token' }));
 describe('ProjectWorkspacePage', () => {
   let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
   let notes: { id: string; content: string; created_at: string }[];
+  let currentRole: 'owner' | 'editor' | 'viewer';
   let request: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     sources = [];
     notes = [];
+    currentRole = 'owner';
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       let body: unknown = {};
 
       if (url.pathname === '/api/projects/project-1' && method === 'GET') {
-        body = { id: 'project-1', owner_id: 'user-1', title: 'Alpha Project', description: 'A research workspace' };
+        body = { id: 'project-1', owner_id: 'user-1', title: 'Alpha Project', description: 'A research workspace', current_role: currentRole };
       } else if (url.pathname === '/api/projects/project-1/notes' && method === 'GET') {
         body = notes;
       } else if (url.pathname === '/api/projects/project-1/notes' && method === 'POST') {
@@ -110,6 +112,27 @@ describe('ProjectWorkspacePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();
+  });
+
+  it('shows project content but hides mutation controls for viewer members', async () => {
+    currentRole = 'viewer';
+    sources = [{
+      id: 'source-1',
+      paper_id: 'paper-1',
+      paper: { id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'], url: 'https://example.org/paper' },
+    }];
+    notes = [{ id: 'note-1', content: 'Shared reading note', created_at: '2026-11-11T12:00:00Z' }];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText(/read-only access to this project/i)).toBeInTheDocument();
+    expect(await screen.findByText('Reliable Retrieval')).toBeInTheDocument();
+    expect(await screen.findByText('Shared reading note')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Find a paper by title')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Add a note')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove reliable retrieval/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add paper' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save note' })).not.toBeInTheDocument();
   });
 });
 

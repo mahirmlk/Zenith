@@ -150,7 +150,22 @@ async def get_project(
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
 ) -> dict[str, Any]:
-    return await _owned_project(supabase, project_id, user["user_id"])
+    project = await _owned_project(supabase, project_id, user["user_id"])
+    if project.get("owner_id") == user["user_id"]:
+        current_role: str | None = "owner"
+    else:
+        membership = await (
+            supabase.table("project_members")
+            .select("role")
+            .eq("project_id", project_id)
+            .eq("user_id", user["user_id"])
+            .maybe_single()
+            .execute()
+        )
+        current_role = membership.data.get("role") if isinstance(membership.data, dict) else None
+    if current_role not in {"owner", "editor", "viewer"}:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {**project, "current_role": current_role}
 
 
 @router.patch("/{project_id}")

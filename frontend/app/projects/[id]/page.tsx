@@ -15,6 +15,7 @@ interface Project {
   title: string;
   description?: string | null;
   owner_id: string;
+  current_role: 'owner' | 'editor' | 'viewer';
   created_at?: string;
 }
 
@@ -261,6 +262,7 @@ export default function ProjectWorkspacePage() {
   }
 
   const project = projectQuery.data;
+  const canWrite = project.current_role === 'owner' || project.current_role === 'editor';
   const notes = notesQuery.data ?? [];
   const result = researchResults;
 
@@ -277,6 +279,12 @@ export default function ProjectWorkspacePage() {
           <p className="pt-7 text-xs text-zenith-muted">Created {new Date(project.created_at).toLocaleDateString()}</p>
         )}
       </div>
+
+      {!canWrite && (
+        <p className="mb-5 rounded-xl border border-zenith-border bg-zenith-surface/60 px-4 py-3 text-sm text-zenith-muted" role="status">
+          You have read-only access to this project. An owner or editor can add papers and notes.
+        </p>
+      )}
 
       <div className="mb-5 flex flex-wrap items-center gap-2" aria-label="Export project">
         <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-zenith-muted">Export</span>
@@ -402,7 +410,7 @@ export default function ProjectWorkspacePage() {
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Project library</p>
             <h2 id="sources-heading" className="mt-1 font-serif text-xl text-ink-900">Attached papers</h2>
           </div>
-          <form onSubmit={(event) => { event.preventDefault(); if (paperToAttach) attachSource.mutate(paperToAttach); }} className="space-y-3">
+          {canWrite ? <form onSubmit={(event) => { event.preventDefault(); if (paperToAttach) attachSource.mutate(paperToAttach); }} className="space-y-3">
             <label htmlFor="paper-search" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Find a paper by title</label>
             <input id="paper-search" type="search" value={paperSearch} onChange={(event) => setPaperSearch(event.target.value)} maxLength={200} placeholder="Search your paper feed…" className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-zenith-muted-light focus:border-zenith-secondary focus:outline-none focus:ring-2 focus:ring-zenith-secondary/20" />
             <label htmlFor="paper-to-attach" className="sr-only">Choose a paper to add</label>
@@ -416,7 +424,7 @@ export default function ProjectWorkspacePage() {
             <button type="submit" disabled={!paperToAttach || attachSource.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
               {attachSource.isPending ? 'Adding…' : 'Add paper'}
             </button>
-          </form>
+          </form> : <p className="text-sm text-zenith-muted">Only project owners and editors can attach papers.</p>}
           <div className="mt-5 border-t border-zenith-border pt-4">
             {sourceQuery.isLoading && <p role="status" className="text-sm text-zenith-muted">Loading papers…</p>}
             {sourceQuery.isError && <p role="alert" className="text-sm text-red-700">Could not load attached papers.</p>}
@@ -427,9 +435,11 @@ export default function ProjectWorkspacePage() {
                 <li key={source.id} className="rounded-xl border border-zenith-border bg-white p-3">
                   <p className="text-sm font-medium leading-5 text-ink-900">{source.paper?.title ?? source.paper_id}</p>
                   <p className="mt-1 font-mono text-[10px] text-zenith-muted">{source.paper_id}</p>
-                  <button type="button" onClick={() => removeSource.mutate(source.id)} disabled={removeSource.isPending} className="mt-2 text-xs font-medium text-red-700 underline decoration-red-300 underline-offset-2 hover:text-red-900 disabled:opacity-50" aria-label={`Remove ${source.paper?.title ?? source.paper_id} from project`}>
-                    Remove paper
-                  </button>
+                  {canWrite && (
+                    <button type="button" onClick={() => removeSource.mutate(source.id)} disabled={removeSource.isPending} className="mt-2 text-xs font-medium text-red-700 underline decoration-red-300 underline-offset-2 hover:text-red-900 disabled:opacity-50" aria-label={`Remove ${source.paper?.title ?? source.paper_id} from project`}>
+                      Remove paper
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -441,7 +451,7 @@ export default function ProjectWorkspacePage() {
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Project notebook</p>
             <h2 id="notes-heading" className="mt-1 font-serif text-xl text-ink-900">Notes</h2>
           </div>
-          <form onSubmit={handleNoteSubmit} className="space-y-3">
+          {canWrite ? <form onSubmit={handleNoteSubmit} className="space-y-3">
             <label htmlFor="project-note" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Add a note</label>
             <textarea
               id="project-note"
@@ -457,7 +467,7 @@ export default function ProjectWorkspacePage() {
             <button type="submit" disabled={createNote.isPending || !noteDraft.trim()} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
               {createNote.isPending ? 'Saving…' : 'Save note'}
             </button>
-          </form>
+          </form> : <p className="text-sm text-zenith-muted">Only project owners and editors can add notes.</p>}
 
           <div className="mt-6 border-t border-zenith-border pt-5">
             <h3 className="sr-only">Saved project notes</h3>

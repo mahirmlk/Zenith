@@ -910,3 +910,24 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Production release remains blocked on applying migrations 0001–0011 in staging, real RLS/tenant isolation and rollback/restore verification, shared Redis/Postgres/provider recovery exercises, alerting/monitoring, deployment evidence, current-head CI (GitHub billing prevents job start), and human review/merge. No live data or deployment was changed.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the capability matrix and release gates. Local checks establish code-level confidence only; they do not establish staging or production behavior.
+
+### §24.4 Soft-deleted project RLS and viewer UX (2026-11-12)
+
+- [x] Closed a direct PostgREST authorization gap: migration 0012 replaces `is_project_owner`, `can_access_project`, and `can_write_project` so all require `projects.deleted_at IS NULL`; static migration tests assert each helper enforces the lifecycle check. The migration is additive, transactional, and includes rollback instructions.
+- [x] `GET /api/projects/{id}` now returns `current_role`; project workspace mutation controls are hidden from viewer members while backend role checks remain authoritative.
+- [x] Re-ran backend tests (192 passed, 6 skipped), frontend tests (29 passed), frontend lint/typecheck/build, Ruff, strict mypy (70 files), and 12/12 deterministic eval cases; results are recorded in `docs/STATUS.md`.
+- [ ] Apply migration 0012 in staging and test direct PostgREST access for deleted owner/member/editor/viewer/outsider/anon. Static SQL assertions are not a substitute for the database role matrix.
+- [ ] Production remains blocked on the staging, provider/recovery, backup/restore, monitoring, deployment, current-head CI, human-review, and remaining full-product scope listed in §§24.3 and `docs/STATUS.md`.
+
+**Current status remains not production-ready.**
+
+### §24.5 RLS lifecycle hardening (2026-11-12)
+
+- [x] Added migration 0012 to make direct PostgREST access apply the same soft-deleted-project boundary as the API. It replaces owner, read, and write helper functions; each requires an active project row and preserves owner/editor role rules.
+- [x] Added a static regression test for all three helper functions, updated the migration runbook and security test plan, and documented the current-role API response.
+- [x] Project details now serialize caller role. The workspace shows source/note write controls to owners/editors and read-only guidance to viewers; frontend coverage verifies viewer visibility and hidden mutations.
+- [x] Validation: backend 192 passed / 6 skipped; targeted backend checks 16 passed; frontend 29 passed; frontend lint, typecheck, and production build passed; Ruff passed; strict mypy passed for 70 application files; deterministic eval passed 12/12 with negative citation control.
+- [ ] Apply migrations 0001–0012 in staging; execute the active/deleted owner/member/editor/viewer/outsider/anon direct-RLS matrix, rollback, and backup-restore exercise.
+- [ ] Product gaps and production gates from §24.3 remain open, including PDF/page evidence, synthesis and claim verification, complete collaboration/invitation delivery, expanded watch targets, provider/recovery tests, monitoring, deployment, and current-head CI.
+
+**Current status remains not production-ready.**

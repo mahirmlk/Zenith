@@ -128,7 +128,7 @@ Full stack with Docker: `docker compose up --build` (frontend :3000, backend :80
 | `SANDBOX_ENABLED` | Ignored | Paper-code execution is always disabled in the current runner |
 | `MAX_SEARCHES_PER_DAY_PER_USER` | No (default `100`) | Spend budget |
 
-Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0011` to staging and verify RLS.
+Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0012` to staging and verify RLS.
 
 ## API
 
@@ -162,7 +162,7 @@ Zenith/
 │   ├── security/      authorization · policies · input/output validation
 │   ├── guardrails/    pipeline · action approvals
 │   └── tests/         pytest (security · guardrails · retrieval · research)
-├── supabase/migrations/  0001–0011 (RLS, projects, unique paper sources, runs, watchlists, notifications)
+├── supabase/migrations/  0001–0012 (RLS, projects, unique paper sources, runs, watchlists, notifications)
 ├── evals/             deterministic eval harness (CI smoke)
 └── docs/              API · architecture · security · runbooks · STATUS
 ```
