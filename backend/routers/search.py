@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from dependencies import get_current_user
 from models.schemas import SearchRequest
 from services.llm_router import validate_model
-from services.run_store import run_store
+from services.run_store import AccountDeletionInProgressError, run_store
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -61,6 +61,9 @@ async def search(
         state = await run_store.create(
             run_id, req.query, req.model, user_id=user_id, idempotency_key=idempotency_key
         )
+    except AccountDeletionInProgressError as exc:
+        await budget.refund(user_id)
+        raise HTTPException(status_code=423, detail=str(exc)) from exc
     except ValueError as exc:
         await budget.refund(user_id)
         raise HTTPException(status_code=409, detail="Idempotency key reused for a different request") from exc

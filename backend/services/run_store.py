@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = {"complete", "failed", "cancelled"}
 
 
+class AccountDeletionInProgressError(RuntimeError):
+    """Raised when the database admission barrier rejects a new run."""
+
+
 @dataclass
 class RunState:
     run_id: str
@@ -540,17 +544,24 @@ class PostgresRunStore(RedisRunStore):
         idempotency_key: Optional[str] = None,
     ) -> RunState:
         digest = self._idempotency_digest(user_id, idempotency_key)
-        response = await self._database.rpc(
-            "create_research_run_atomic",
-            {
-                "p_run_id": run_id,
-                "p_user_id": user_id,
-                "p_query": query,
-                "p_model": model,
-                "p_idempotency_key": digest,
-                "p_ttl_seconds": self._ttl,
-            },
-        ).execute()
+        try:
+            response = await self._database.rpc(
+                "create_research_run_atomic",
+                {
+                    "p_run_id": run_id,
+                    "p_user_id": user_id,
+                    "p_query": query,
+                    "p_model": model,
+                    "p_idempotency_key": digest,
+                    "p_ttl_seconds": self._ttl,
+                },
+            ).execute()
+        except Exception as exc:
+            if "account_deletion_in_progress" in str(exc):
+                raise AccountDeletionInProgressError(
+                    "Account deletion is in progress"
+                ) from exc
+            raise
         row = self._row(response)
         if row is None:
             raise RuntimeError("Postgres did not return the created research run")

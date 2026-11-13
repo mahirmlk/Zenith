@@ -1062,3 +1062,13 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Production release remains blocked on current-head CI, staging migrations/RLS, restore and provider/recovery exercises, monitoring and deployment verification, and remaining product/evaluation gates in `docs/STATUS.md`.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.19 Serialize deletion with research-run admission (2026-11-13)
+
+- [x] Closed an in-flight request race: migration 0017 takes the same per-user transaction advisory lock in `request_account_deletion` and `create_research_run_atomic`. A run is therefore either committed before deletion snapshots its IDs or rejected after the deletion marker exists.
+- [x] Mapped the database admission rejection to HTTP 423 and refunded the reserved search budget. Added migration contract, run-store, and route regression tests plus an explicit rollback SQL file that restores the pre-0017 function bodies while preserving the deletion ledger.
+- [x] Local validation: backend suite 269 passed / 6 skipped; Ruff and strict mypy passed for 76 application files. The 43 frontend tests, lint, typecheck, and production build remain green from the immediately preceding full frontend validation; frontend files did not change in this slice. `git diff --check` passes.
+- [ ] Apply migrations through 0017 in staging and race run creation against deletion requests on PostgreSQL; verify transaction ordering, service-role permissions, rejection mapping, and rollback. No PostgreSQL runtime or running Docker engine is available in this workspace, so SQL execution remains unverified.
+- [ ] Full product and production blockers remain open as recorded in [docs/STATUS.md](docs/STATUS.md).
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.

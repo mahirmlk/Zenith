@@ -151,3 +151,28 @@ def test_account_deletion_jobs_are_durable_service_only_and_resumable():
     assert "cardinality(j.completed_steps) = 8" in normalized
     assert "completed_at < now() - interval '30 days'" in normalized
     assert "grant execute on function public.claim_account_deletion_job(text, integer) to service_role" in normalized
+
+
+def test_account_deletion_is_serialized_with_research_run_admission():
+    migration = (
+        ROOT
+        / "supabase"
+        / "migrations"
+        / "0017_serialize_account_deletion_and_run_admission.sql"
+    ).read_text()
+    normalized = " ".join(migration.lower().split())
+    assert normalized.count("pg_advisory_xact_lock(") == 2
+    assert "hashtextextended(p_user_id::text, 0)" in normalized
+    assert "j.status in ('pending', 'processing', 'complete')" in normalized
+    assert "message = 'account_deletion_in_progress'" in normalized
+    assert "grant execute on function public.request_account_deletion(uuid) to service_role" in normalized
+    assert "grant execute on function public.create_research_run_atomic(uuid, uuid, text, text, text, integer) to service_role" in normalized
+    rollback = (
+        ROOT
+        / "supabase"
+        / "rollbacks"
+        / "0017_restore_unserialized_run_admission.sql"
+    ).read_text()
+    assert "create or replace function public.request_account_deletion" in rollback.lower()
+    assert "create or replace function public.create_research_run_atomic" in rollback.lower()
+    assert "pg_advisory_xact_lock" not in rollback.lower()

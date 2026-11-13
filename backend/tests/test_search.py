@@ -32,3 +32,31 @@ def test_search_empty_query(monkeypatch):
         "/api/search", json={"query": ""}, headers=_auth_headers(monkeypatch)
     )
     assert response.status_code == 422
+
+
+def test_search_rejects_run_if_deletion_wins_admission_race(monkeypatch):
+    from routers import search as search_router
+    from services import budget
+    from services.run_store import AccountDeletionInProgressError
+
+    refunded = []
+
+    async def consume(_user_id, _limit):
+        return True
+
+    async def refund(user_id):
+        refunded.append(user_id)
+
+    async def create(*_args, **_kwargs):
+        raise AccountDeletionInProgressError("Account deletion is in progress")
+
+    monkeypatch.setattr(budget, "consume", consume)
+    monkeypatch.setattr(budget, "refund", refund)
+    monkeypatch.setattr(search_router.run_store, "create", create)
+
+    response = client.post(
+        "/api/search", json={"query": "diffusion models"}, headers=_auth_headers(monkeypatch)
+    )
+
+    assert response.status_code == 423
+    assert refunded == ["test-user-1"]

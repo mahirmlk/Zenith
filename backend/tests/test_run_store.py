@@ -5,7 +5,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from services.run_store import PostgresRunStore, RedisRunStore, RunStore
+from services.run_store import (
+    AccountDeletionInProgressError,
+    PostgresRunStore,
+    RedisRunStore,
+    RunStore,
+)
 
 
 @pytest.mark.asyncio
@@ -159,6 +164,7 @@ class _FakePostgres:
         self.runs = {}
         self.events = {}
         self.rpc_calls = []
+        self.reject_run_admission = False
 
     def rpc(self, name, params):
         self.rpc_calls.append((name, params))
@@ -177,6 +183,8 @@ class _FakePostgresRPC:
     async def execute(self):
         p = self.params
         if self.name == "create_research_run_atomic":
+            if self.database.reject_run_admission:
+                raise RuntimeError("account_deletion_in_progress")
             existing = next(
                 (
                     run for run in self.database.runs.values()
@@ -337,6 +345,16 @@ async def test_postgres_run_store_is_canonical_for_metadata_events_and_idempoten
             user_id=created.user_id,
             idempotency_key="secret-client-key",
         )
+
+
+@pytest.mark.asyncio
+async def test_postgres_run_store_maps_deletion_admission_rejection():
+    database = _FakePostgres()
+    database.reject_run_admission = True
+    store = PostgresRunStore(database, redis_url="redis://fake")
+
+    with pytest.raises(AccountDeletionInProgressError, match="deletion is in progress"):
+        await store.create(str(uuid4()), "query", user_id=str(uuid4()))
 
 
 @pytest.mark.asyncio
