@@ -99,6 +99,12 @@ class ResearchSynthesisResponse(BaseModel):
     explanation: str = ""
 
 
+class ResearchCapabilities(BaseModel):
+    """Authenticated user-visible research feature switches."""
+
+    research_synthesis_enabled: bool = False
+
+
 class ResearchAnswer(BaseModel):
     summary: str
     claims: list[str] = Field(default_factory=list)

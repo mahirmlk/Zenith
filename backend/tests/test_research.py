@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from config import Settings
 from agents.research_types import SynthesisClaim, build_comparison, classify_task
 from routers.research import (
     ProjectEvidenceMapRequest,
@@ -12,6 +13,7 @@ from routers.research import (
     research_answer,
     research_compare,
     research_evidence_map,
+    research_capabilities,
     research_synthesize,
 )
 from services.retrieval import hybrid_rank
@@ -566,6 +568,7 @@ async def test_project_synthesis_uses_only_attached_public_abstract_spans(monkey
         )]
 
     from services import budget
+    monkeypatch.setattr("routers.research.get_settings", lambda: Settings(research_synthesis_enabled=True))
     monkeypatch.setattr(budget, "consume", consume)
     monkeypatch.setattr("routers.research.synthesize_claims", synthesize)
 
@@ -606,6 +609,7 @@ async def test_project_synthesis_abstains_before_budget_without_two_papers(monke
         return True
 
     from services import budget
+    monkeypatch.setattr("routers.research.get_settings", lambda: Settings(research_synthesis_enabled=True))
     monkeypatch.setattr(budget, "consume", consume)
 
     result = await research_synthesize(
@@ -618,6 +622,36 @@ async def test_project_synthesis_abstains_before_budget_without_two_papers(monke
     assert result.abstained is True
     assert result.claims == []
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_synthesis_capability_is_off_by_default(monkeypatch):
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    result = await research_capabilities(object(), {"user_id": "reader"})
+
+    assert result.research_synthesis_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_disabled_synthesis_rejects_before_project_or_source_reads(monkeypatch):
+    supabase = FakeSupabase(
+        project={"owner_id": "owner"},
+        sources=[{"project_id": "proj", "paper_id": "paper-a"}],
+        papers=[{"id": "paper-a", "title": "Diffusion", "abstract": "Diffusion retrieval increased recall."}],
+    )
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    with pytest.raises(HTTPException) as error:
+        await research_synthesize(
+            ResearchRequest(query="diffusion retrieval", project_id="proj"),
+            object(),
+            {"user_id": "owner"},
+            supabase,
+        )
+
+    assert error.value.status_code == 404
+    assert supabase.range_calls == []
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     max_summaries_per_run: int = 20
     max_searches_per_day_per_user: int = 100
     sandbox_enabled: bool = False
+    research_synthesis_enabled: bool = False
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

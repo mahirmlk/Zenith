@@ -1,8 +1,7 @@
 """Project-scoped research endpoints (update.md §§8–9, 15).
 
-Answers are intentionally extractive until a real synthesis pipeline and
-evaluation gate are available: every returned claim is a sentence copied
-from a retrieved abstract and carries that paper's ID citation.
+Answer and evidence-map routes remain extractive. A separate provisional
+synthesis route is feature-gated and returns model-reviewed source relations.
 """
 import logging
 import re
@@ -15,6 +14,7 @@ from agents.research_types import (
     EvidenceItem,
     EvidenceMapResponse,
     PdfEvidenceItem,
+    ResearchCapabilities,
     ResearchComparisonResponse,
     ResearchSynthesisResponse,
     SynthesisEvidenceItem,
@@ -23,6 +23,7 @@ from agents.research_types import (
     classify_task,
 )
 from dependencies import get_current_user
+from config import get_settings
 from security.authorization import can_access_project
 from security.output_validation import validate_citations
 from services.retrieval import hybrid_rank, query_entities, query_terms
@@ -33,6 +34,19 @@ from security.prompt_injection import scan_untrusted
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/research", tags=["research"])
 MAX_DAILY_SYNTHESIS_REQUESTS = 10
+
+
+@router.get("/capabilities", response_model=ResearchCapabilities)
+async def research_capabilities(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> ResearchCapabilities:
+    """Return enabled research modes without exposing backend configuration."""
+    del request
+    del user
+    return ResearchCapabilities(
+        research_synthesis_enabled=get_settings().research_synthesis_enabled
+    )
 
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
@@ -565,6 +579,8 @@ async def research_synthesize(
     Private project PDF text is deliberately excluded from provider input.
     """
     try:
+        if not get_settings().research_synthesis_enabled:
+            raise HTTPException(status_code=404, detail="Not found")
         papers = await _papers_for_request(body, user, supabase)
         ranked = hybrid_rank(body.query, papers)[:10]
         evidence: list[SynthesisEvidenceItem] = []
