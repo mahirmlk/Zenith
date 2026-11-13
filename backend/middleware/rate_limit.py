@@ -29,6 +29,12 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
 
         if route.path == "/api/search":
             route.endpoint = limiter.limit("10/minute")(route.endpoint)
+        elif route.path == "/api/notifications/preferences":
+            route.endpoint = limiter.limit("10/minute")(route.endpoint)
+        elif route.path == "/api/notifications/unsubscribe":
+            route.endpoint = limiter.limit("20/minute")(route.endpoint)
+        elif route.path == "/api/notifications/webhooks/resend":
+            route.endpoint = limiter.limit("120/minute")(route.endpoint)
         elif route.path == "/api/research/execute":
             route.endpoint = limiter.limit("5/minute")(route.endpoint)
         elif (

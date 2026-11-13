@@ -154,6 +154,11 @@ async def _notify_watchlists(
                     .execute()
                 )
                 notified += len(matches)
+                # Email is a separate, opt-in digest channel. Enqueue only
+                # after the corresponding in-app notification upsert succeeds.
+                from services.notification_email import enqueue_user_digest
+
+                await enqueue_user_digest(supabase, str(watch["user_id"]), now)
 
             # Do not move the cursor after a partial provider outage. The
             # idempotency index prevents duplicates on the next full run.

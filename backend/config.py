@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     research_plan_execution_enabled: bool = False
     research_synthesis_enabled: bool = False
 
+    notifications_email_enabled: bool = False
+    resend_api_key: str = ""
+    notifications_from_email: str = ""
+    resend_webhook_secret: str = ""
+    notifications_unsubscribe_secret: str = ""
+    notifications_unsubscribe_secret_previous: str = ""
+
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"

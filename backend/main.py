@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     from services.job_queue import start_worker, stop_worker
     from services.daily_scheduler import start_daily_scheduler, stop_daily_scheduler
     from services.account_deletion import start_account_deletion_worker, stop_account_deletion_worker
+    from services.notification_email import start_worker as start_notification_email_worker, stop_worker as stop_notification_email_worker
 
     cleanup_task = asyncio.create_task(_cleanup_loop())
     deletion_worker_started = bool(
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         start_daily_scheduler()
         if deletion_worker_started:
             start_account_deletion_worker()
+        start_notification_email_worker()
         yield
     finally:
         cleanup_task.cancel()
@@ -73,10 +75,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 await stop_daily_scheduler()
             finally:
                 try:
-                    await stop_account_deletion_worker()
+                    await stop_notification_email_worker()
                 finally:
-                    await stop_checkpointer()
-                    logger.info("Shutting down backend")
+                    try:
+                        await stop_account_deletion_worker()
+                    finally:
+                        await stop_checkpointer()
+                        logger.info("Shutting down backend")
 
 
 app = FastAPI(
