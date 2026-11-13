@@ -124,6 +124,18 @@ def _export_tables() -> dict[str, list[dict[str, Any]]]:
             {"project_id": "shared", "paper_id": "p2", "created_by": "u1"},
             {"project_id": "other", "paper_id": "p3"},
         ],
+        "project_documents": [
+            {"id": "owned-doc", "project_id": "owned", "created_by": "u2", "filename": "owned.pdf"},
+            {"id": "shared-doc", "project_id": "shared", "created_by": "u1", "filename": "mine.pdf"},
+            {"id": "shared-other-doc", "project_id": "shared", "created_by": "u2", "filename": "theirs.pdf"},
+            {"id": "other-doc", "project_id": "other", "created_by": "u1", "filename": "private.pdf"},
+        ],
+        "project_document_pages": [
+            {"document_id": "owned-doc", "page_number": 1, "text": "Owned project text."},
+            {"document_id": "shared-doc", "page_number": 2, "text": "My shared project text."},
+            {"document_id": "shared-other-doc", "page_number": 3, "text": "Another member's text."},
+            {"document_id": "other-doc", "page_number": 4, "text": "Unrelated project text."},
+        ],
         "watchlists": [{"user_id": "u1", "query": "ml"}],
         "notifications": [{"user_id": "u1", "title": "new paper"}],
         "research_runs": [{"id": "r1", "user_id": "u1", "query": "private query"}, {"id": "r2", "user_id": "u2"}],
@@ -149,6 +161,11 @@ async def test_export_includes_caller_data_and_accessible_project_content(monkey
     assert {row["id"] for row in result["projects"]} == {"owned", "shared"}
     assert {row["content"] for row in result["project_notes"]} == {"owned note", "shared note"}
     assert {row["paper_id"] for row in result["project_sources"]} == {"p1", "p2"}
+    assert {row["id"] for row in result["project_documents"]} == {"owned-doc", "shared-doc"}
+    assert {row["document_id"] for row in result["project_document_pages"]} == {"owned-doc", "shared-doc"}
+    assert {row["text"] for row in result["project_document_pages"]} == {
+        "Owned project text.", "My shared project text."
+    }
     assert result["research_runs"] == [{"id": "r1", "user_id": "u1", "query": "private query"}]
     assert result["run_events"] == [{"run_id": "r1", "safe_payload": {"x": 1}}]
     assert result["memories"] == [{"memory": "prefers ML"}]

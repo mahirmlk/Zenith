@@ -76,9 +76,20 @@ async def export_account(
             sources = await _project_content_rows(
                 supabase, "project_sources", owned_project_ids, member_project_ids, uid
             )
+            project_documents = await _project_content_rows(
+                supabase, "project_documents", owned_project_ids, member_project_ids, uid
+            )
+            document_ids = list(dict.fromkeys(
+                str(row["id"]) for row in project_documents if row.get("id")
+            ))
+            project_document_pages = await _fetch_in_chunks(
+                supabase, "project_document_pages", "document_id", document_ids
+            )
         else:
             notes = []
             sources = []
+            project_documents = []
+            project_document_pages = []
 
         run_ids = [str(row["id"]) for row in runs if row.get("id")]
         run_events = await _fetch_in_chunks(supabase, "run_events", "run_id", run_ids)
@@ -98,6 +109,8 @@ async def export_account(
             "project_memberships": member_rows,
             "project_notes": notes,
             "project_sources": sources,
+            "project_documents": project_documents,
+            "project_document_pages": project_document_pages,
             "watchlists": watches,
             "notifications": notifications,
             "research_runs": runs,
