@@ -21,6 +21,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# Local OCR runtime is included for deployments that opt in with OCR_ENABLED.
+# Keeping the switch off by default avoids OCR cost on standard PDF uploads.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=base /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 

@@ -50,7 +50,7 @@ Production run metadata, results, ordered events, and LangGraph graph state are 
 
 Account deletion requests are stored in the service-only `account_deletion_jobs` table (migration 0016), which deliberately has no Auth foreign key so a job survives Auth deletion. Workers claim jobs with `FOR UPDATE SKIP LOCKED`, persist each completed cross-service cleanup step, defer while a research worker lease is active, and retry expired leases. Migration 0017 serializes deletion intent with run creation through a shared per-user transaction lock, so runs are either included in the deletion snapshot or rejected. Auth deletion is last; completed markers remain for 30 days to reject already-issued JWTs before pruning.
 
-Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The original bytes are discarded; extracted page text is stored in project-scoped `project_documents` and `project_document_pages` tables under RLS (migration 0013). Owners/editors can upload; accessible project members can list and read pages. Project evidence-map and answer routes consider up to 10 uploaded documents/500 page rows alongside attached paper abstracts and return at most five exact spans with page-local offsets and stable `document_id:page:N` citation IDs. General search and comparison do not search PDF pages. OCR is not implemented.
+Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The original bytes are discarded; extracted page text and its `extraction_method` (`native`, `ocr`, `empty`, or `ocr_limit`) are stored in project-scoped `project_documents` and `project_document_pages` tables under RLS (migrations 0013 and 0018). Owners/editors can upload; accessible project members can list and read pages. Project evidence-map and answer routes consider up to 10 uploaded documents/500 page rows alongside attached paper abstracts and return at most five exact spans with page-local offsets and stable `document_id:page:N` citation IDs. General search and comparison do not search PDF pages. When `OCR_ENABLED=true`, local Tesseract OCR is limited to five scanned pages per upload, 8 million rendered pixels per page, 6 seconds per page, and 20 seconds total; native extraction remains the default and OCR is disabled unless explicitly enabled. PDF content is rasterized and processed locally; it is not sent to an OCR provider.
 
 ---
 
@@ -526,6 +526,7 @@ See `.env.example` for the full list. Key categories:
 - **LLM Providers:** `OPENROUTER_API_KEY` (required), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`
 - **Data Sources:** `FIRECRAWL_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`
 - **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (HS256 legacy fallback only)
+- **PDF processing:** `OCR_ENABLED` (defaults to `false`; enables bounded local Tesseract OCR for scanned project PDF pages; production container provides English language data)
 - **Scheduler:** `ADMIN_API_KEY` (authenticates `/api/internal/ingest`)
 - **Cost guardrails:** `MAX_SUMMARIES_PER_RUN`
 - **Observability:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `APP_ENV`
