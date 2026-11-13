@@ -25,6 +25,17 @@ interface ProjectMember {
   role: 'viewer' | 'editor';
 }
 
+interface ProjectInvitation {
+  id: string;
+  project_id: string;
+  email: string;
+  role: 'viewer' | 'editor';
+  status: string;
+  created_at: string;
+  expires_at: string;
+  email_sent_at: string | null;
+}
+
 type ProjectNote = ProjectExportNote & { created_by?: string };
 type ProjectSource = Pick<ProjectExportSource, 'id' | 'paper_id'>;
 type ProjectSourceWithPaper = ProjectExportSource;
@@ -190,6 +201,8 @@ export default function ProjectWorkspacePage() {
   const [paperSearch, setPaperSearch] = useState('');
   const [memberId, setMemberId] = useState('');
   const [memberRole, setMemberRole] = useState<'viewer' | 'editor'>('viewer');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'viewer' | 'editor'>('viewer');
   const [debouncedPaperSearch, setDebouncedPaperSearch] = useState('');
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<ResearchMode>('evidence');
@@ -211,6 +224,12 @@ export default function ProjectWorkspacePage() {
   const membersQuery = useQuery({
     queryKey: ['project-members', projectId],
     queryFn: () => apiRequest<ProjectMember[]>(`/api/projects/${encodeURIComponent(projectId)}/members`),
+    enabled: projectQuery.data?.current_role === 'owner',
+  });
+
+  const invitationsQuery = useQuery({
+    queryKey: ['project-invitations', projectId],
+    queryFn: () => apiRequest<ProjectInvitation[]>(`/api/projects/${encodeURIComponent(projectId)}/invitations`),
     enabled: projectQuery.data?.current_role === 'owner',
   });
 
@@ -318,6 +337,33 @@ export default function ProjectWorkspacePage() {
       { method: 'DELETE' },
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-members', projectId] }),
+  });
+
+  const createInvitation = useMutation({
+    mutationFn: (input: { email: string; role: 'viewer' | 'editor' }) => apiRequest<ProjectInvitation>(
+      `/api/projects/${encodeURIComponent(projectId)}/invitations`,
+      { method: 'POST', body: JSON.stringify(input) },
+    ),
+    onSuccess: async () => {
+      setInviteEmail('');
+      await queryClient.invalidateQueries({ queryKey: ['project-invitations', projectId] });
+    },
+  });
+
+  const resendInvitation = useMutation({
+    mutationFn: (invitationId: string) => apiRequest<ProjectInvitation>(
+      `/api/projects/${encodeURIComponent(projectId)}/invitations/${encodeURIComponent(invitationId)}/resend`,
+      { method: 'POST' },
+    ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-invitations', projectId] }),
+  });
+
+  const revokeInvitation = useMutation({
+    mutationFn: (invitationId: string) => apiRequest<{ status: string }>(
+      `/api/projects/${encodeURIComponent(projectId)}/invitations/${encodeURIComponent(invitationId)}`,
+      { method: 'DELETE' },
+    ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-invitations', projectId] }),
   });
 
   const research = useMutation({
@@ -540,7 +586,7 @@ export default function ProjectWorkspacePage() {
                 <option value="viewer">Viewer</option>
                 <option value="editor">Editor</option>
               </select>
-              <p className="text-xs text-zenith-muted">Adds an existing Zenith account. Email invitations are not configured.</p>
+              <p className="text-xs text-zenith-muted">Adds an existing Zenith account by its user UUID.</p>
               {addMember.isError && <p role="alert" className="text-xs text-red-700">{addMember.error instanceof Error ? addMember.error.message : 'Could not add member.'}</p>}
               <button type="submit" disabled={!memberId.trim() || addMember.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
                 {addMember.isPending ? 'Adding…' : 'Add or update member'}
@@ -562,6 +608,45 @@ export default function ProjectWorkspacePage() {
                   </li>
                 ))}
               </ul>
+            </div>
+            <div className="mt-5 border-t border-zenith-border pt-4">
+              <h3 className="mb-3 text-sm font-semibold text-ink-900">Invite by email</h3>
+              <form onSubmit={(event) => { event.preventDefault(); const email = inviteEmail.trim(); if (email) createInvitation.mutate({ email, role: inviteRole }); }} className="space-y-3">
+                <label htmlFor="invite-email" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Email address</label>
+                <input id="invite-email" type="email" autoComplete="email" required maxLength={320} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900" />
+                <label htmlFor="invite-role" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Invitation role</label>
+                <select id="invite-role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as 'viewer' | 'editor')} className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900">
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
+                {createInvitation.isError && <p role="alert" className="text-xs text-red-700">{createInvitation.error instanceof Error ? createInvitation.error.message : 'Could not send invitation.'}</p>}
+                <button type="submit" disabled={!inviteEmail.trim() || createInvitation.isPending} className="w-full rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-50">{createInvitation.isPending ? 'Sending…' : 'Send invitation'}</button>
+              </form>
+              <div className="mt-4 border-t border-zenith-border pt-4">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zenith-muted">Invitations</h4>
+                {invitationsQuery.isLoading && <p role="status" className="text-sm text-zenith-muted">Loading invitations…</p>}
+                {invitationsQuery.isError && <p role="alert" className="text-sm text-red-700">Could not load invitations.</p>}
+                {resendInvitation.isError && <p role="alert" className="text-sm text-red-700">Could not resend invitation.</p>}
+                {revokeInvitation.isError && <p role="alert" className="text-sm text-red-700">Could not revoke invitation.</p>}
+                {!invitationsQuery.isLoading && !invitationsQuery.isError && (invitationsQuery.data ?? []).length === 0 && <p className="text-sm text-zenith-muted">No email invitations yet.</p>}
+                <ul className="space-y-2">
+                  {(invitationsQuery.data ?? []).map((invitation) => (
+                    <li key={invitation.id} className="rounded-lg border border-zenith-border bg-white p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="break-all text-sm font-medium text-ink-900">{invitation.email}</p>
+                          <p className="mt-1 text-xs capitalize text-zenith-muted">{invitation.role} · {invitation.status}</p>
+                          <p className="mt-1 text-[11px] text-zenith-muted">Expires {new Date(invitation.expires_at).toLocaleDateString()}</p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button type="button" onClick={() => resendInvitation.mutate(invitation.id)} disabled={resendInvitation.isPending || invitation.status === 'accepted' || invitation.status === 'revoked'} className="text-xs font-medium text-zenith-secondary underline disabled:opacity-50" aria-label={`Resend invitation to ${invitation.email}`}>Resend</button>
+                          <button type="button" onClick={() => revokeInvitation.mutate(invitation.id)} disabled={revokeInvitation.isPending || invitation.status === 'accepted' || invitation.status === 'revoked'} className="text-xs font-medium text-red-700 underline disabled:opacity-50" aria-label={`Revoke invitation to ${invitation.email}`}>Revoke</button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </section>
         )}

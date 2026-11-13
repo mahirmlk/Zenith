@@ -12,6 +12,7 @@ describe('ProjectWorkspacePage', () => {
   let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
   let notes: { id: string; content: string; created_at: string }[];
   let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
+  let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string; email_sent_at: string | null }[];
   let documents: { id: string; filename: string; page_count: number }[];
   let currentRole: 'owner' | 'editor' | 'viewer';
   let request: ReturnType<typeof vi.fn>;
@@ -20,6 +21,7 @@ describe('ProjectWorkspacePage', () => {
     sources = [];
     notes = [];
     members = [];
+    invitations = [];
     documents = [];
     currentRole = 'owner';
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -41,6 +43,17 @@ describe('ProjectWorkspacePage', () => {
         const payload = JSON.parse(String(init?.body)) as { user_id: string; role: 'viewer' | 'editor' };
         members = [{ project_id: 'project-1', ...payload }];
         body = members;
+      } else if (url.pathname === '/api/projects/project-1/invitations' && method === 'GET') {
+        body = invitations;
+      } else if (url.pathname === '/api/projects/project-1/invitations' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { email: string; role: 'viewer' | 'editor' };
+        invitations = [{ id: 'invite-1', project_id: 'project-1', ...payload, status: 'pending', created_at: '2026-11-12T10:00:00Z', expires_at: '2026-11-19T10:00:00Z', email_sent_at: '2026-11-12T10:00:00Z' }];
+        body = invitations[0];
+      } else if (url.pathname === '/api/projects/project-1/invitations/invite-1/resend' && method === 'POST') {
+        body = invitations[0];
+      } else if (url.pathname === '/api/projects/project-1/invitations/invite-1' && method === 'DELETE') {
+        invitations = invitations.map((invitation) => ({ ...invitation, status: 'revoked' }));
+        body = { status: 'revoked' };
       } else if (url.pathname.startsWith('/api/projects/project-1/members/') && method === 'DELETE') {
         const userId = decodeURIComponent(url.pathname.split('/').at(-1) ?? '');
         members = members.filter((member) => member.user_id !== userId);
@@ -158,6 +171,35 @@ describe('ProjectWorkspacePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();
+  });
+
+  it('lets owners create, list, resend, and revoke email invitations', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const email = await screen.findByLabelText('Email address');
+    fireEvent.change(email, { target: { value: 'researcher@example.org' } });
+    fireEvent.change(screen.getByLabelText('Invitation role'), { target: { value: 'editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+    expect(await screen.findByText('researcher@example.org')).toBeInTheDocument();
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/invitations') && init?.method === 'POST');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'researcher@example.org', role: 'editor' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Resend invitation to researcher@example.org' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke invitation to researcher@example.org' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/invitations/invite-1/resend') && init?.method === 'POST')).toBe(true));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/invitations/invite-1') && init?.method === 'DELETE')).toBe(true));
+  });
+
+  it('hides member and invitation controls from non-owners', async () => {
+    currentRole = 'editor';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project members' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument();
+    expect(request.mock.calls.some(([input]) => String(input).endsWith('/invitations'))).toBe(false);
   });
 
   it('shows project content but hides mutation controls for viewer members', async () => {
