@@ -1,9 +1,11 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0019 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. Migration 0019 persists the plan configuration attached to existing durable run records; it adds no second queue. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
+Migrations 0001–0020 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. Migration 0019 persists the plan configuration attached to existing durable run records; it adds no second queue. Migration 0020 adds service-role-only notification preferences and consent audit, normalized recipient suppressions, and a per-user/digest-window unique outbox for opt-in watchlist email delivery. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
 **Status:** drafted and statically checked; NOT yet applied to any live database. The Postgres/RLS behavior, migration rollback, backups, and tenant isolation still need staging evidence (see [STATUS.md](STATUS.md)).
+
+Migration 0020's preference, consent-event, unsubscribe-token, and outbox rows cascade with Auth user deletion. Its normalized recipient suppression table deliberately has no user foreign key, retaining only a keyed hash so an address with a bounce/complaint is not contacted after account recreation. All five tables and their RPCs are service-role-only. The SQL header contains the rollback statements; rollback drops consent, suppression, token, and queued delivery state and is destructive.
 
 LangGraph's Postgres checkpointer uses `DATABASE_URL` to the same Supabase Postgres database as the run store. App startup calls the checkpointer's additive `setup()` migration and fails closed if it cannot initialize. Provision a dedicated least-privilege application connection with the required table DDL rights, verify the resulting `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, and `checkpoint_migrations` tables in staging, and include them in backups/restores. These library-owned tables are not part of migrations 0001–0019. Expired graph threads are deleted with their expired terminal run records; active runs are retained.
 
@@ -28,6 +30,7 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0016_resumable_account_delet
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0017_serialize_account_deletion_and_run_admission.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0018_pdf_page_extraction_method.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0019_durable_research_plan_execution.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0020_notification_email_delivery.sql
 
 # 2. Verify RLS: run the owner/member/editor/viewer/outsider/anon matrix in
 #    docs/security/SECURITY_TEST_PLAN.md, including project metadata, notes,
@@ -58,6 +61,46 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0019_durable_research_plan_e
 #    Confirm synthesis stays behind its separate two-call/1,800-token gate and
 #    monetary cost remains explicitly untracked; do not enable in production before
 #    quality review and recovery checks pass.
+#    Keep NOTIFICATIONS_EMAIL_ENABLED=false initially. Apply migration 0020 in
+#    staging, then configure RESEND_API_KEY and a Resend-verified
+#    NOTIFICATIONS_FROM_EMAIL sender, the
+#    matching RESEND_WEBHOOK_SECRET used by the Resend Svix webhook, and a stable
+#    NOTIFICATIONS_UNSUBSCRIBE_SECRET for recipient HMACs/unsubscribe token
+#    generation. During key rotation, set NOTIFICATIONS_UNSUBSCRIBE_SECRET_PREVIOUS
+#    to a comma-separated list of prior keys so permanent recipient suppressions
+#    still match; stored unsubscribe-token hashes are unkeyed SHA-256 and existing
+#    links remain valid, and retaining prior keys preserves matches for existing
+#    consent and permanent suppressions. Keep prior keys configured for as long as
+#    those consent and suppression records need to remain valid.
+#    Zenith does not meter Resend spend; configure provider-side usage monitoring
+#    and billing limits before enabling sends.
+#    Verify that
+#    GET /api/notifications/preferences reports available=false while disabled,
+#    PUT rejects opt-in while disabled but still accepts opt-out, and opt-in
+#    requires an Auth Admin-confirmed email. Check that consent changes
+#    are audited, frequency is daily/weekly, and invalid IANA time zones are
+#    rejected. With delivery enabled, verify each user's 08:00 local schedule, generic
+#    digest content (no private project/watch text), one outbox/send per user and
+#    digest window, the five-send worker-tick bound, and consent/suppression checks
+#    immediately before send. Exercise the one-click unsubscribe from a delivered
+#    digest and confirm later sends stop. Send valid/invalid Svix signatures and
+#    duplicate event IDs; verify bounce/complaint events permanently suppress
+#    that normalized recipient, are idempotent, and cannot be cleared from user
+#    settings (a different confirmed email may opt in). Simulate provider timeout
+#    and worker restart; verify Resend idempotency plus no more than five total
+#    provider attempts (initial send plus four exponential-backoff retries at
+#    30/60/120/240 seconds, capped at one hour) and no duplicate digest. Confirm
+#    the worker polls every 30 seconds and does not send more than five messages
+#    per tick. Confirm no provider request is made when the flag is false or any
+#    required setting is absent. Verify the 10/minute/IP preferences, 20/minute/IP
+#    unsubscribe, and 120/minute/IP webhook limits, plus Svix signature/timestamp
+#    checks. Inspect application logs for token/secret leakage, and confirm all
+#    migration 0020 tables deny anon and authenticated access. Keep external delivery disabled in production until
+#    these provider and webhook checks pass.
+#    Verify the production Uvicorn command in backend/Dockerfile and backend/fly.toml
+#    includes --no-access-log so token-bearing unsubscribe query strings are not
+#    recorded by default access logs; separately inspect application logs for
+#    token or secret leakage.
 
 # 3. Migration 0017 rollback is only allowed after stopping API workers and
 #    draining deletion jobs; restore its two prior RPC bodies with
@@ -66,12 +109,17 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0019_durable_research_plan_e
 #    stopped workers, and no active plan-backed runs; it removes only the
 #    service-only plan metadata table after confirming retention/cascade state:
 #    supabase/rollbacks/0019_disable_durable_research_plan_execution.sql.
+#    Migration 0020 rollback is permitted only with NOTIFICATIONS_EMAIL_ENABLED=false,
+#    all API instances/workers stopped, and the outbox drained. Export/retain the
+#    consent audit and suppression hashes first, then review and apply the DROP
+#    statements in the migration header; this removes preferences, tokens, queued
+#    messages, and suppression state, so do not use it as a routine down migration.
 #    Do not use automatic down migrations. Roll back 0008–0012 only with a
 #    reviewed recovery plan, exported run history, stopped workers, and a
 #    tested restore. Never drop user data tables as a routine rollback.
 ```
 
-**Current status (2026-11-13):** migrations 0001–0018 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
+**Current status (2026-11-13):** migrations 0001–0020 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
 
 For email onboarding, set the Supabase “Invite user” template and SMTP provider,
 allow the exact `APP_URL/projects/invitations/accept` URL in Auth redirect URLs,
