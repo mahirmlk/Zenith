@@ -990,6 +990,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [x] Project comparisons now return up to five exact, injection-filtered PDF page spans after the existing membership/deleted-project authorization check. Structured comparison rows remain abstract-derived; PDF sentences are returned separately with stable citations and page-local offsets, not interpreted into comparison dimensions.
 - [x] Global comparisons return an empty PDF evidence list and never query project-document tables. PDF-only projects can return useful evidence even when there are no paper comparison rows.
 - [x] Added backend coverage for project member access, PDF-only comparisons, exact citations/offsets, instruction filtering, bounded page/document reads, deleted/outsider denial, and global comparison exclusion; frontend renders the evidence next to comparison results. Local verification: backend suite 230 passed / 6 skipped; research route tests 26/26; frontend 40 tests across 8 files, lint, typecheck, and production build pass; Ruff and strict mypy pass for 73 files.
-- [ ] PDF comparison quality is not in the standalone eval corpus; OCR, cross-paper synthesis/claim verification, expanded watch targets, and all staging/CI/operational gates remain open.
+- [ ] The standalone eval now covers PDF evidence selection, but does not measure the project-comparison response wrapper or broad page-level quality. OCR, cross-paper synthesis/claim verification, expanded watch targets, and all staging/CI/operational gates remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
+
+### §24.12 PDF evidence quality gate (2026-11-13)
+
+- [x] Extended the existing CI eval runner with versioned `pdf_evidence_v1` fixtures for supported method/benchmark evidence, injection-only abstention, entity mismatch, exact whitespace-sensitive offsets, and multiple matching pages.
+- [x] The gate checks citation IDs/order, exact expected sentences, page-local substring offsets, abstention, and forbidden instruction-like text; all six cases pass and all four PDF metrics equal 1.000. The existing `grounded_qa_v3` remains 18/18 with its six metrics at 1.000.
+- [ ] The synthetic eval is a focused selector regression gate; it does not establish broad PDF extraction quality, project-comparison quality, scientific synthesis, deployed-provider behavior, or tenant isolation. Staging and release blockers remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.

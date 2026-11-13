@@ -9,11 +9,15 @@ prompt injection, and abstention. The runner checks citation IDs against the
 retrieved set and source text, allowed citations, expected ranking, required and
 forbidden phrases, claim counts, and abstention. It also reports abstention
 accuracy, exact support, answer coverage, Recall@5, and MRR@5, with a fabricated
-citation negative control.
+citation negative control. The same runner also executes `pdf_evidence_v1` (6
+cases) against the production PDF page evidence selector. It checks exact
+citation order, verbatim page spans and offsets, expected abstention, and
+absence of forbidden instruction-like text; all four PDF metrics must equal
+1.000.
 
 These synthetic fixtures measure deterministic retrieval and verbatim evidence
-selection only. They do not establish scientific correctness, PDF/page-level
-evidence quality, synthesis quality, deployed provider behavior, or production
+selection only. They do not establish scientific correctness, broad PDF/page
+coverage, comparison quality, synthesis quality, deployed provider behavior, or production
 tenant isolation (covered separately by backend security tests and staging
 checks). No production user data is included. `grounded_qa_v2.jsonl` remains the
 prior 12-case dataset version.
