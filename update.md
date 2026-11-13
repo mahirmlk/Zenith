@@ -1072,3 +1072,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Full product and production blockers remain open as recorded in [docs/STATUS.md](docs/STATUS.md).
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.20 Bounded local OCR for scanned project PDFs (2026-11-13)
+
+- [x] Added opt-in `OCR_ENABLED` (default false). Native `pypdf` extraction remains unchanged; scanned pages can use local PyMuPDF rasterization and Tesseract with no PDF sent to an OCR provider.
+- [x] Bound OCR to five scanned pages per upload, 1.4 render scale, 8M pixels/page, 6 seconds/page, and 20 seconds total. Resource-limited pages are stored as `ocr_limit`; native/OCR/empty provenance is preserved per page. Uploads have a 3/minute rate limit.
+- [x] Added migration 0018 for extraction provenance without changing existing RLS, English Tesseract runtime in the production Docker image, `.env.example`/architecture/runbook guidance, and UI labels for native, OCR, empty, and page-limit results.
+- [x] Local validation: backend 280 passed / 6 skipped; Ruff and strict mypy passed for 76 application files; frontend lint/typecheck and 44 tests across 8 files passed; production build completed all 13 static pages; all four deterministic eval suites passed (18 paper, 6 PDF, 3 synthesis-contract, 5 plan-preview cases).
+- [ ] Verify migration 0018, Docker image build, installed Tesseract language data, native-only behavior, scanned/mixed extraction quality, caps/timeouts, missing-runtime 503, and page provenance in staging. Local OCR quality and image runtime are not verified here.
+- [ ] Other product/release gaps remain as documented in [docs/STATUS.md](docs/STATUS.md): research-plan execution, external notification controls, broader quality/reliability evidence, staging, current-head CI, restore, monitoring, and deployment verification.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
