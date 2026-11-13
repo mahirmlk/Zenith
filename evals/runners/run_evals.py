@@ -12,10 +12,12 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DATASET = ROOT / "evals" / "datasets" / "grounded_qa_v3.jsonl"
 DATASET_VERSION = "grounded_qa_v3"
+PDF_DATASET = ROOT / "evals" / "datasets" / "pdf_evidence_v1.jsonl"
+PDF_DATASET_VERSION = "pdf_evidence_v1"
 TOP_K = 5
 sys.path.insert(0, str(ROOT / "backend"))
 
-from routers.research import _extractive_claims  # noqa: E402
+from routers.research import _extractive_claims, _extractive_pdf_evidence  # noqa: E402
 from security.output_validation import validate_citations  # noqa: E402
 from services.retrieval import hybrid_rank  # noqa: E402
 
@@ -102,10 +104,60 @@ def evaluate_case(case: dict) -> dict:
     }
 
 
+def evaluate_pdf_case(case: dict) -> dict:
+    evidence = _extractive_pdf_evidence(
+        case["query"],
+        case.get("documents", []),
+        case.get("pages", []),
+        limit=5,
+    )
+    expected = case["expected"]
+    citations = [item.citation_id for item in evidence]
+    snippets = [item.sentence for item in evidence]
+    page_text = {
+        (str(page.get("document_id")), page.get("page_number")): page.get("text")
+        for page in case.get("pages", [])
+    }
+    exact_spans = all(
+        isinstance(page_text.get((item.document_id, item.page_number)), str)
+        and page_text[(item.document_id, item.page_number)][item.start_offset:item.end_offset]
+        == item.sentence
+        for item in evidence
+    )
+    forbidden_phrases = [phrase.casefold() for phrase in expected.get("forbidden_phrases", [])]
+    forbidden_absent = not any(
+        phrase in sentence.casefold()
+        for phrase in forbidden_phrases
+        for sentence in snippets
+    )
+    checks = {
+        "citation_ids": citations == expected.get("citation_ids", []),
+        "exact_snippets": snippets == expected.get("snippets", []),
+        "exact_page_spans": exact_spans,
+        "abstention": (not evidence) == expected.get("must_abstain", False),
+        "forbidden_text_absent": forbidden_absent,
+    }
+    return {
+        "id": case["id"],
+        "passed": all(checks.values()),
+        "checks": checks,
+        "citations": citations,
+        "snippets": snippets,
+    }
+
+
 def main() -> int:
     cases = [json.loads(line) for line in DATASET.read_text(encoding="utf-8").splitlines() if line.strip()]
+    pdf_cases = [
+        json.loads(line)
+        for line in PDF_DATASET.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if len(cases) < 10:
         print(f"FAIL {DATASET_VERSION}: expected at least 10 cases, found {len(cases)}")
+        return 1
+    if len(pdf_cases) < 5:
+        print(f"FAIL {PDF_DATASET_VERSION}: expected at least 5 cases, found {len(pdf_cases)}")
         return 1
 
     results = []
@@ -117,6 +169,17 @@ def main() -> int:
         print(
             f"{label} {result['id']} abstained={result['abstained']} "
             f"ranked={result['ranked_ids']} citations={result['citations']}"
+            + (f" failed={','.join(failed_checks)}" if failed_checks else "")
+        )
+
+    pdf_results = []
+    for case in pdf_cases:
+        result = evaluate_pdf_case(case)
+        pdf_results.append(result)
+        failed_checks = [name for name, passed in result["checks"].items() if not passed]
+        label = "PASS" if result["passed"] else "FAIL"
+        print(
+            f"{label} {result['id']} pdf_citations={result['citations']}"
             + (f" failed={','.join(failed_checks)}" if failed_checks else "")
         )
 
@@ -161,6 +224,7 @@ def main() -> int:
         print(f"METRIC {name}={value:.3f} threshold={threshold:.3f}")
 
     failures = sum(not result["passed"] for result in results)
+    pdf_failures = sum(not result["passed"] for result in pdf_results)
     failed_metrics = [name for name, value in metrics.items() if value < thresholds[name]]
     if failed_metrics:
         print(f"FAILED METRIC GATES: {', '.join(failed_metrics)}")
@@ -169,7 +233,22 @@ def main() -> int:
         f"{len(results) - failures} passed, {failures} failed; "
         f"fabricated_citation_control={'PASS' if fabricated_rejected else 'FAIL'}"
     )
-    return 1 if failures or failed_metrics or not fabricated_rejected else 0
+    pdf_metrics = {
+        "pdf_citation_accuracy": sum(result["checks"]["citation_ids"] for result in pdf_results) / len(pdf_results),
+        "pdf_exact_span_rate": sum(result["checks"]["exact_page_spans"] for result in pdf_results) / len(pdf_results),
+        "pdf_abstention_accuracy": sum(result["checks"]["abstention"] for result in pdf_results) / len(pdf_results),
+        "pdf_forbidden_text_safety": sum(result["checks"]["forbidden_text_absent"] for result in pdf_results) / len(pdf_results),
+    }
+    for name, value in pdf_metrics.items():
+        print(f"METRIC {name}={value:.3f} threshold=1.000")
+    pdf_failed_metrics = [name for name, value in pdf_metrics.items() if value < 1.0]
+    if pdf_failed_metrics:
+        print(f"FAILED {PDF_DATASET_VERSION} METRIC GATES: {', '.join(pdf_failed_metrics)}")
+    print(
+        f"{PDF_DATASET_VERSION}: {len(pdf_results)} cases, "
+        f"{len(pdf_results) - pdf_failures} passed, {pdf_failures} failed"
+    )
+    return 1 if failures or failed_metrics or pdf_failures or pdf_failed_metrics or not fabricated_rejected else 0
 
 
 if __name__ == "__main__":
