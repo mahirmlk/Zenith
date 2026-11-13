@@ -1,4 +1,4 @@
-{"id":"compare-intent","query":"compare retrieval methods versus dense search","scope":"public_corpus","synthesis_enabled":false,"expected":{"task_type":"compare","steps":["retrieve_sources","compare_sources","identify_gaps"]}}
+{"id":"compare-intent","query":"compare retrieval methods versus dense search","scope":"public_corpus","synthesis_enabled":false,"expected":{"task_type":"compare","steps":["retrieve_sources","extract_evidence","compare_sources","identify_gaps"]}}
 {"id":"explain-intent","query":"how does the retriever work?","scope":"project","synthesis_enabled":false,"expected":{"task_type":"explain","steps":["retrieve_sources","extract_evidence"]}}
 {"id":"deep-research-disabled","query":"literature review of retrieval methods","scope":"project","synthesis_enabled":false,"expected":{"task_type":"deep_research","steps":["retrieve_sources","extract_evidence","identify_gaps","synthesis_unavailable"]}}
 {"id":"deep-research-enabled","query":"survey retrieval methods","scope":"public_corpus","synthesis_enabled":true,"expected":{"task_type":"deep_research","steps":["retrieve_sources","extract_evidence","identify_gaps","draft_synthesis","review_claims"]}}

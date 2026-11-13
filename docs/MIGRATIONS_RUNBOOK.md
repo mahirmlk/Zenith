@@ -1,11 +1,11 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0018 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
+Migrations 0001–0019 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. Migration 0019 persists the plan configuration attached to existing durable run records; it adds no second queue. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
 **Status:** drafted and statically checked; NOT yet applied to any live database. The Postgres/RLS behavior, migration rollback, backups, and tenant isolation still need staging evidence (see [STATUS.md](STATUS.md)).
 
-LangGraph's Postgres checkpointer uses `DATABASE_URL` to the same Supabase Postgres database as the run store. App startup calls the checkpointer's additive `setup()` migration and fails closed if it cannot initialize. Provision a dedicated least-privilege application connection with the required table DDL rights, verify the resulting `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, and `checkpoint_migrations` tables in staging, and include them in backups/restores. These library-owned tables are not part of migrations 0001–0018. Expired graph threads are deleted with their expired terminal run records; active runs are retained.
+LangGraph's Postgres checkpointer uses `DATABASE_URL` to the same Supabase Postgres database as the run store. App startup calls the checkpointer's additive `setup()` migration and fails closed if it cannot initialize. Provision a dedicated least-privilege application connection with the required table DDL rights, verify the resulting `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, and `checkpoint_migrations` tables in staging, and include them in backups/restores. These library-owned tables are not part of migrations 0001–0019. Expired graph threads are deleted with their expired terminal run records; active runs are retained.
 
 ```bash
 # 1. Apply in order (Supabase dashboard SQL editor or psql)
@@ -27,6 +27,7 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0015_semantic_scholar_watch_
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0016_resumable_account_deletions.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0017_serialize_account_deletion_and_run_admission.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0018_pdf_page_extraction_method.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0019_durable_research_plan_execution.sql
 
 # 2. Verify RLS: run the owner/member/editor/viewer/outsider/anon matrix in
 #    docs/security/SECURITY_TEST_PLAN.md, including project metadata, notes,
@@ -47,10 +48,24 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0018_pdf_page_extraction_met
 #    extraction; then enable it to verify scanned/mixed pages, extraction_method
 #    reporting, the five-page/8M-pixel/6-second/20-second caps, and clear failure
 #    when the local OCR runtime is missing.
+#    Leave RESEARCH_PLAN_EXECUTION_ENABLED=false initially. Then enable it in
+#    staging and verify the 202 request uses the existing run/queue/checkpoint
+#    lifecycle; test public and project scope, membership revocation between
+#    steps, ten-source and classifier-specific tool/time ceilings (2/3/4/6
+#    tool calls and 20/30/45/90 seconds for feed/explain/compare/deep research),
+#    the five-request/IP/minute limit, ten-execution/user/day budget exhaustion,
+#    cancellation, worker restart at checkpoints, and at-least-once retries.
+#    Confirm synthesis stays behind its separate two-call/1,800-token gate and
+#    monetary cost remains explicitly untracked; do not enable in production before
+#    quality review and recovery checks pass.
 
 # 3. Migration 0017 rollback is only allowed after stopping API workers and
 #    draining deletion jobs; restore its two prior RPC bodies with
 #    supabase/rollbacks/0017_restore_unserialized_run_admission.sql.
+#    Migration 0019 rollback requires RESEARCH_PLAN_EXECUTION_ENABLED=false,
+#    stopped workers, and no active plan-backed runs; it removes only the
+#    service-only plan metadata table after confirming retention/cascade state:
+#    supabase/rollbacks/0019_disable_durable_research_plan_execution.sql.
 #    Do not use automatic down migrations. Roll back 0008–0012 only with a
 #    reviewed recovery plan, exported run history, stopped workers, and a
 #    tested restore. Never drop user data tables as a routine rollback.
