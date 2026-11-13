@@ -14,6 +14,7 @@ describe('ProjectWorkspacePage', () => {
   let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
   let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string; email_sent_at: string | null }[];
   let documents: { id: string; filename: string; page_count: number }[];
+  let pageExtractionMethods: ('native' | 'ocr' | 'empty' | 'ocr_limit')[];
   let currentRole: 'owner' | 'editor' | 'viewer';
   let synthesisEnabled: boolean;
   let request: ReturnType<typeof vi.fn>;
@@ -24,6 +25,7 @@ describe('ProjectWorkspacePage', () => {
     members = [];
     invitations = [];
     documents = [];
+    pageExtractionMethods = ['native'];
     currentRole = 'owner';
     synthesisEnabled = true;
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -80,14 +82,20 @@ describe('ProjectWorkspacePage', () => {
       } else if (url.pathname === '/api/projects/project-1/documents' && method === 'POST') {
         const formData = init?.body as FormData;
         const file = formData.get('file') as File;
-        documents = [{ id: 'document-1', filename: file.name, page_count: 1 }];
+        documents = [{ id: 'document-1', filename: file.name, page_count: pageExtractionMethods.length }];
         body = documents[0];
       } else if (url.pathname === '/api/projects/project-1/documents/document-1/pages' && method === 'GET') {
         body = {
           id: 'document-1',
           filename: 'methods.pdf',
-          page_count: 1,
-          pages: [{ page_number: 1, text: 'The experiment used a held-out benchmark.', citation_id: 'document-1:page:1' }],
+          page_count: pageExtractionMethods.length,
+          pages: pageExtractionMethods.map((extraction_method, index) => ({
+            page_number: index + 1,
+            text: extraction_method === 'native' ? 'The experiment used a held-out benchmark.'
+              : extraction_method === 'ocr' ? 'OCR recovered the method details.' : '',
+            citation_id: `document-1:page:${index + 1}`,
+            extraction_method,
+          })),
         };
       } else if (url.pathname === '/api/papers' && method === 'GET') {
         body = [{ id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'] }];
@@ -342,6 +350,23 @@ describe('ProjectWorkspacePage', () => {
     expect(uploadRequest?.[1]?.body).toBeInstanceOf(FormData);
     expect(new Headers(uploadRequest?.[1]?.headers).has('Content-Type')).toBe(false);
     expect(request.mock.calls.some(([input]) => String(input).endsWith('/documents/document-1/pages'))).toBe(true);
+  });
+
+  it('labels native, OCR, empty, and page-limit extraction results', async () => {
+    pageExtractionMethods = ['native', 'ocr', 'empty', 'ocr_limit'];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const file = new File(['pdf bytes'], 'mixed.pdf', { type: 'application/pdf' });
+    fireEvent.change(await screen.findByLabelText('Upload a PDF you have permission to use'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload and extract pages' }));
+
+    expect(await screen.findByText('Native text')).toBeInTheDocument();
+    expect(screen.getByText('OCR text')).toBeInTheDocument();
+    expect(screen.getByText('No text found')).toBeInTheDocument();
+    expect(screen.getByText('OCR page limit reached')).toBeInTheDocument();
+    expect(screen.getByText('OCR recovered the method details.')).toBeInTheDocument();
+    expect(screen.getByText('This scanned page was not processed because the OCR page limit was reached.')).toBeInTheDocument();
   });
 
   it('lets the project owner add and remove an existing member', async () => {

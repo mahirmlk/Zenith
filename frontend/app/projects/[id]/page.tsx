@@ -158,10 +158,13 @@ interface ProjectDocument {
   created_at?: string;
 }
 
+type ExtractionMethod = 'native' | 'ocr' | 'empty' | 'ocr_limit';
+
 interface ProjectDocumentPage {
   page_number: number;
   text: string;
   citation_id: string;
+  extraction_method: ExtractionMethod;
 }
 
 interface ProjectDocumentPages {
@@ -173,6 +176,21 @@ interface ProjectDocumentPages {
 
 type ResearchMode = 'search' | 'plan' | 'evidence' | 'answer' | 'compare' | 'synthesize';
 type ResearchResponse = ResearchPlanResponse | EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse | SynthesisResponse;
+
+function extractionMethodLabel(method: ExtractionMethod): string {
+  switch (method) {
+    case 'native': return 'Native text';
+    case 'ocr': return 'OCR text';
+    case 'empty': return 'No text found';
+    case 'ocr_limit': return 'OCR page limit reached';
+  }
+}
+
+function emptyPageMessage(method: ExtractionMethod): string {
+  if (method === 'ocr') return 'OCR found no readable text on this page.';
+  if (method === 'ocr_limit') return 'This scanned page was not processed because the OCR page limit was reached.';
+  return 'No text found on this page.';
+}
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getJWT();
@@ -837,7 +855,7 @@ export default function ProjectWorkspacePage() {
             <form onSubmit={(event) => { event.preventDefault(); if (pdfFile) uploadDocument.mutate(pdfFile); }} className="space-y-3">
               <label htmlFor="project-pdf" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Upload a PDF you have permission to use</label>
               <input id="project-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)} className="block w-full text-xs text-zenith-body file:mr-3 file:rounded-lg file:border file:border-zenith-border file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-ink-900" />
-              <p className="text-xs leading-5 text-zenith-muted">Maximum 20 MiB and 500 pages. Text is extracted per page; the original PDF is not retained. Scanned pages need OCR, which is not available.</p>
+              <p className="text-xs leading-5 text-zenith-muted">Maximum 20 MiB and 500 pages. The original PDF is not retained. Scanned pages are OCRed only when local OCR is enabled on the backend; OCR may be less accurate and is limited to five scanned pages per upload.</p>
               {uploadDocument.isError && <p role="alert" className="text-sm text-red-700">{uploadDocument.error instanceof Error ? uploadDocument.error.message : 'Could not process this PDF.'}</p>}
               <button type="submit" disabled={!pdfFile || uploadDocument.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
                 {uploadDocument.isPending ? 'Extracting pages…' : 'Upload and extract pages'}
@@ -868,9 +886,12 @@ export default function ProjectWorkspacePage() {
                 <article key={page.page_number} className="rounded-xl border border-zenith-border bg-white p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-ink-900">Page {page.page_number}</h3>
-                    <code className="font-mono text-[10px] text-zenith-secondary">[{page.citation_id}]</code>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-zenith-border bg-zenith-surface px-2 py-1 text-[10px] font-medium text-zenith-muted">{extractionMethodLabel(page.extraction_method)}</span>
+                      <code className="font-mono text-[10px] text-zenith-secondary">[{page.citation_id}]</code>
+                    </div>
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zenith-body">{page.text || 'No selectable text found on this page.'}</p>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zenith-body">{page.text || emptyPageMessage(page.extraction_method)}</p>
                 </article>
               ))}
             </div>
