@@ -974,3 +974,13 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Product/release gaps remain: PDF general retrieval and comparison, OCR for scanned sources, broad cross-paper synthesis and claim verification, expanded watch targets, larger deployed-service quality/reliability evaluations, staging migration/RLS and backup restore, provider/recovery exercises, monitoring, current-head CI, and human review.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and remaining release gates.
+
+### §24.10 Project-scoped PDF retrieval (2026-11-13)
+
+- [x] Extended authenticated `/api/retrieval/search` so a verified project request searches only that project's attached papers and up to 10 uploaded documents/500 page rows. Public-corpus search never queries project-document tables.
+- [x] PDF results contain one exact matching sentence per page, stable `document_id:page:N` citation IDs, verified page-local offsets, and a discriminated `source_type`; BM25 scores are calculated across the combined result corpus. Paper responses now select an explicit metadata field allowlist instead of returning embedding vectors.
+- [x] Project UI renders mixed paper/PDF search results with offsets and citations. No LLM summary is added; PDFs remain untrusted source text and matching injection-like sentences are filtered.
+- [x] Regression coverage verifies authorized member scope, outsider/deleted-project rejection before PDF reads, PDF-only projects, global-search exclusion, exact spans, deterministic mixed-source ranking, read caps, result limits, and UI citations. Local validation: backend full suite 227 passed / 6 skipped; focused retrieval 11/11; frontend 40 tests across 8 files with lint/typecheck/build passing; Ruff passed; strict mypy passed for 73 files.
+- [ ] Public retrieval remains public-metadata-only by design; project comparison still uses paper abstracts only. OCR, cross-paper synthesis/claim verification, and staging RLS/operational gates remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the full release gates.
