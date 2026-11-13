@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.ingestion import _notify_watchlists
+from services.ingestion import _notify_watchlists, _watchlist_reason
 
 
 class FakeQuery:
@@ -89,6 +89,24 @@ def make_paper(paper_id, title, published_at):
     }
 
 
+@pytest.mark.parametrize(
+    ("target_type", "query", "paper", "expected_code", "expected_phrase"),
+    [
+        ("topic", "transformer language", {"title": "Transformer Models", "abstract": "Language systems."}, "topic_term_overlap", "2/2 topic-watch terms"),
+        ("author", "Author label", {}, "author_relation", "Semantic Scholar returned this paper"),
+        ("citation", "Seed title", {}, "citation_relation", "reports that this paper cites"),
+    ],
+)
+def test_watchlist_reason_explains_auditable_match_basis(
+    target_type, query, paper, expected_code, expected_phrase
+):
+    reason_code, reason_text = _watchlist_reason(target_type, query, paper)
+
+    assert reason_code == expected_code
+    assert expected_phrase in reason_text
+    assert len(reason_text) <= 500
+
+
 @pytest.mark.asyncio
 async def test_watchlist_notifications_filter_disabled_and_respect_cadence():
     now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
@@ -125,6 +143,8 @@ async def test_notifications_match_migration_schema_and_are_idempotent_on_retry(
     assert notification["project_id"] is None
     assert notification["paper_id"] == "paper-1"
     assert "title" in notification and "body" in notification
+    assert notification["reason_code"] == "topic_term_overlap"
+    assert "topic-watch terms" in notification["reason_text"]
     assert "type" not in notification and "data" not in notification
 
 
@@ -189,3 +209,28 @@ async def test_provider_watch_persists_results_without_topic_text_overlap(
     assert db.notifications[0]["paper_id"] == "provider-result"
     assert db.provider_papers[0]["id"] == "provider-result"
     assert db.watchlists[0]["last_checked_at"] == now.isoformat()
+    assert db.notifications[0]["reason_code"] == f"{target_type}_relation"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_provider_candidates_create_one_notification(monkeypatch):
+    now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "watch-author",
+        "user_id": "u1",
+        "query": "Author label",
+        "target_type": "author",
+        "target_id": "author-id",
+        "cadence": "daily",
+        "enabled": True,
+    }])
+    candidate = make_paper("provider-result", "Independent work", now - timedelta(hours=1))
+
+    async def fetch_watch_papers(_target_type, _target_id, _since):
+        return [candidate, dict(candidate)]
+
+    monkeypatch.setattr("services.semantic_scholar.fetch_watch_papers", fetch_watch_papers)
+    count = await _notify_watchlists(db, [], now=now)
+
+    assert count == 1
+    assert len(db.notifications) == 1

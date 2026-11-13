@@ -22,6 +22,8 @@ export interface AppNotification {
   id: string;
   title: string;
   body: string | null;
+  reason_code?: 'topic_term_overlap' | 'author_relation' | 'citation_relation' | null;
+  reason_text?: string | null;
   paper_id: string | null;
   project_id?: string | null;
   created_at: string;

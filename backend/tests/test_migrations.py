@@ -82,6 +82,18 @@ def test_notifications_can_retain_watchlist_project_context():
     assert "drop index if exists public.idx_notifications_project" in normalized
 
 
+def test_watchlist_notification_reasons_are_additive_and_bounded():
+    migration = (ROOT / "supabase" / "migrations" / "0021_watchlist_notification_reasons.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "add column if not exists reason_code text" in normalized
+    assert "add column if not exists reason_text text" in normalized
+    assert "'topic_term_overlap', 'author_relation', 'citation_relation'" in normalized
+    assert "char_length(reason_text) <= 500" in normalized
+    rollback = (ROOT / "supabase" / "rollbacks" / "0021_watchlist_notification_reasons.sql").read_text().lower()
+    assert "drop column if exists reason_code" in rollback
+    assert "drop column if exists reason_text" in rollback
+
+
 def test_project_rls_helpers_reject_soft_deleted_projects():
     migration = (ROOT / "supabase" / "migrations" / "0012_hide_deleted_projects_in_rls.sql").read_text()
     normalized = " ".join(migration.lower().split())

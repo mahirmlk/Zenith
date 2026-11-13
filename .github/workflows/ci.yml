@@ -30,6 +30,9 @@ jobs:
       - name: AI eval smoke (update.md §10)
         working-directory: .
         run: python evals/runners/run_evals.py
+      - name: Watchlist notification eval (update.md §12)
+        working-directory: .
+        run: python evals/runners/run_watchlist_evals.py
 
   frontend:
     runs-on: ubuntu-latest

@@ -151,12 +151,14 @@ describe('monitoring pages', () => {
   it('marks notifications read and displays paper links', async () => {
     vi.mocked(fetchNotifications).mockResolvedValue([{
       id: 'notification-1', title: 'New paper found', body: 'Matches your watchlist.',
+      reason_code: 'topic_term_overlap', reason_text: 'Matched 2/2 topic-watch terms in the paper title and abstract: transformer, language.',
       paper_id: 'paper-1', project_id: 'project-1', created_at: '2026-11-11T00:00:00Z', read_at: null,
     }]);
     vi.mocked(markNotificationsRead).mockResolvedValue({ status: 'ok' });
 
     renderWithQuery(<NotificationsPage />);
     await screen.findByText('New paper found');
+    expect(screen.getByText(/Matched 2\/2 topic-watch terms/)).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Mark all as read' }));
 
     await waitFor(() => expect(markNotificationsRead).toHaveBeenCalledOnce());

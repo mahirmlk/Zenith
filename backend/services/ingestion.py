@@ -49,6 +49,30 @@ def _watchlist_matches(query: str, paper: dict[str, Any]) -> bool:
     return len(overlap) == len(terms) if len(terms) == 1 else len(overlap) / len(terms) >= 2 / 3
 
 
+def _watchlist_reason(target_type: str, query: str, paper: dict[str, Any]) -> tuple[str, str]:
+    """Explain the verified match basis without asserting scientific importance."""
+    if target_type == "author":
+        return "author_relation", "Semantic Scholar returned this paper for the author you follow."
+    if target_type == "citation":
+        return "citation_relation", "Semantic Scholar reports that this paper cites the work in your citation watch."
+
+    terms = list(dict.fromkeys(_TOKEN_RE.findall(query.casefold())))
+    title_terms = set(_TOKEN_RE.findall(str(paper.get("title") or "").casefold()))
+    abstract_terms = set(_TOKEN_RE.findall(str(paper.get("abstract") or "").casefold()))
+    matched = [term for term in terms if term in title_terms or term in abstract_terms]
+    sources = []
+    if any(term in title_terms for term in matched):
+        sources.append("title")
+    if any(term in abstract_terms for term in matched):
+        sources.append("abstract")
+    shown_terms = ", ".join(matched[:8])
+    if len(matched) > 8:
+        shown_terms += f", and {len(matched) - 8} more"
+    source_text = " and ".join(sources)
+    reason = f"Matched {len(matched)}/{len(terms)} topic-watch terms in the paper {source_text}: {shown_terms}."
+    return "topic_term_overlap", reason[:500]
+
+
 async def _notify_watchlists(
     supabase: Any,
     papers: list[dict[str, Any]],
@@ -115,35 +139,37 @@ async def _notify_watchlists(
                 logger.exception("Could not poll provider for watchlist %s", watch.get("id"))
                 watch_sources_complete = False
                 watch_papers = []
-        matches = [
-            paper for paper in watch_papers
-            if paper.get("id")
-            and (published := _as_utc(paper.get("published_at"))) is not None
-            and published >= since
+        matches_by_id: dict[str, dict[str, Any]] = {}
+        for paper in watch_papers:
+            paper_id = str(paper.get("id") or "")
+            published = _as_utc(paper.get("published_at"))
+            if not paper_id or published is None or published < since:
+                continue
             # Provider watch endpoints already select papers by stable author
             # identity or inbound citation direction. Applying the topic text
             # matcher here would suppress valid results when names/seed titles
             # do not appear in the citing paper's title or abstract.
-            and (
-                target_type in {"author", "citation"}
-                or _watchlist_matches(query, paper)
-            )
-        ][:5]
+            if target_type not in {"author", "citation"} and not _watchlist_matches(query, paper):
+                continue
+            matches_by_id.setdefault(paper_id, paper)
+        matches = list(matches_by_id.values())[:5]
 
         try:
             if matches:
-                rows = [
-                    {
+                rows = []
+                for paper in matches:
+                    reason_code, reason_text = _watchlist_reason(target_type, query, paper)
+                    rows.append({
                         "user_id": watch["user_id"],
                         "watchlist_id": watch["id"],
                         "project_id": watch.get("project_id"),
                         "kind": "watchlist",
                         "title": f"New paper for {query}"[:200],
                         "body": str(paper.get("title") or "")[:200],
+                        "reason_code": reason_code,
+                        "reason_text": reason_text,
                         "paper_id": paper["id"],
-                    }
-                    for paper in matches
-                ]
+                    })
                 await (
                     supabase.table("notifications")
                     .upsert(
