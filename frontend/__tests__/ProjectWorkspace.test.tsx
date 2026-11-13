@@ -101,6 +101,11 @@ describe('ProjectWorkspacePage', () => {
           { id: 'paper-1', source_type: 'paper', title: 'Reliable Retrieval', abstract: 'A useful project paper.', score: 0.9 },
           { id: 'document-1:page:4', source_type: 'pdf_page', title: 'methods.pdf', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', snippet: 'The PDF reports retrieval quality.', start_offset: 5, end_offset: 39, score: 0.8 },
         ] };
+      } else if (url.pathname === '/api/research/compare' && method === 'POST') {
+        body = {
+          rows: [{ paper_id: 'paper-1', problem: 'A useful project paper.', methods: null, datasets: null, metrics: null, limitations: null, code_status: 'unverified' }],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the comparison benchmark.', start_offset: 10, end_offset: 50 }],
+        };
       } else if (url.pathname === '/api/research/answer' && method === 'POST') {
         body = {
           summary: 'Extractive evidence from a project PDF.',
@@ -173,6 +178,13 @@ describe('ProjectWorkspacePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
     expect(await screen.findByText('[document-1:page:4] · page offsets 12–57')).toBeInTheDocument();
     expect(screen.getByText('“Retrieval quality improved on the benchmark.”')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('“The PDF reports the comparison benchmark.”')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:4] · page offsets 10–50')).toBeInTheDocument();
+    expect(screen.getByText('PDF source evidence · extractive, not synthesized')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();

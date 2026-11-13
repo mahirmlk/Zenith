@@ -93,6 +93,15 @@ interface ComparisonRow {
 
 interface ComparisonResponse {
   rows: ComparisonRow[];
+  pdf_evidence: {
+    document_id: string;
+    filename: string;
+    page_number: number;
+    citation_id: string;
+    sentence: string;
+    start_offset: number;
+    end_offset: number;
+  }[];
 }
 
 interface ProjectSearchResult {
@@ -465,7 +474,7 @@ export default function ProjectWorkspacePage() {
           </div>
 
           <div className="mb-4 rounded-xl border border-zenith-border bg-zenith-surface/60 p-4 text-sm leading-6 text-zenith-body">
-            Project search, answers, and evidence maps can use attached-paper abstracts and exact sentences from up to 10 uploaded PDFs/500 pages. Public search and comparisons still use paper metadata/abstracts, and no cross-paper synthesis is generated.
+            Project search, answers, evidence maps, and comparisons can use exact sentences from up to 10 uploaded PDFs/500 pages. Comparison columns remain heuristic abstract matches; PDF spans are separate cited source evidence. Public search and comparisons without a project use paper metadata/abstracts, and no cross-paper synthesis is generated.
           </div>
 
           <form onSubmit={handleResearchSubmit} className="space-y-4">
@@ -550,16 +559,33 @@ export default function ProjectWorkspacePage() {
                 </div>
               )}
               {isComparisonResponse(result) && (
-                result.rows.length ? (
-                  <div className="overflow-x-auto rounded-xl border border-zenith-border">
-                    <table className="min-w-full text-left text-xs">
-                      <caption className="sr-only">Heuristic comparison using exact abstract sentences from attached papers</caption>
-                      <thead className="bg-zenith-surface text-zenith-muted"><tr>{['Paper', 'Research focus (abstract)', 'Methods (abstract)', 'Datasets (abstract)', 'Metrics (abstract)', 'Limitations (abstract)', 'Code status'].map((heading) => <th key={heading} scope="col" className="px-3 py-2 font-semibold">{heading}</th>)}</tr></thead>
-                      <tbody>{result.rows.map((row) => <tr key={row.paper_id} className="border-t border-zenith-border align-top"><th scope="row" className="px-3 py-2 font-mono text-zenith-secondary">{row.paper_id}</th><td className="max-w-xs px-3 py-2 text-zenith-body">{row.problem ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-body">{row.methods ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.datasets ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.metrics ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.limitations ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">Unverified</td></tr>)}</tbody>
-                    </table>
-                    <p className="border-t border-zenith-border bg-white px-3 py-2 text-xs text-zenith-muted">Heuristic keyword matches return exact abstract sentences. Empty fields mean no matching sentence was found; the extracted categories are not independently verified.</p>
-                  </div>
-                ) : <p className="text-sm text-zenith-muted">No papers are attached to this project yet.</p>
+                <div className="space-y-4">
+                  {result.rows.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-zenith-border">
+                      <table className="min-w-full text-left text-xs">
+                        <caption className="sr-only">Heuristic comparison using exact abstract sentences from attached papers</caption>
+                        <thead className="bg-zenith-surface text-zenith-muted"><tr>{['Paper', 'Research focus (abstract)', 'Methods (abstract)', 'Datasets (abstract)', 'Metrics (abstract)', 'Limitations (abstract)', 'Code status'].map((heading) => <th key={heading} scope="col" className="px-3 py-2 font-semibold">{heading}</th>)}</tr></thead>
+                        <tbody>{result.rows.map((row) => <tr key={row.paper_id} className="border-t border-zenith-border align-top"><th scope="row" className="px-3 py-2 font-mono text-zenith-secondary">{row.paper_id}</th><td className="max-w-xs px-3 py-2 text-zenith-body">{row.problem ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-body">{row.methods ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.datasets ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.metrics ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">{row.limitations ?? 'Not identified in abstract'}</td><td className="px-3 py-2 text-zenith-muted">Unverified</td></tr>)}</tbody>
+                      </table>
+                      <p className="border-t border-zenith-border bg-white px-3 py-2 text-xs text-zenith-muted">Heuristic keyword matches return exact abstract sentences. Empty fields mean no matching sentence was found; the extracted categories are not independently verified.</p>
+                    </div>
+                  )}
+                  {result.pdf_evidence.length > 0 && (
+                    <section aria-labelledby="comparison-pdf-evidence-heading" className="space-y-3">
+                      <h3 id="comparison-pdf-evidence-heading" className="text-xs font-semibold uppercase tracking-wide text-zenith-muted">PDF source evidence · extractive, not synthesized</h3>
+                      <ul className="space-y-3">
+                        {result.pdf_evidence.map((item) => (
+                          <li key={`${item.citation_id}:${item.start_offset}`} className="rounded-xl border border-zenith-border bg-white p-4">
+                            <p className="text-xs font-semibold text-ink-900">{item.filename} · page {item.page_number}</p>
+                            <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
+                            <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{item.citation_id}] · page offsets {item.start_offset}–{item.end_offset}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  {result.rows.length === 0 && result.pdf_evidence.length === 0 && <p className="text-sm text-zenith-muted">No matching attached paper or PDF evidence was found for this comparison.</p>}
+                </div>
               )}
               {isProjectSearchResponse(result) && (
                 result.results.length ? (
