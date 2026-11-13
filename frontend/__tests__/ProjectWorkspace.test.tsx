@@ -15,6 +15,7 @@ describe('ProjectWorkspacePage', () => {
   let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string; email_sent_at: string | null }[];
   let documents: { id: string; filename: string; page_count: number }[];
   let currentRole: 'owner' | 'editor' | 'viewer';
+  let synthesisEnabled: boolean;
   let request: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -24,12 +25,15 @@ describe('ProjectWorkspacePage', () => {
     invitations = [];
     documents = [];
     currentRole = 'owner';
+    synthesisEnabled = true;
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       let body: unknown = {};
 
-      if (url.pathname === '/api/projects/project-1' && method === 'GET') {
+      if (url.pathname === '/api/research/capabilities' && method === 'GET') {
+        body = { research_synthesis_enabled: synthesisEnabled };
+      } else if (url.pathname === '/api/projects/project-1' && method === 'GET') {
         body = { id: 'project-1', owner_id: 'user-1', title: 'Alpha Project', description: 'A research workspace', current_role: currentRole };
       } else if (url.pathname === '/api/projects/project-1/notes' && method === 'GET') {
         body = notes;
@@ -142,6 +146,16 @@ describe('ProjectWorkspacePage', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('hides synthesis when the backend feature flag is disabled', async () => {
+    synthesisEnabled = false;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
+    await waitFor(() => expect(request.mock.calls.some(([input]) => String(input).endsWith('/api/research/capabilities'))).toBe(true));
+    expect(screen.queryByRole('button', { name: 'Synthesize' })).not.toBeInTheDocument();
   });
 
   it('attaches a paper, saves a note, and shows project-scoped abstract evidence', async () => {

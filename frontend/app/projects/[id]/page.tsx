@@ -144,6 +144,10 @@ interface SynthesisResponse {
   explanation: string;
 }
 
+interface ResearchCapabilities {
+  research_synthesis_enabled: boolean;
+}
+
 interface ProjectDocument {
   id: string;
   filename: string;
@@ -261,6 +265,12 @@ export default function ProjectWorkspacePage() {
     queryKey: ['project', projectId],
     queryFn: () => apiRequest<Project>(`/api/projects/${encodeURIComponent(projectId)}`),
     enabled: !!projectId,
+  });
+
+  const researchCapabilitiesQuery = useQuery({
+    queryKey: ['research-capabilities'],
+    queryFn: () => apiRequest<ResearchCapabilities>('/api/research/capabilities'),
+    staleTime: 5 * 60 * 1000,
   });
 
   const membersQuery = useQuery({
@@ -513,7 +523,9 @@ export default function ProjectWorkspacePage() {
                   ['answer', 'Answer'],
                   ['compare', 'Compare'],
                   ['synthesize', 'Synthesize'],
-                ] as const).map(([mode, label]) => (
+                ] as const).filter(([mode]) =>
+                  mode !== 'synthesize' || researchCapabilitiesQuery.data?.research_synthesis_enabled === true,
+                ).map(([mode, label]) => (
                   <button
                     key={mode}
                     type="button"
