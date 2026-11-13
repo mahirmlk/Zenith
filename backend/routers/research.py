@@ -15,6 +15,7 @@ from agents.research_types import (
     EvidenceItem,
     EvidenceMapResponse,
     PdfEvidenceItem,
+    ResearchComparisonResponse,
     ResearchAnswer,
     build_comparison,
     classify_task,
@@ -440,17 +441,25 @@ async def research_evidence_map(
         raise HTTPException(status_code=500, detail="Internal error")
 
 
-@router.post("/compare")
+@router.post("/compare", response_model=ResearchComparisonResponse)
 async def research_compare(
     body: ResearchRequest,
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
-) -> dict[str, Any]:
+) -> ResearchComparisonResponse:
     try:
         papers = await _papers_for_request(body, user, supabase)
         ranked = hybrid_rank(body.query, papers)[:10]
-        return {"rows": [row.model_dump() for row in build_comparison(ranked)]}
+        pdf_evidence = (
+            await _project_pdf_evidence(body.query, body.project_id, supabase, limit=5)
+            if body.project_id
+            else []
+        )
+        return ResearchComparisonResponse(
+            rows=build_comparison(ranked),
+            pdf_evidence=pdf_evidence,
+        )
     except HTTPException:
         raise
     except Exception:

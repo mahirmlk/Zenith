@@ -62,6 +62,13 @@ class ComparisonRow(BaseModel):
     code_status: str = "unverified"
 
 
+class ResearchComparisonResponse(BaseModel):
+    """Heuristic abstract comparison plus separately cited project PDF spans."""
+
+    rows: list[ComparisonRow] = Field(default_factory=list)
+    pdf_evidence: list[PdfEvidenceItem] = Field(default_factory=list)
+
+
 class ResearchAnswer(BaseModel):
     summary: str
     claims: list[str] = Field(default_factory=list)
