@@ -127,6 +127,7 @@ All routes below require a user JWT.
 | `POST /api/research/compare` | Heuristic comparison rows plus exact PDF page evidence for an authorized project; global requests stay PDF-free |
 | `POST /api/research/answer` | Extractive answer: returns exact matching abstract sentences, and for project requests exact PDF page sentences with document/page citations; abstains when no sentence matches |
 | `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
+| `GET /api/research/capabilities` | Returns enabled research UI capabilities for the authenticated user |
 | `POST /api/research/synthesize` | Bounded provisional claims from up to six exact abstract sentences; project requests require membership and never include private PDF text in provider input |
 
 Request body for these endpoints:
@@ -182,6 +183,10 @@ per UTC day are allowed; production requires shared Redis. Provider requests
 are limited to 900 output tokens and 20 seconds each. Uploaded PDF text is not
 read by this route or sent to providers. Provider failure returns 503 and
 malformed or fabricated-anchor output returns 502.
+The route returns `404` while `RESEARCH_SYNTHESIS_ENABLED=false` (the default).
+`GET /api/research/capabilities` returns
+`{"research_synthesis_enabled":false}` so the frontend can hide the disabled
+mode; API-side enforcement remains authoritative.
 
 ## Projects, watchlists, and notifications
 

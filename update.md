@@ -1018,3 +1018,12 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Current-head CI, staging provider/budget/recovery checks, blinded domain-expert review, and calibrated claim-level quality evaluation remain required. The small mocked eval does not establish model output quality.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.15 Synthesis rollout gate (2026-11-13)
+
+- [x] Added backend-owned `RESEARCH_SYNTHESIS_ENABLED`, defaulting to false, and an authenticated minimal capabilities endpoint. The API rejects synthesis while disabled before reading project or source data; the UI only exposes the mode when the backend reports it enabled.
+- [x] Added backend tests for default-off capability reporting and disabled-route rejection before data access, plus frontend visibility coverage. Documented configuration and the fail-closed rollout behavior.
+- [x] Local validation: backend 239 passed / 6 skipped; frontend 41 tests across 8 files; frontend lint/typecheck/build, Ruff, strict mypy (74 files), and deterministic evals pass.
+- [ ] Keep the feature disabled in production until blinded human review, calibrated claim-level evaluation, and staging provider/budget/recovery checks pass. This flag is a rollout gate, not evidence that synthesis quality has been established.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
