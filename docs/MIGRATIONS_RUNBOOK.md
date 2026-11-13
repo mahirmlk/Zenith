@@ -1,6 +1,6 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0013 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
+Migrations 0001–0014 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
 **Status:** drafted and statically checked; NOT yet applied to any live database. The Postgres/RLS behavior, migration rollback, backups, and tenant isolation still need staging evidence (see [STATUS.md](STATUS.md)).
@@ -22,10 +22,15 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0010_unique_project_paper_so
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0011_notifications_project_scope.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0012_hide_deleted_projects_in_rls.sql
 psql "$STAGING_DATABASE_URL" -f supabase/migrations/0013_project_pdf_pages.sql
+psql "$STAGING_DATABASE_URL" -f supabase/migrations/0014_project_email_invitations.sql
 
 # 2. Verify RLS: run the owner/member/editor/viewer/outsider/anon matrix in
 #    docs/security/SECURITY_TEST_PLAN.md, including project metadata, notes,
-#    source rows, memberships, runs, and events. Include an active project and
+#    source rows, memberships, invitations (owner-only SELECT; no anon or
+#    authenticated writes), runs, and events. Test acceptance for matching
+#    verified email, mismatch, unverified, expiry, revocation, deleted project,
+#    duplicate acceptance, and an existing member/owner role that must not change.
+#    Include an active project and
 #    a soft-deleted project for every role; deleted project reads and writes
 #    must be denied for owners, members, editors, and viewers.
 
@@ -34,4 +39,10 @@ psql "$STAGING_DATABASE_URL" -f supabase/migrations/0013_project_pdf_pages.sql
 #    tested restore. Never drop user data tables as a routine rollback.
 ```
 
-**Current status (2026-11-12):** migrations 0001–0013 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
+**Current status (2026-11-13):** migrations 0001–0014 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
+
+For email onboarding, set the Supabase “Invite user” template and SMTP provider,
+allow the exact `APP_URL/projects/invitations/accept` URL in Auth redirect URLs,
+and set the Auth invite link expiry to one hour to match the application state.
+The `APP_URL` must be HTTPS in production. Verify delivery, callback/session
+creation, acceptance, resend/revoke, and existing-account handling in staging.

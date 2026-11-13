@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased (2026-11-05, branches `audit/*`, `security/*`, `infra/*`, `feature/*`)
+- Collaboration: project owners can invite email addresses as editors/viewers, resend/revoke pending invites, and accept via verified Supabase Auth sessions; new migration 0014 keeps invites separate from memberships and uses a service-role-only atomic acceptance RPC. Only one active invitation per email is permitted across projects to preserve Supabase's one-time confirmation token. Existing UUID roster management remains available. Staging email delivery is not yet verified.
 - Research: project evidence maps and answers now include bounded, exact PDF page spans with stable page citation IDs; project PDFs support owner/editor upload and member page viewing. OCR, general retrieval, and comparison PDF support remain unavailable.
 - Research: comparison columns now use exact abstract sentences selected by conservative keyword heuristics, with missing fields explicit and code status unverified.
 - Evals: added `grounded_qa_v3` with 18 deterministic retrieval/grounding cases.

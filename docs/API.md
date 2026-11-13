@@ -167,6 +167,11 @@ mutations apply endpoint-specific authorization.
 | `GET /api/projects/{project_id}/members` | List members of an accessible project |
 | `POST /api/projects/{project_id}/members` | Add/update an existing account by user UUID and role (owner-only) |
 | `DELETE /api/projects/{project_id}/members/{member_user_id}` | Remove a member (owner-only) |
+| `GET /api/projects/{project_id}/invitations` | List up to 100 project invitations (owner-only) |
+| `POST /api/projects/{project_id}/invitations` | Invite an email address with `editor` or `viewer` role (owner-only; Auth Admin email delivery) |
+| `POST /api/projects/{project_id}/invitations/{invitation_id}/resend` | Resend a failed or expired invitation (owner-only) |
+| `DELETE /api/projects/{project_id}/invitations/{invitation_id}` | Revoke a pending invitation (owner-only) |
+| `POST /api/project-invitations/{invitation_id}/accept` | Accept an invitation for the caller's verified matching email; atomically creates membership |
 | `GET /api/projects/{project_id}/sources?limit=&offset=` | List attached papers with metadata (maximum 200 per page) |
 | `POST /api/projects/{project_id}/sources` | Attach an existing paper (`paper_id`); duplicate attachments are idempotent |
 | `DELETE /api/projects/{project_id}/sources/{source_id}` | Remove an attached paper |
@@ -197,6 +202,19 @@ and available in the document viewer, project evidence map, and project answer
 route. It is not yet included in general retrieval or comparisons. The original
 PDF bytes are not retained. Migration 0013 creates the document and page tables;
 it must be applied in staging before using these routes against a deployed database.
+
+Email invitations are stored separately from memberships. The service sends
+through Supabase Auth Admin and grants no membership until the invitee follows
+the email link, establishes a verified session, and accepts. Invitations expire
+after one hour in the application. Only one active email invitation per address
+is allowed across projects, so a newer invite cannot invalidate an earlier
+Supabase confirmation token. Existing accounts should continue to be added by
+user UUID. Configure the Supabase invite email template,
+SMTP, the exact `APP_URL/projects/invitations/accept` redirect allowlist entry,
+and a one-hour Auth email expiry in each environment. Existing accounts should
+continue to be added by user UUID. Migration 0014 creates the invitation table
+and service-role-only atomic acceptance RPC; live application and email delivery
+remain unverified until staging checks pass.
 
 ## Implementation planning and account
 

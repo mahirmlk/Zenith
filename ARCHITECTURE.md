@@ -118,7 +118,7 @@ POST   /api/runs/{id}/cancel
 POST   /api/retrieval/search                # Hybrid search; optional project scope
 POST   /api/research/plan|compare|answer    # Plan, heuristic comparison, abstract-only answer
 POST   /api/research/evidence-map           # Project abstracts + extracted PDF page spans
-GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, notes, attached papers and PDF documents/pages
+GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, email invitations, notes, papers and PDF documents/pages
 GET/POST/PATCH/DELETE /api/watchlists/...   # Watchlists
 GET    /api/notifications                   # In-app notifications
 POST   /api/notifications/read              # Mark all caller notifications read

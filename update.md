@@ -963,3 +963,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Product completion remains open: integrate PDF page evidence into general retrieval and comparisons, add OCR if scanned-source support is required, deliver invitation and onboarding flow, cross-paper scientific synthesis/claim verification, expanded watch targets, and broader service-backed quality/reliability baselines. Provider, recovery, monitoring, and deployment gates remain unverified.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for current evidence and release blockers.
+
+### §24.9 Email invitations and verified project onboarding (2026-11-12)
+
+- [x] Added owner-only project email invitation create/list/resend/revoke APIs, editor/viewer roles, rate limits, privacy-safe audit events, and Supabase Auth Admin delivery. A global active-email uniqueness guard prevents concurrent project invites from invalidating Supabase's one-time confirmation token. Existing UUID-based membership administration remains available for existing accounts.
+- [x] Added migration 0014 with owner-only invitation reads, revoked anon/public access and authenticated write privileges, and a service-role-only atomic acceptance RPC. The RPC checks that the Auth account is verified, the normalized email matches, the project remains active, and the invite remains pending/unexpired. Membership is granted only on acceptance, idempotently; an existing member's role is preserved.
+- [x] Added owner invitation UI and acceptance callback for Supabase invite sessions, validated UUID-only login/OAuth return context, optional password setup, and React StrictMode-safe one-time verification. Storage/provider errors avoid logging invitation email/token values.
+- [x] Local verification: backend full suite 223 passed / 6 skipped; focused invitation API tests 9/9; frontend suite 40 tests across 8 files; frontend lint/typecheck and production build pass; Ruff and strict mypy pass for 73 application files. Direct Supabase RLS/RPC and actual SMTP delivery still need staging verification.
+- [ ] Apply migration 0014 in staging; configure Supabase invite email template, SMTP, one-hour link expiry, and exact `APP_URL/projects/invitations/accept` redirect allowlist; verify delivery, callback, acceptance, expiry, revoke, and role-preserving repeat acceptance.
+- [ ] Product/release gaps remain: PDF general retrieval and comparison, OCR for scanned sources, broad cross-paper synthesis and claim verification, expanded watch targets, larger deployed-service quality/reliability evaluations, staging migration/RLS and backup restore, provider/recovery exercises, monitoring, current-head CI, and human review.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and remaining release gates.
