@@ -62,6 +62,10 @@ class FakeQuery:
                 ):
                     self.db.notifications.append(row)
             return SimpleNamespace(data=[])
+        if self.table == "papers" and self.action == "upsert":
+            assert self.upsert_options == {"on_conflict": "id", "ignore_duplicates": True}
+            self.db.provider_papers.extend(self.payload)
+            return SimpleNamespace(data=[])
         raise AssertionError((self.table, self.action))
 
 
@@ -69,6 +73,7 @@ class FakeSupabase:
     def __init__(self, watchlists, *, fail_cursor_update=False):
         self.watchlists = watchlists
         self.notifications = []
+        self.provider_papers = []
         self.fail_cursor_update = fail_cursor_update
 
     def table(self, name):
@@ -153,3 +158,30 @@ async def test_partial_source_failure_does_not_advance_watchlist_cursor():
 
     assert len(db.notifications) == 1
     assert "last_checked_at" not in db.watchlists[0]
+
+
+@pytest.mark.asyncio
+async def test_citation_watch_fetches_inbound_results_and_persists_linked_paper(monkeypatch):
+    now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "watch-citations",
+        "user_id": "u1",
+        "query": "Seed paper",
+        "target_type": "citation",
+        "target_id": "seed-id",
+        "cadence": "daily",
+        "enabled": True,
+    }])
+    provider_paper = make_paper("new-citer", "A paper citing the seed", now - timedelta(hours=1))
+
+    async def fetch_watch_papers(target_type, target_id, since):
+        assert (target_type, target_id) == ("citation", "seed-id")
+        return [provider_paper]
+
+    monkeypatch.setattr("services.semantic_scholar.fetch_watch_papers", fetch_watch_papers)
+    count = await _notify_watchlists(db, [], now=now)
+
+    assert count == 1
+    assert db.notifications[0]["paper_id"] == "new-citer"
+    assert db.provider_papers[0]["id"] == "new-citer"
+    assert db.watchlists[0]["last_checked_at"] == now.isoformat()

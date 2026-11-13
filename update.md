@@ -1038,3 +1038,15 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] The preview does not execute or enforce a multi-step workflow. Durable research-plan execution, cross-run spend metering, and broader domain/human quality review remain unimplemented; current production infrastructure gates remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.17 Stable author and inbound-citation watchlists (2026-11-13)
+
+- [x] Expanded watchlists with Semantic Scholar author-ID and citing-paper targets. Existing topic rows remain topic watches through migration 0015's additive default.
+- [x] Validate provider targets at creation; fetch author publications or papers citing a selected paper with bounded five-page polling. Provider failures and truncated result sets do not advance the watch cursor.
+- [x] Persist discovered paper metadata with conflict-ignore behavior so notification links work without overwriting existing paper rows or embeddings. Added UI target selection and source-specific labels.
+- [x] Added offline tests for target validation, canonical IDs, incoming-citation direction, author lookup, pagination bounds, provider-discovered notification flow, and migration shape.
+- [ ] Apply migration 0015 in staging and verify user RLS, provider rate limits/outages, dedupe, notifications, and rollback/backup restore. Semantic Scholar API behavior and alert quality have not been exercised live; `SEMANTIC_SCHOLAR_API_KEY` is optional but recommended.
+- [x] Local validation: backend suite 261 passed / 6 skipped; Ruff, strict mypy (75 source files), frontend lint/typecheck, 43 tests across 8 files, and production build passed. Provider contract tests are mocked; no staging migration or live Semantic Scholar poll was run.
+- [ ] Existing production gates in [docs/STATUS.md](docs/STATUS.md) remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.

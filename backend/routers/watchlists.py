@@ -4,20 +4,24 @@ In-app alerts only (no email until consent/unsubscribe infra exists).
 Cadence daily|weekly; dedupe by (watch_id, paper_id) via seen set.
 """
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
 from services.supabase_client import get_supabase
+from services.semantic_scholar import validate_watch_target
+import httpx
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
 
 
 class WatchCreate(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500)
+    query: str = Field(default="", max_length=500)
+    target_type: Literal["topic", "author", "citation"] = "topic"
+    target_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
     project_id: Optional[str] = None
     cadence: str = Field(default="daily", pattern="^(daily|weekly)$")
 
@@ -33,6 +37,15 @@ async def create_watch(
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
 ) -> Any:
+    target_label = body.query.strip()
+    if body.target_type == "topic":
+        if not target_label:
+            raise HTTPException(status_code=422, detail="Enter a topic to watch")
+        if body.target_id:
+            raise HTTPException(status_code=422, detail="Topic watchlists do not accept a target ID")
+    else:
+        if not body.target_id:
+            raise HTTPException(status_code=422, detail="Enter a Semantic Scholar ID")
     if body.project_id:
         # H5: project must be owned by (or shared with) the caller.
         proj = await (
@@ -49,9 +62,20 @@ async def create_watch(
             members = await supabase.table("project_members").select("user_id").eq("project_id", body.project_id).eq("user_id", user["user_id"]).execute()
             if not (members.data or []):
                 raise HTTPException(status_code=404, detail="Project not found")
+    if body.target_type != "topic":
+        try:
+            target_label = await validate_watch_target(body.target_type, body.target_id or "")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise HTTPException(status_code=422, detail="Semantic Scholar target was not found") from exc
+            raise HTTPException(status_code=503, detail="Semantic Scholar could not validate this target") from exc
+        except Exception as exc:
+            logger.warning("Semantic Scholar target validation failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Semantic Scholar could not validate this target") from exc
     try:
         resp = await supabase.table("watchlists").insert({
-            "user_id": user["user_id"], "query": body.query,
+            "user_id": user["user_id"], "query": target_label,
+            "target_type": body.target_type, "target_id": body.target_id,
             "project_id": body.project_id, "cadence": body.cadence,
         }).execute()
         return resp.data

@@ -67,7 +67,7 @@ async def _notify_watchlists(
     try:
         response = await (
             supabase.table("watchlists")
-            .select("id,user_id,query,cadence,enabled,last_checked_at,project_id")
+            .select("id,user_id,query,target_type,target_id,cadence,enabled,last_checked_at,project_id")
             .eq("enabled", True)
             .execute()
         )
@@ -83,8 +83,40 @@ async def _notify_watchlists(
         if last_checked and now - last_checked < interval:
             continue
         since = last_checked or now - interval
+        watch_papers = papers
+        watch_sources_complete = sources_complete
+        target_type = watch.get("target_type") or "topic"
+        if target_type in {"author", "citation"}:
+            try:
+                from services.semantic_scholar import fetch_watch_papers
+
+                watch_papers = await fetch_watch_papers(
+                    target_type, str(watch.get("target_id") or ""), since
+                )
+                # Persist provider-discovered records so notification links open
+                # a real paper page. Ignore conflicts to preserve existing rows
+                # (including embeddings) from primary ingestion sources.
+                provider_rows = [
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "abstract": item.get("abstract", ""),
+                        "authors": item.get("authors", []),
+                        "url": item.get("url", ""),
+                        "published_at": item.get("published_at"),
+                    }
+                    for item in watch_papers if item.get("id")
+                ]
+                if provider_rows:
+                    await supabase.table("papers").upsert(
+                        provider_rows, on_conflict="id", ignore_duplicates=True
+                    ).execute()
+            except Exception:
+                logger.exception("Could not poll provider for watchlist %s", watch.get("id"))
+                watch_sources_complete = False
+                watch_papers = []
         matches = [
-            paper for paper in papers
+            paper for paper in watch_papers
             if paper.get("id")
             and (published := _as_utc(paper.get("published_at"))) is not None
             and published >= since
@@ -118,7 +150,7 @@ async def _notify_watchlists(
 
             # Do not move the cursor after a partial provider outage. The
             # idempotency index prevents duplicates on the next full run.
-            if sources_complete:
+            if watch_sources_complete:
                 await (
                     supabase.table("watchlists")
                     .update({"last_checked_at": now.isoformat()})

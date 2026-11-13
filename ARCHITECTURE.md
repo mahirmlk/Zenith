@@ -72,7 +72,7 @@ Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The ori
 - `/paper/[id]` — Paper detail with AI summary, contributions, difficulty, code repos
 - `/login` — Supabase Auth UI
 - `/projects` and `/projects/[id]` — Project list and role-aware project workspace
-- `/watchlists` and `/notifications` — Topic watch configuration and in-app notification management
+- `/watchlists` and `/notifications` — Topic, Semantic Scholar author/citing-paper watch configuration and in-app notification management
 - `/settings` — User preferences, authenticated account export, and typed-confirmation deletion
 
 **Key Components:**
@@ -209,6 +209,14 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 Retry is kept separate from the provider fallback chain: `async_retry` handles
 same-provider transient failures (connect/read timeouts, 5xx, rate limits on
 any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
+
+Author and inbound-citation watchlists use Semantic Scholar stable IDs. The
+author endpoint returns papers by that author; the citation endpoint returns
+papers that cite the seed paper. Polling is limited to five pages per watch and
+advances a watch cursor only after a successful poll. Provider-discovered rows
+are inserted without replacing existing paper rows or embeddings. The existing
+`SEMANTIC_SCHOLAR_API_KEY` is optional but recommended for the provider's rate
+limits; no additional environment variable is required.
 `services/retry.py` matches transient errors by exception class (builtin +
 `httpx` errors, plus vendor SDK names such as `APIConnectionError`,
 `RateLimitError`, `InternalServerError`).

@@ -47,13 +47,29 @@ describe('monitoring pages', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create watchlist' }));
 
     await waitFor(() => expect(createWatchlist).toHaveBeenCalledWith({
-      query: 'protein models', cadence: 'weekly',
+      target_type: 'topic', query: 'protein models', cadence: 'weekly',
+    }));
+  });
+
+  it('creates an author watchlist with a stable Semantic Scholar ID', async () => {
+    vi.mocked(fetchWatchlists).mockResolvedValue([]);
+    vi.mocked(fetchWatchedProjects).mockResolvedValue([]);
+    vi.mocked(createWatchlist).mockResolvedValue([]);
+
+    renderWithQuery(<WatchlistsPage />);
+    fireEvent.change(screen.getByLabelText('What to monitor'), { target: { value: 'author' } });
+    fireEvent.change(screen.getByLabelText('Semantic Scholar author ID'), { target: { value: '12345' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create watchlist' }));
+
+    await waitFor(() => expect(createWatchlist).toHaveBeenCalledWith({
+      target_type: 'author', target_id: '12345', cadence: 'daily',
     }));
   });
 
   it('lets a user pause an active watchlist', async () => {
     vi.mocked(fetchWatchlists).mockResolvedValue([{
       id: 'watch-1', query: 'protein models', project_id: 'project-1',
+      target_type: 'topic', target_id: null,
       cadence: 'daily', enabled: true, last_checked_at: null,
     }]);
     vi.mocked(fetchWatchedProjects).mockResolvedValue([{ id: 'project-1', title: 'Protein project' }]);

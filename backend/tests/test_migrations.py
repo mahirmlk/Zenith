@@ -115,3 +115,13 @@ def test_project_email_invitation_migration_is_atomic_and_service_only():
     assert "select pm.role into v_member_role" in normalized
     assert "do update set role = excluded.role" not in normalized
     assert "grant execute on function public.accept_project_invitation(uuid, uuid) to service_role" in normalized
+
+
+def test_semantic_scholar_watch_targets_preserve_topic_rows_and_add_bounds():
+    migration = (ROOT / "supabase" / "migrations" / "0015_semantic_scholar_watch_targets.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "add column if not exists target_type text not null default 'topic'" in normalized
+    assert "add column if not exists target_id text" in normalized
+    assert "target_type in ('author', 'citation')" in normalized
+    assert "length(target_id) between 1 and 200" in normalized
+    assert "drop column if exists target_id" in normalized

@@ -5,6 +5,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 export interface Watchlist {
   id: string;
   query: string;
+  target_type: 'topic' | 'author' | 'citation';
+  target_id: string | null;
   project_id: string | null;
   cadence: 'daily' | 'weekly';
   enabled: boolean;
@@ -63,7 +65,9 @@ export function fetchWatchlists(): Promise<Watchlist[]> {
 }
 
 export function createWatchlist(input: {
-  query: string;
+  query?: string;
+  target_type: 'topic' | 'author' | 'citation';
+  target_id?: string;
   project_id?: string;
   cadence: 'daily' | 'weekly';
 }): Promise<Watchlist[]> {
