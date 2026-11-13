@@ -49,7 +49,6 @@ Current local baseline on 2026-11-13:
 | PDF citation accuracy, exact span rate, abstention, forbidden-text safety | 1.000 each |
 | `cross_paper_synthesis_v1` mocked-provider contract cases | 3 / 3 pass |
 | `research_plan_v1` deterministic plan-preview cases | 5 / 5 pass |
-| `research_plan_v1` deterministic plan preview cases | 5 / 5 pass |
 | Fabricated-citation negative control | Pass |
 
 The gate passes after BM25 ignores common question terms, claim selection requires substantive overlap and relevant query entities, and instruction-like abstract sentences are excluded. Do not weaken these cases. The corpus remains small and hand-authored, so passing it is a regression check rather than a broad research-quality result.
