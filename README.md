@@ -30,8 +30,8 @@ Status: feature slices are under review; **not production-ready**. Run #48 passe
 | Personalisation | Mem0 memory + pgvector similarity rank papers for you |
 | Streaming | SSE with start-once durable runs, event replay, reconnect-safe, cancel |
 | Citation graph | Cached Semantic Scholar edges, deterministic layout |
-| Projects | CRUD, notes, sources, members (owner/editor/viewer), soft-delete |
-| Research evidence | Task routing, comparison rows, abstaining answers, and a bounded project evidence map; no multi-paper synthesis |
+| Projects | CRUD, notes, paper sources, project PDFs with page citations, owner/editor/viewer roles, invitations, soft-delete |
+| Research evidence | Project-scoped PDF/page retrieval, evidence maps, answers, comparison context, and heuristic abstract comparison rows; no multi-paper synthesis |
 | Paper-to-code | Evidence-backed abstract-level brief + Markdown export; arbitrary execution is always disabled |
 | Monitoring | Watchlists (daily/weekly) + in-app notifications |
 | Guardrails | Deny-by-default tool policy, backend approvals, citation validation, SSRF defence |
@@ -198,7 +198,7 @@ GitHub Actions run on every PR/push: lint, typecheck, tests, eval smoke, Docker 
 | Phase | Status |
 |---|---|
 | Security, guardrails, durable runs, evals | Shipped |
-| Research workspaces, hybrid retrieval, deep research | Shipped |
+| Research workspaces, hybrid retrieval | Implemented locally; deep research synthesis remains open |
 | Evidence map and paper-to-code plan/export | Implemented locally; evaluation and staging verification remain |
 | Multi-paper synthesis, secure paper-code execution, invitation UX, integrations | Not implemented |
 | Staging release gates and production deployment | Blocked on live infrastructure and remote CI evidence |

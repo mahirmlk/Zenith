@@ -992,12 +992,18 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [x] Added backend coverage for project member access, PDF-only comparisons, exact citations/offsets, instruction filtering, bounded page/document reads, deleted/outsider denial, and global comparison exclusion; frontend renders the evidence next to comparison results. Local verification: backend suite 230 passed / 6 skipped; research route tests 26/26; frontend 40 tests across 8 files, lint, typecheck, and production build pass; Ruff and strict mypy pass for 73 files.
 - [ ] The standalone eval now covers PDF evidence selection, but does not measure the project-comparison response wrapper or broad page-level quality. OCR, cross-paper synthesis/claim verification, expanded watch targets, and all staging/CI/operational gates remain open.
 
-**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
-
 ### §24.12 PDF evidence quality gate (2026-11-13)
 
 - [x] Extended the existing CI eval runner with versioned `pdf_evidence_v1` fixtures for supported method/benchmark evidence, injection-only abstention, entity mismatch, exact whitespace-sensitive offsets, and multiple matching pages.
 - [x] The gate checks citation IDs/order, exact expected sentences, page-local substring offsets, abstention, and forbidden instruction-like text; all six cases pass and all four PDF metrics equal 1.000. The existing `grounded_qa_v3` remains 18/18 with its six metrics at 1.000.
 - [ ] The synthetic eval is a focused selector regression gate; it does not establish broad PDF extraction quality, project-comparison quality, scientific synthesis, deployed-provider behavior, or tenant isolation. Staging and release blockers remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
+
+### §24.13 PDF data portability (2026-11-13)
+
+- [x] Account export includes PDF document metadata and extracted page text for projects the caller owns, and only the caller's uploads in shared projects. Original PDF bytes are not retained. Export regression coverage checks that unrelated projects and other shared-project members' documents/pages are excluded.
+- [x] Updated data-handling and evaluation documentation to match current PDF storage/export behavior and the current `grounded_qa_v3` / `pdf_evidence_v1` eval gates.
+- [ ] Apply and verify migrations/RLS and account export/deletion cascades against staging. Cross-paper synthesis and claim verification, OCR, broader reliability/quality validation, current-head CI, and other production gates remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
