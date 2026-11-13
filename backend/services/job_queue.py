@@ -175,7 +175,40 @@ async def _execute_run(run_id: str) -> bool:
 
         heartbeat = asyncio.create_task(_heartbeat_run(run_id))
         try:
-            await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
+            from config import get_settings
+
+            settings = get_settings()
+            plan_marker = "__research_plan_execution__"
+            if state.model == plan_marker or settings.research_plan_execution_enabled:
+                from services.research_plan_execution import get_plan_execution, is_missing_plan_execution_table
+
+                try:
+                    plan_metadata = await get_plan_execution(run_id)
+                except Exception as exc:
+                    if (
+                        state.model == plan_marker
+                        or settings.research_plan_execution_enabled
+                        or not is_missing_plan_execution_table(exc)
+                    ):
+                        raise
+                    # With the feature off, legacy standard runs work on an
+                    # installation that has not applied migration 0019 yet.
+                    plan_metadata = None
+                if state.model == plan_marker and plan_metadata is None:
+                    from services.research_plan_execution import PlanExecutionError
+
+                    raise PlanExecutionError("Marked plan run is missing its execution metadata")
+            else:
+                plan_metadata = None
+
+            if state.model == plan_marker or plan_metadata is not None:
+                # Persisted marker and metadata determine dispatch, so a
+                # rolling flag change cannot reinterpret accepted plan work.
+                from services.research_plan_execution import run_plan_execution
+
+                await run_plan_execution(run_id, state.user_id or "anonymous", state.query)
+            else:
+                await _run_once(run_id, state.query, state.user_id or "anonymous", state.model)
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)

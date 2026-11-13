@@ -5,9 +5,11 @@ synthesis route is feature-gated and returns model-reviewed source relations.
 """
 import logging
 import re
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from agents.research_types import (
@@ -32,6 +34,8 @@ from services.supabase_client import get_supabase
 from services.synthesis import SynthesisOutputError, SynthesisProviderError, synthesize_claims
 from services.research_planner import build_research_plan
 from security.prompt_injection import scan_untrusted
+from services import budget
+from services.run_store import AccountDeletionInProgressError, run_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -47,7 +51,8 @@ async def research_capabilities(
     del request
     del user
     return ResearchCapabilities(
-        research_synthesis_enabled=get_settings().research_synthesis_enabled
+        research_synthesis_enabled=get_settings().research_synthesis_enabled,
+        research_plan_execution_enabled=get_settings().research_plan_execution_enabled,
     )
 
 
@@ -108,12 +113,156 @@ async def research_plan(
             body.query,
             source_scope=source_scope,
             synthesis_enabled=get_settings().research_synthesis_enabled,
+            execution_enabled=get_settings().research_plan_execution_enabled,
         )
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("research_plan failed")
         raise HTTPException(status_code=500, detail="Research plan unavailable") from exc
+
+
+class ResearchPlanExecutionAccepted(BaseModel):
+    run_id: str
+
+
+@router.post(
+    "/execute",
+    response_model=ResearchPlanExecutionAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def execute_research_plan(
+    body: ResearchRequest,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=256),
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> ResearchPlanExecutionAccepted:
+    """Create a durable run and queue a bounded plan for background execution."""
+    settings = get_settings()
+    if not settings.research_plan_execution_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    source_scope: ResearchPlanScope = "project" if body.project_id else "public_corpus"
+    if body.project_id:
+        await _require_project_access(body.project_id, user, supabase)
+    plan = build_research_plan(
+        body.query,
+        source_scope=source_scope,
+        synthesis_enabled=settings.research_synthesis_enabled,
+        execution_enabled=True,
+    )
+
+    # Idempotency replay must not consume another daily execution slot.
+    if idempotency_key:
+        try:
+            existing = await run_store.find_idempotent(user["user_id"], idempotency_key)
+        except Exception as exc:
+            logger.exception("Could not check research execution idempotency")
+            raise HTTPException(status_code=503, detail="Research execution temporarily unavailable") from exc
+        if existing is not None:
+            if existing.query != body.query or existing.model != "__research_plan_execution__":
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different request")
+            existing_metadata = await (
+                supabase.table("research_plan_executions")
+                .select("project_id")
+                .eq("run_id", existing.run_id)
+                .maybe_single()
+                .execute()
+            )
+            metadata = existing_metadata.data
+            if not isinstance(metadata, dict) or metadata.get("project_id") != body.project_id:
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different request")
+            return ResearchPlanExecutionAccepted(run_id=existing.run_id)
+
+    try:
+        within_budget = await budget.consume(
+            user["user_id"], 10, namespace="research_plan_execution"
+        )
+    except budget.BudgetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Research execution temporarily unavailable") from exc
+    if not within_budget:
+        raise HTTPException(status_code=429, detail="Daily research execution limit reached")
+
+    run_id = str(uuid.uuid4())
+    reserved = True
+    run_created = False
+    try:
+        created = await run_store.create(
+            run_id,
+            body.query,
+            # Private persisted dispatch marker; the run status API never
+            # exposes model, while the execution metadata stores actual limits.
+            model="__research_plan_execution__",
+            user_id=user["user_id"],
+            idempotency_key=idempotency_key,
+        )
+        run_created = created.run_id == run_id
+        if created.run_id != run_id:
+            # A concurrent request won the same idempotency key.
+            await budget.refund(user["user_id"], namespace="research_plan_execution")
+            reserved = False
+            if created.query != body.query or created.model != "__research_plan_execution__":
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different request")
+            existing_metadata = await (
+                supabase.table("research_plan_executions")
+                .select("project_id")
+                .eq("run_id", created.run_id)
+                .maybe_single()
+                .execute()
+            )
+            metadata = existing_metadata.data
+            if not isinstance(metadata, dict) or metadata.get("project_id") != body.project_id:
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different request")
+            return ResearchPlanExecutionAccepted(run_id=created.run_id)
+
+        deadline = datetime.now(timezone.utc) + timedelta(seconds=plan.max_wall_clock_seconds)
+        metadata = {
+            "run_id": run_id,
+            "user_id": user["user_id"],
+            "query": body.query,
+            "project_id": body.project_id,
+            "source_scope": source_scope,
+            "task_type": plan.task_type,
+            "max_sources": plan.max_sources,
+            "max_tool_calls": plan.max_tool_calls,
+            "max_wall_clock_seconds": plan.max_wall_clock_seconds,
+            "max_model_calls": plan.max_model_calls,
+            "max_output_tokens": plan.max_output_tokens,
+            "synthesis_enabled": settings.research_synthesis_enabled,
+            "deadline_at": deadline.isoformat(),
+        }
+        await supabase.table("research_plan_executions").insert(metadata).execute()
+        from services.job_queue import enqueue
+
+        await enqueue(run_id)
+        reserved = False
+        return ResearchPlanExecutionAccepted(run_id=run_id)
+    except AccountDeletionInProgressError as exc:
+        if reserved:
+            await budget.refund(user["user_id"], namespace="research_plan_execution")
+        raise HTTPException(status_code=409, detail="Account deletion is in progress") from exc
+    except ValueError as exc:
+        if reserved:
+            await budget.refund(user["user_id"], namespace="research_plan_execution")
+        if "idempotency" in str(exc).casefold():
+            raise HTTPException(status_code=409, detail="Idempotency key was already used for a different request") from exc
+        raise
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Could not enqueue research plan execution")
+        if run_created:
+            try:
+                await run_store.delete_run(run_id)
+            except Exception:
+                logger.exception("Could not remove incomplete research plan run")
+        if reserved:
+            try:
+                await budget.refund(user["user_id"], namespace="research_plan_execution")
+            except Exception:
+                logger.exception("Could not refund failed research plan reservation")
+        raise HTTPException(status_code=503, detail="Research execution temporarily unavailable") from exc
 
 
 def _paper_rows(data: object) -> list[dict[str, Any]]:

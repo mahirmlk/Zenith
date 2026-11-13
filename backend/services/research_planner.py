@@ -13,11 +13,11 @@ def build_research_plan(
     *,
     source_scope: ResearchPlanScope = "public_corpus",
     synthesis_enabled: bool = False,
+    execution_enabled: bool = False,
 ) -> ResearchPlan:
     """Build a static preview; no sources, providers, or tools are accessed.
 
-    Displayed limits are planning guidance only. Existing research routes enforce
-    their own independent caps; there is no multi-step plan executor yet.
+    Execution availability reflects a separately gated durable executor.
     """
     if source_scope not in {"public_corpus", "project"}:
         raise ValueError("Unsupported research source scope")
@@ -41,6 +41,7 @@ def build_research_plan(
         "compare": (
             [
                 ("retrieve_sources", "Find comparison sources", "Rank matching paper metadata within the selected scope."),
+                ("extract_evidence", "Select source evidence", "Select exact abstract sentences and bounded project page spans."),
                 ("compare_sources", "Extract comparison fields", "Match available abstract sentences to comparison dimensions."),
                 ("identify_gaps", "Surface missing evidence", "Leave unsupported fields blank and keep PDF evidence separate."),
             ],
@@ -85,6 +86,6 @@ def build_research_plan(
         synthesis_available=synthesis_enabled,
         estimated_cost_usd=None,
         cost_tracking_available=False,
-        execution_available=False,
-        limits_are_preview_only=True,
+        execution_available=execution_enabled,
+        limits_are_preview_only=not execution_enabled,
     )

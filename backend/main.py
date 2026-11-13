@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Startup
     init_sentry()
     logger.info("Starting Zenith backend")
-    from services.run_store import run_store
+    from services.run_store import get_run_store, run_store
     import asyncio
     from agents.orchestrator import start_checkpointer, stop_checkpointer
 
@@ -33,6 +33,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app_settings.database_url,
         production=app_settings.app_env == "production",
     )
+    # Initialize the canonical store before workers accept jobs. With plan
+    # execution enabled, verify_schema also fails startup if migration 0019 is
+    # absent or PostgREST has not refreshed its schema cache.
+    await get_run_store()
 
     async def _cleanup_loop() -> None:
         while True:

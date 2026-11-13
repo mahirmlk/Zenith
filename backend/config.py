@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     max_searches_per_day_per_user: int = 100
     ocr_enabled: bool = False
     sandbox_enabled: bool = False
+    research_plan_execution_enabled: bool = False
     research_synthesis_enabled: bool = False
 
     langfuse_public_key: str = ""

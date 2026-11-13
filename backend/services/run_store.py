@@ -490,6 +490,15 @@ class PostgresRunStore(RedisRunStore):
             .limit(0)
             .execute()
         )
+        from config import get_settings
+
+        if get_settings().research_plan_execution_enabled:
+            await (
+                self._database.table("research_plan_executions")
+                .select("run_id,user_id,query,deadline_at")
+                .limit(0)
+                .execute()
+            )
 
     @staticmethod
     def _idempotency_digest(user_id: Optional[str], idempotency_key: Optional[str]) -> Optional[str]:
@@ -679,6 +688,11 @@ class PostgresRunStore(RedisRunStore):
             for row in (response.data or [])
         ]
 
+    async def delete_run(self, run_id: str) -> None:
+        """Delete canonical run data; attached execution metadata cascades."""
+        await super().delete_run(run_id)
+        await self._database.table("research_runs").delete().eq("id", run_id).execute()
+
     async def cleanup(self) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._ttl)
         await (
@@ -789,6 +803,10 @@ class _RunStoreProxy:
     async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         store = await self._store()
         return await store.get_events(run_id)
+
+    async def delete_run(self, run_id: str) -> None:
+        store = await self._store()
+        await store.delete_run(run_id)
 
     async def cleanup(self) -> None:
         store = await self._store()

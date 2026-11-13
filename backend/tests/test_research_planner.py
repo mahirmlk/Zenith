@@ -26,6 +26,7 @@ def test_compare_intent_precedes_explain_and_deep_phrases():
     assert plan.task_type == "compare"
     assert [step.step_id for step in plan.steps] == [
         "retrieve_sources",
+        "extract_evidence",
         "compare_sources",
         "identify_gaps",
     ]

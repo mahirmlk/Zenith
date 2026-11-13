@@ -132,6 +132,44 @@ class ResearchCapabilities(BaseModel):
     """Authenticated user-visible research feature switches."""
 
     research_synthesis_enabled: bool = False
+    research_plan_execution_enabled: bool = False
+
+
+class ResearchPlanStepOutcome(BaseModel):
+    step_id: str
+    status: Literal["complete", "skipped"]
+    count: int | None = None
+
+
+class ResearchPlanSource(BaseModel):
+    paper_id: str
+    title: str = ""
+
+
+class ResearchPlanEvidence(BaseModel):
+    citation_id: str
+    paper_id: str | None = None
+    document_id: str | None = None
+    page_number: int | None = None
+    title: str | None = None
+    sentence: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
+
+
+class ResearchPlanExecutionResult(BaseModel):
+    kind: Literal["research_plan_execution"] = "research_plan_execution"
+    run_id: str
+    task_type: Literal["feed", "explain", "compare", "deep_research"]
+    source_scope: ResearchPlanScope
+    steps: list[ResearchPlanStepOutcome] = Field(default_factory=list)
+    sources: list[ResearchPlanSource] = Field(default_factory=list)
+    evidence: list[ResearchPlanEvidence] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    comparison: list["ComparisonRow"] = Field(default_factory=list)
+    synthesis: list["SynthesisClaim"] = Field(default_factory=list)
+    cost_tracking_available: Literal[False] = False
+    estimated_cost_usd: None = None
 
 
 class ResearchAnswer(BaseModel):
