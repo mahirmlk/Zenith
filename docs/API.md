@@ -124,7 +124,7 @@ All routes below require a user JWT.
 |---|---|
 | `POST /api/retrieval/search` | Hybrid keyword ranking; optional `project_id` restricts results to papers and uploaded PDF pages in an accessible project |
 | `POST /api/research/plan` | Deterministic task classification (`feed`, `explain`, `compare`, `deep_research`) |
-| `POST /api/research/compare` | Comparison rows for retrieved papers; optional `project_id` is owner/member authorized and source-scoped |
+| `POST /api/research/compare` | Heuristic comparison rows plus exact PDF page evidence for an authorized project; global requests stay PDF-free |
 | `POST /api/research/answer` | Extractive answer: returns exact matching abstract sentences, and for project requests exact PDF page sentences with document/page citations; abstains when no sentence matches |
 | `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
 
@@ -144,10 +144,14 @@ response is capped at five evidence spans. It does not generate a cross-paper
 synthesis. Outsiders receive `404` for inaccessible projects; only attached
 papers and documents belonging to the accessible project are considered.
 
-The answer and evidence-map endpoints perform keyword overlap selection. For a
-project request, the answer checks up to 10 project documents/500 page rows and
-returns at most five combined abstract/PDF claims; without `project_id`, it
-remains abstract-only. Project-scoped general retrieval also ranks exact
+The answer, evidence-map, and comparison endpoints perform keyword overlap
+selection. For a project request, the answer checks up to 10 project
+documents/500 page rows and returns at most five combined abstract/PDF claims;
+without `project_id`, it remains abstract-only. Project comparisons preserve
+their abstract-derived structured rows and include up to five separately cited
+exact PDF page spans as source context; PDF sentences are not inferred into
+comparison dimensions. Global comparisons never query project PDF tables.
+Project-scoped general retrieval also ranks exact
 matching PDF page sentences with attached-paper results, returns at most the
 requested result limit, and gives each PDF result a stable
 `document_id:page:N` citation and page-local offsets. It reads at most 10

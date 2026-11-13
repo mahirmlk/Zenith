@@ -981,6 +981,15 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [x] PDF results contain one exact matching sentence per page, stable `document_id:page:N` citation IDs, verified page-local offsets, and a discriminated `source_type`; BM25 scores are calculated across the combined result corpus. Paper responses now select an explicit metadata field allowlist instead of returning embedding vectors.
 - [x] Project UI renders mixed paper/PDF search results with offsets and citations. No LLM summary is added; PDFs remain untrusted source text and matching injection-like sentences are filtered.
 - [x] Regression coverage verifies authorized member scope, outsider/deleted-project rejection before PDF reads, PDF-only projects, global-search exclusion, exact spans, deterministic mixed-source ranking, read caps, result limits, and UI citations. Local validation: backend full suite 227 passed / 6 skipped; focused retrieval 11/11; frontend 40 tests across 8 files with lint/typecheck/build passing; Ruff passed; strict mypy passed for 73 files.
-- [ ] Public retrieval remains public-metadata-only by design; project comparison still uses paper abstracts only. OCR, cross-paper synthesis/claim verification, and staging RLS/operational gates remain open.
+- [ ] Public retrieval remains public-metadata-only by design; comparison dimensions still use paper abstracts, with PDF spans returned separately as source evidence. OCR, cross-paper synthesis/claim verification, and staging RLS/operational gates remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the full release gates.
+
+### §24.11 PDF evidence in project comparisons (2026-11-13)
+
+- [x] Project comparisons now return up to five exact, injection-filtered PDF page spans after the existing membership/deleted-project authorization check. Structured comparison rows remain abstract-derived; PDF sentences are returned separately with stable citations and page-local offsets, not interpreted into comparison dimensions.
+- [x] Global comparisons return an empty PDF evidence list and never query project-document tables. PDF-only projects can return useful evidence even when there are no paper comparison rows.
+- [x] Added backend coverage for project member access, PDF-only comparisons, exact citations/offsets, instruction filtering, bounded page/document reads, deleted/outsider denial, and global comparison exclusion; frontend renders the evidence next to comparison results. Local verification: backend suite 230 passed / 6 skipped; research route tests 26/26; frontend 40 tests across 8 files, lint, typecheck, and production build pass; Ruff and strict mypy pass for 73 files.
+- [ ] PDF comparison quality is not in the standalone eval corpus; OCR, cross-paper synthesis/claim verification, expanded watch targets, and all staging/CI/operational gates remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
