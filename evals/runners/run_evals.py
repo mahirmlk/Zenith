@@ -8,18 +8,24 @@ import json
 import pathlib
 import re
 import sys
+import asyncio
+from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DATASET = ROOT / "evals" / "datasets" / "grounded_qa_v3.jsonl"
 DATASET_VERSION = "grounded_qa_v3"
 PDF_DATASET = ROOT / "evals" / "datasets" / "pdf_evidence_v1.jsonl"
 PDF_DATASET_VERSION = "pdf_evidence_v1"
+SYNTHESIS_DATASET = ROOT / "evals" / "datasets" / "cross_paper_synthesis_v1.jsonl"
+SYNTHESIS_DATASET_VERSION = "cross_paper_synthesis_v1"
 TOP_K = 5
 sys.path.insert(0, str(ROOT / "backend"))
 
 from routers.research import _extractive_claims, _extractive_pdf_evidence  # noqa: E402
 from security.output_validation import validate_citations  # noqa: E402
 from services.retrieval import hybrid_rank  # noqa: E402
+from services import synthesis  # noqa: E402
+from agents.research_types import SynthesisEvidenceItem  # noqa: E402
 
 
 def _claims_by_citation(claims: list[str]) -> list[tuple[str, str]]:
@@ -146,6 +152,45 @@ def evaluate_pdf_case(case: dict) -> dict:
     }
 
 
+async def evaluate_synthesis_case(case: dict) -> dict:
+    class FixtureLLM:
+        def __init__(self, responses: list[str]) -> None:
+            self.responses = list(responses)
+
+        async def ainvoke(self, _messages):
+            return SimpleNamespace(content=self.responses.pop(0))
+
+    evidence = [SynthesisEvidenceItem.model_validate(item) for item in case["evidence"]]
+    llm = FixtureLLM(case["provider_responses"])
+    original_get_llm = synthesis.get_llm
+    synthesis.get_llm = lambda **_kwargs: llm
+    try:
+        try:
+            claims = await synthesis.synthesize_claims(case["query"], evidence)
+            invalid_output_rejected = False
+        except synthesis.SynthesisOutputError:
+            claims = []
+            invalid_output_rejected = True
+    finally:
+        synthesis.get_llm = original_get_llm
+
+    expected = case["expected"]
+    statuses = [claim.status for claim in claims]
+    allowed_ids = {item.evidence_id for item in evidence}
+    citations_valid = all(
+        evidence_id in allowed_ids
+        for claim in claims
+        for evidence_id in claim.cited_evidence_ids
+    )
+    checks = {
+        "statuses": statuses == expected.get("statuses", []),
+        "citations_valid": citations_valid,
+        "invalid_output_rejected": invalid_output_rejected == expected.get("reject_invalid", False),
+        "provider_calls_bounded": len(case["provider_responses"]) - len(llm.responses) <= 2,
+    }
+    return {"id": case["id"], "passed": all(checks.values()), "checks": checks, "statuses": statuses}
+
+
 def main() -> int:
     cases = [json.loads(line) for line in DATASET.read_text(encoding="utf-8").splitlines() if line.strip()]
     pdf_cases = [
@@ -153,11 +198,19 @@ def main() -> int:
         for line in PDF_DATASET.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    synthesis_cases = [
+        json.loads(line)
+        for line in SYNTHESIS_DATASET.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if len(cases) < 10:
         print(f"FAIL {DATASET_VERSION}: expected at least 10 cases, found {len(cases)}")
         return 1
     if len(pdf_cases) < 5:
         print(f"FAIL {PDF_DATASET_VERSION}: expected at least 5 cases, found {len(pdf_cases)}")
+        return 1
+    if len(synthesis_cases) < 3:
+        print(f"FAIL {SYNTHESIS_DATASET_VERSION}: expected at least 3 cases, found {len(synthesis_cases)}")
         return 1
 
     results = []
@@ -180,6 +233,17 @@ def main() -> int:
         label = "PASS" if result["passed"] else "FAIL"
         print(
             f"{label} {result['id']} pdf_citations={result['citations']}"
+            + (f" failed={','.join(failed_checks)}" if failed_checks else "")
+        )
+
+    synthesis_results = []
+    for case in synthesis_cases:
+        result = asyncio.run(evaluate_synthesis_case(case))
+        synthesis_results.append(result)
+        failed_checks = [name for name, passed in result["checks"].items() if not passed]
+        label = "PASS" if result["passed"] else "FAIL"
+        print(
+            f"{label} {result['id']} synthesis_statuses={result['statuses']}"
             + (f" failed={','.join(failed_checks)}" if failed_checks else "")
         )
 
@@ -225,6 +289,7 @@ def main() -> int:
 
     failures = sum(not result["passed"] for result in results)
     pdf_failures = sum(not result["passed"] for result in pdf_results)
+    synthesis_failures = sum(not result["passed"] for result in synthesis_results)
     failed_metrics = [name for name, value in metrics.items() if value < thresholds[name]]
     if failed_metrics:
         print(f"FAILED METRIC GATES: {', '.join(failed_metrics)}")
@@ -248,7 +313,11 @@ def main() -> int:
         f"{PDF_DATASET_VERSION}: {len(pdf_results)} cases, "
         f"{len(pdf_results) - pdf_failures} passed, {pdf_failures} failed"
     )
-    return 1 if failures or failed_metrics or pdf_failures or pdf_failed_metrics or not fabricated_rejected else 0
+    print(
+        f"{SYNTHESIS_DATASET_VERSION}: {len(synthesis_results)} cases, "
+        f"{len(synthesis_results) - synthesis_failures} passed, {synthesis_failures} failed"
+    )
+    return 1 if failures or failed_metrics or pdf_failures or pdf_failed_metrics or synthesis_failures or not fabricated_rejected else 0
 
 
 if __name__ == "__main__":

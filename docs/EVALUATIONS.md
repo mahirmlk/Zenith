@@ -47,12 +47,15 @@ Current local baseline on 2026-11-13:
 | Paper abstention, citation, exact support, coverage, Recall@5, MRR@5 | 1.000 each |
 | `pdf_evidence_v1` | 6 / 6 pass |
 | PDF citation accuracy, exact span rate, abstention, forbidden-text safety | 1.000 each |
+| `cross_paper_synthesis_v1` mocked-provider contract cases | 3 / 3 pass |
 | Fabricated-citation negative control | Pass |
 
 The gate passes after BM25 ignores common question terms, claim selection requires substantive overlap and relevant query entities, and instruction-like abstract sentences are excluded. Do not weaken these cases. The corpus remains small and hand-authored, so passing it is a regression check rather than a broad research-quality result.
 
 ## What this suite does not prove
 
-This is a deterministic regression gate, not a broad research-quality benchmark. The corpora are small and hand-authored; the suite does not measure scientific correctness, calibrated confidence, statistical significance, provider/model behavior, project-comparison quality, project authorization, deployed-service behavior, latency, or cost. Exact-sentence matching is appropriate for the current extractive selectors and must be supplemented with independently labeled claim-level evidence-span evaluation before generated synthesis is enabled. Add larger datasets and separate staging/human-review gates before using these results as a production quality claim.
+`cross_paper_synthesis_v1` adds three mocked-provider contract fixtures to the runner: opposing evidence remains conflicting, one-source support is downgraded to uncertain, and fabricated evidence IDs are rejected. These fixtures exercise deterministic service validation, not live model behavior or scientific correctness.
+
+This is a deterministic regression gate, not a broad research-quality benchmark. The corpora are small and hand-authored; the suite does not measure scientific correctness, calibrated confidence, statistical significance, provider/model behavior, project-comparison quality, project authorization, deployed-service behavior, latency, or cost. Exact-sentence matching is appropriate for the extractive selectors. Synthesis needs independently labeled claim-level evidence-span evaluation, blinded domain-expert review, and staging/provider validation before production use. Add larger datasets and separate staging/human-review gates before using these results as a production quality claim.
 
 See [STATUS.md](STATUS.md) for remaining release blockers and current local validation.
