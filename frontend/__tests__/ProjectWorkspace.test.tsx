@@ -106,6 +106,24 @@ describe('ProjectWorkspacePage', () => {
           rows: [{ paper_id: 'paper-1', problem: 'A useful project paper.', methods: null, datasets: null, metrics: null, limitations: null, code_status: 'unverified' }],
           pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the comparison benchmark.', start_offset: 10, end_offset: 50 }],
         };
+      } else if (url.pathname === '/api/research/synthesize' && method === 'POST') {
+        body = {
+          query: 'diffusion recall',
+          claims: [{
+            text: 'The studies report different recall outcomes.',
+            status: 'conflicting',
+            supporting_evidence_ids: ['E1'],
+            contradicting_evidence_ids: ['E2'],
+            cited_evidence_ids: ['E1', 'E2'],
+            explanation: 'The cited abstracts report opposite directions.',
+          }],
+          evidence: [
+            { evidence_id: 'E1', paper_id: 'paper-1', title: 'Study A', sentence: 'Study A reports increased recall.', start_offset: 0, end_offset: 35 },
+            { evidence_id: 'E2', paper_id: 'paper-2', title: 'Study B', sentence: 'Study B reports decreased recall.', start_offset: 0, end_offset: 35 },
+          ],
+          abstained: false,
+          explanation: 'Model reviewed public abstract evidence; not independently verified.',
+        };
       } else if (url.pathname === '/api/research/answer' && method === 'POST') {
         body = {
           summary: 'Extractive evidence from a project PDF.',
@@ -185,6 +203,14 @@ describe('ProjectWorkspacePage', () => {
     expect(await screen.findByText('“The PDF reports the comparison benchmark.”')).toBeInTheDocument();
     expect(screen.getByText('[document-1:page:4] · page offsets 10–50')).toBeInTheDocument();
     expect(screen.getByText('PDF source evidence · extractive, not synthesized')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Synthesize' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'diffusion recall' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('The studies report different recall outcomes.')).toBeInTheDocument();
+    expect(screen.getByText('Conflicting source findings')).toBeInTheDocument();
+    expect(screen.getByText('Study A · paper-1 · abstract offsets 0–35')).toBeInTheDocument();
+    expect(screen.getByText('Provider assessments are provisional and are not independent scientific verification.')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();

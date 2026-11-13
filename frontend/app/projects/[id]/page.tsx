@@ -122,6 +122,28 @@ interface ProjectSearchResponse {
   results: ProjectSearchResult[];
 }
 
+interface SynthesisResponse {
+  query: string;
+  claims: {
+    text: string;
+    status: 'supported' | 'conflicting' | 'uncertain';
+    supporting_evidence_ids: string[];
+    contradicting_evidence_ids: string[];
+    cited_evidence_ids: string[];
+    explanation: string;
+  }[];
+  evidence: {
+    evidence_id: string;
+    paper_id: string;
+    title: string;
+    sentence: string;
+    start_offset: number;
+    end_offset: number;
+  }[];
+  abstained: boolean;
+  explanation: string;
+}
+
 interface ProjectDocument {
   id: string;
   filename: string;
@@ -142,8 +164,8 @@ interface ProjectDocumentPages {
   pages: ProjectDocumentPage[];
 }
 
-type ResearchMode = 'search' | 'evidence' | 'answer' | 'compare';
-type ResearchResponse = EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse;
+type ResearchMode = 'search' | 'evidence' | 'answer' | 'compare' | 'synthesize';
+type ResearchResponse = EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse | SynthesisResponse;
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getJWT();
@@ -175,11 +197,15 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function isEvidenceResponse(value: ResearchResponse): value is EvidenceResponse {
-  return 'evidence' in value;
+  return 'evidence' in value && !('claims' in value);
 }
 
 function isAnswerResponse(value: ResearchResponse): value is AnswerResponse {
-  return 'claims' in value;
+  return 'claims' in value && !('evidence' in value);
+}
+
+function isSynthesisResponse(value: ResearchResponse): value is SynthesisResponse {
+  return 'claims' in value && 'evidence' in value;
 }
 
 function isComparisonResponse(value: ResearchResponse): value is ComparisonResponse {
@@ -474,7 +500,7 @@ export default function ProjectWorkspacePage() {
           </div>
 
           <div className="mb-4 rounded-xl border border-zenith-border bg-zenith-surface/60 p-4 text-sm leading-6 text-zenith-body">
-            Project search, answers, evidence maps, and comparisons can use exact sentences from up to 10 uploaded PDFs/500 pages. Comparison columns remain heuristic abstract matches; PDF spans are separate cited source evidence. Public search and comparisons without a project use paper metadata/abstracts, and no cross-paper synthesis is generated.
+            Project search, answers, evidence maps, and comparisons can use exact sentences from up to 10 uploaded PDFs/500 pages. Synthesis uses attached papers&apos; public abstracts only; uploaded private PDF text is never sent to an LLM provider. Model-reviewed claims remain provisional and cite their exact source sentences.
           </div>
 
           <form onSubmit={handleResearchSubmit} className="space-y-4">
@@ -486,6 +512,7 @@ export default function ProjectWorkspacePage() {
                   ['evidence', 'Evidence map'],
                   ['answer', 'Answer'],
                   ['compare', 'Compare'],
+                  ['synthesize', 'Synthesize'],
                 ] as const).map(([mode, label]) => (
                   <button
                     key={mode}
@@ -511,7 +538,7 @@ export default function ProjectWorkspacePage() {
               required
             />
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-zenith-muted">Results quote abstracts; they are not scientific synthesis.</p>
+              <p className="text-xs text-zenith-muted">{researchMode === 'synthesize' ? 'Uses at most six public abstract sentences and two bounded model calls; PDF text is excluded.' : 'Results quote abstracts; they are not scientific synthesis.'}</p>
               <button type="submit" disabled={research.isPending || !researchQuery.trim()} className="rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-50">
                 {research.isPending ? 'Searching…' : 'Run research'}
               </button>
@@ -541,6 +568,32 @@ export default function ProjectWorkspacePage() {
                     </article>
                   ))}
                   {result.abstained && <p className="rounded-lg bg-zenith-surface p-3 text-sm text-zenith-muted">No matching abstract or PDF page evidence was found. Attach papers or upload a text-based PDF, then try a more specific query.</p>}
+                </div>
+              )}
+              {isSynthesisResponse(result) && (
+                <div className="space-y-3">
+                  <p className="text-sm leading-6 text-zenith-body">{result.explanation}</p>
+                  {result.abstained && <p className="rounded-lg bg-zenith-surface p-3 text-sm text-zenith-muted">No cross-paper claim met the source and review requirements. {result.evidence.length < 2 ? 'Attach relevant papers with matching evidence.' : ''}</p>}
+                  {result.claims.map((claim, index) => {
+                    const statusLabel = claim.status === 'supported' ? 'Model-reviewed support' : claim.status === 'conflicting' ? 'Conflicting source findings' : 'Uncertain support';
+                    const cited = result.evidence.filter((item) => claim.cited_evidence_ids.includes(item.evidence_id));
+                    return (
+                      <article key={`${index}:${claim.text}`} className="rounded-xl border border-zenith-border bg-white p-4">
+                        <p className="font-mono text-[10px] uppercase tracking-wide text-zenith-secondary">{statusLabel}</p>
+                        <p className="mt-2 text-sm leading-6 text-ink-900">{claim.text}</p>
+                        {claim.explanation && <p className="mt-2 text-xs leading-5 text-zenith-muted">{claim.explanation}</p>}
+                        <ul className="mt-3 space-y-2">
+                          {cited.map((item) => (
+                            <li key={item.evidence_id} className="border-l-2 border-zenith-secondary/60 pl-3">
+                              <blockquote className="text-xs leading-5 text-zenith-body">“{item.sentence}”</blockquote>
+                              <p className="mt-1 font-mono text-[10px] text-zenith-muted">{item.title || item.paper_id} · {item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    );
+                  })}
+                  {!result.abstained && <p className="text-xs text-zenith-muted">Provider assessments are provisional and are not independent scientific verification.</p>}
                 </div>
               )}
               {isAnswerResponse(result) && (
