@@ -20,6 +20,12 @@ labeling, weak-support downgrade, citation-anchor rejection, and bounded calls.
 These fixtures test service contracts only; they do not evaluate live provider
 behavior or scientific correctness.
 
+`research_plan_v1` adds five deterministic preview cases covering task
+classification, phrase-boundary false positives, source scope, bounded
+ceilings, feature-gated synthesis steps, and the non-executing contract. It
+does not establish that a multi-step executor exists or that the preview bounds
+constrain separate API calls.
+
 These synthetic fixtures do not establish broad PDF/page coverage, comparison
 quality, synthesis quality, deployed provider behavior, or production tenant
 isolation (covered separately by backend security tests and staging checks). No

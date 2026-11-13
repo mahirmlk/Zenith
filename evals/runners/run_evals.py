@@ -18,6 +18,8 @@ PDF_DATASET = ROOT / "evals" / "datasets" / "pdf_evidence_v1.jsonl"
 PDF_DATASET_VERSION = "pdf_evidence_v1"
 SYNTHESIS_DATASET = ROOT / "evals" / "datasets" / "cross_paper_synthesis_v1.jsonl"
 SYNTHESIS_DATASET_VERSION = "cross_paper_synthesis_v1"
+PLAN_DATASET = ROOT / "evals" / "datasets" / "research_plan_v1.jsonl"
+PLAN_DATASET_VERSION = "research_plan_v1"
 TOP_K = 5
 sys.path.insert(0, str(ROOT / "backend"))
 
@@ -26,6 +28,7 @@ from security.output_validation import validate_citations  # noqa: E402
 from services.retrieval import hybrid_rank  # noqa: E402
 from services import synthesis  # noqa: E402
 from agents.research_types import SynthesisEvidenceItem  # noqa: E402
+from services.research_planner import build_research_plan  # noqa: E402
 
 
 def _claims_by_citation(claims: list[str]) -> list[tuple[str, str]]:
@@ -191,6 +194,32 @@ async def evaluate_synthesis_case(case: dict) -> dict:
     return {"id": case["id"], "passed": all(checks.values()), "checks": checks, "statuses": statuses}
 
 
+def evaluate_plan_case(case: dict) -> dict:
+    plan = build_research_plan(
+        case["query"],
+        source_scope=case["scope"],
+        synthesis_enabled=case["synthesis_enabled"],
+    )
+    expected = case["expected"]
+    step_ids = [step.step_id for step in plan.steps]
+    checks = {
+        "task_type": plan.task_type == expected["task_type"],
+        "ordered_steps": step_ids == expected["steps"],
+        "budgets_bounded": (
+            0 <= plan.max_depth <= 2
+            and 0 <= plan.max_tool_calls <= 6
+            and 0 <= plan.max_sources <= 10
+            and 0 <= plan.max_wall_clock_seconds <= 90
+            and 0 <= plan.max_model_calls <= 2
+            and 0 <= plan.max_output_tokens <= 1800
+        ),
+        "preview_only": not plan.execution_available and plan.limits_are_preview_only,
+        "cost_not_fabricated": plan.estimated_cost_usd is None and not plan.cost_tracking_available,
+        "steps_not_executed": all(step.execution_state == "proposed" for step in plan.steps),
+    }
+    return {"id": case["id"], "passed": all(checks.values()), "checks": checks, "steps": step_ids}
+
+
 def main() -> int:
     cases = [json.loads(line) for line in DATASET.read_text(encoding="utf-8").splitlines() if line.strip()]
     pdf_cases = [
@@ -203,6 +232,11 @@ def main() -> int:
         for line in SYNTHESIS_DATASET.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    plan_cases = [
+        json.loads(line)
+        for line in PLAN_DATASET.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if len(cases) < 10:
         print(f"FAIL {DATASET_VERSION}: expected at least 10 cases, found {len(cases)}")
         return 1
@@ -211,6 +245,9 @@ def main() -> int:
         return 1
     if len(synthesis_cases) < 3:
         print(f"FAIL {SYNTHESIS_DATASET_VERSION}: expected at least 3 cases, found {len(synthesis_cases)}")
+        return 1
+    if len(plan_cases) < 5:
+        print(f"FAIL {PLAN_DATASET_VERSION}: expected at least 5 cases, found {len(plan_cases)}")
         return 1
 
     results = []
@@ -244,6 +281,17 @@ def main() -> int:
         label = "PASS" if result["passed"] else "FAIL"
         print(
             f"{label} {result['id']} synthesis_statuses={result['statuses']}"
+            + (f" failed={','.join(failed_checks)}" if failed_checks else "")
+        )
+
+    plan_results = []
+    for case in plan_cases:
+        result = evaluate_plan_case(case)
+        plan_results.append(result)
+        failed_checks = [name for name, passed in result["checks"].items() if not passed]
+        label = "PASS" if result["passed"] else "FAIL"
+        print(
+            f"{label} {result['id']} plan_steps={result['steps']}"
             + (f" failed={','.join(failed_checks)}" if failed_checks else "")
         )
 
@@ -290,6 +338,7 @@ def main() -> int:
     failures = sum(not result["passed"] for result in results)
     pdf_failures = sum(not result["passed"] for result in pdf_results)
     synthesis_failures = sum(not result["passed"] for result in synthesis_results)
+    plan_failures = sum(not result["passed"] for result in plan_results)
     failed_metrics = [name for name, value in metrics.items() if value < thresholds[name]]
     if failed_metrics:
         print(f"FAILED METRIC GATES: {', '.join(failed_metrics)}")
@@ -317,7 +366,11 @@ def main() -> int:
         f"{SYNTHESIS_DATASET_VERSION}: {len(synthesis_results)} cases, "
         f"{len(synthesis_results) - synthesis_failures} passed, {synthesis_failures} failed"
     )
-    return 1 if failures or failed_metrics or pdf_failures or pdf_failed_metrics or synthesis_failures or not fabricated_rejected else 0
+    print(
+        f"{PLAN_DATASET_VERSION}: {len(plan_results)} cases, "
+        f"{len(plan_results) - plan_failures} passed, {plan_failures} failed"
+    )
+    return 1 if failures or failed_metrics or pdf_failures or pdf_failed_metrics or synthesis_failures or plan_failures or not fabricated_rejected else 0
 
 
 if __name__ == "__main__":
