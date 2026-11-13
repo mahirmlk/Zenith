@@ -198,7 +198,7 @@ GitHub Actions run on every PR/push: lint, typecheck, tests, eval smoke, Docker 
 | Phase | Status |
 |---|---|
 | Security, guardrails, durable runs, evals | Shipped |
-| Research workspaces, hybrid retrieval | Implemented locally; synthesis is bounded and provisional, with provider and human-quality review still open |
+| Research workspaces, hybrid retrieval | Implemented locally with a non-executing plan preview; synthesis is gated and provisional, and provider/human-quality review remains open |
 | Evidence map and paper-to-code plan/export | Implemented locally; evaluation and staging verification remain |
 | Deep multi-step research planning, secure paper-code execution, integrations | Not implemented |
 | Staging release gates and production deployment | Blocked on live infrastructure and remote CI evidence |

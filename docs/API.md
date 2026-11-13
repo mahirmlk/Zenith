@@ -123,7 +123,7 @@ All routes below require a user JWT.
 | Method and path | Behavior |
 |---|---|
 | `POST /api/retrieval/search` | Hybrid keyword ranking; optional `project_id` restricts results to papers and uploaded PDF pages in an accessible project |
-| `POST /api/research/plan` | Deterministic task classification (`feed`, `explain`, `compare`, `deep_research`) |
+| `POST /api/research/plan` | Deterministic non-executing preview with typed steps and fixed tool/source/time/token bounds; project scope is membership-checked |
 | `POST /api/research/compare` | Heuristic comparison rows plus exact PDF page evidence for an authorized project; global requests stay PDF-free |
 | `POST /api/research/answer` | Extractive answer: returns exact matching abstract sentences, and for project requests exact PDF page sentences with document/page citations; abstains when no sentence matches |
 | `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
@@ -187,6 +187,16 @@ The route returns `404` while `RESEARCH_SYNTHESIS_ENABLED=false` (the default).
 `GET /api/research/capabilities` returns
 `{"research_synthesis_enabled":false}` so the frontend can hide the disabled
 mode; API-side enforcement remains authoritative.
+
+`POST /api/research/plan` returns the compatible `query`, `task_type`,
+`max_tool_calls`, and `max_sources` fields plus proposed steps, source scope,
+depth/time/model-call/output-token bounds, feature availability, and execution
+metadata. A project-scoped preview verifies membership before responding and
+does not read paper or PDF source rows. Public and project previews are
+provider-free. `execution_available` is always false and the displayed limits
+are explicitly preview-only: existing research routes enforce their own caps,
+and no multi-step plan runner currently applies these values. Dollar costs are
+not tracked, so `estimated_cost_usd` is null.
 
 ## Projects, watchlists, and notifications
 

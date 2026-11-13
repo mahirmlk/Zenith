@@ -10,6 +10,8 @@ Zenith is a research paper discovery and organization app. The current UI provid
 
 **Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. The separate `/api/research/synthesize` endpoint is disabled by default through `RESEARCH_SYNTHESIS_ENABLED`; when enabled, it drafts up to five provisional claims from at most six exact abstract sentences, then asks a second provider call to review evidence relations. An authenticated `/api/research/capabilities` response controls whether the UI exposes that mode, while the API independently enforces the flag. It returns server-validated citations and model-reviewed status labels, not independently verified scientific conclusions; private PDFs are excluded. Non-project answers, general retrieval, and comparison dimensions remain abstract/metadata based. See `docs/STATUS.md` for release blockers.
 
+`POST /api/research/plan` is a provider-free, deterministic preview. It classifies intent, returns a fixed task template and bounded suggested limits, and authorizes project scope before responding. It does not read sources or execute a plan; its limits do not constrain separate research API requests. Dollar spend is not measured.
+
 ---
 
 ## 2. High-Level Architecture

@@ -1027,3 +1027,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Keep the feature disabled in production until blinded human review, calibrated claim-level evaluation, and staging provider/budget/recovery checks pass. This flag is a rollout gate, not evidence that synthesis quality has been established.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.16 Deterministic bounded research-plan preview (2026-11-13)
+
+- [x] Replaced the keyword-only plan response with a typed, provider-free preview that preserves existing fields and adds task steps, public/project source scope, source/tool/depth/time/model/token ceilings, cost-tracking availability, and explicit non-execution metadata.
+- [x] Corrected classifier substring false positives with word-boundary intent rules and explicit precedence. Project-scoped previews authorize active project membership before returning; they do not read papers or PDF rows.
+- [x] Added project-workspace preview UI and shared TypeScript response types. The interface labels every step proposed, distinguishes `Preview plan` from `Run research`, and says current limits do not constrain separate requests. Dollar cost is shown as unmeasured.
+- [x] Added backend scope/contract tests and versioned `research_plan_v1` deterministic cases for task selection, feature-gated steps, ceilings, and false-positive queries.
+- [x] Local validation: backend 253 passed / 6 skipped; frontend 42 tests across 8 files; lint, typecheck, and production build passed; Ruff and strict mypy (75 files) passed; all eval suites passed (18 paper, 6 PDF, 3 synthesis-contract, 5 plan-preview cases).
+- [ ] The preview does not execute or enforce a multi-step workflow. Durable research-plan execution, cross-run spend metering, and broader domain/human quality review remain unimplemented; current production infrastructure gates remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
