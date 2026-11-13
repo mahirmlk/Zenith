@@ -98,6 +98,42 @@ export interface StreamEvent {
   data: AgentStep | PaperSearchResult | { message: string };
 }
 
+export type ResearchTaskType = 'feed' | 'explain' | 'compare' | 'deep_research';
+export type ResearchPlanScope = 'public_corpus' | 'project';
+export type ResearchPlanStepId =
+  | 'retrieve_sources'
+  | 'extract_evidence'
+  | 'compare_sources'
+  | 'identify_gaps'
+  | 'draft_synthesis'
+  | 'review_claims'
+  | 'synthesis_unavailable';
+
+export interface ResearchPlanStep {
+  step_id: ResearchPlanStepId;
+  title: string;
+  description: string;
+  execution_state: 'proposed';
+}
+
+export interface ResearchPlanPreview {
+  query: string;
+  task_type: ResearchTaskType;
+  max_tool_calls: number;
+  max_sources: number;
+  source_scope: ResearchPlanScope;
+  steps: ResearchPlanStep[];
+  max_depth: number;
+  max_wall_clock_seconds: number;
+  max_model_calls: number;
+  max_output_tokens: number;
+  synthesis_available: boolean;
+  estimated_cost_usd: null;
+  cost_tracking_available: false;
+  execution_available: false;
+  limits_are_preview_only: true;
+}
+
 export type LLMModel =
   | 'anthropic/claude-opus-4'
   | 'anthropic/claude-sonnet-4-5'

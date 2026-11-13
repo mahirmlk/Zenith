@@ -110,6 +110,27 @@ describe('ProjectWorkspacePage', () => {
           rows: [{ paper_id: 'paper-1', problem: 'A useful project paper.', methods: null, datasets: null, metrics: null, limitations: null, code_status: 'unverified' }],
           pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the comparison benchmark.', start_offset: 10, end_offset: 50 }],
         };
+      } else if (url.pathname === '/api/research/plan' && method === 'POST') {
+        body = {
+          query: 'compare retrieval methods',
+          task_type: 'compare',
+          max_tool_calls: 4,
+          max_sources: 10,
+          source_scope: 'project',
+          steps: [
+            { step_id: 'retrieve_sources', title: 'Find comparison sources', description: 'Rank matching paper metadata within the selected scope.', execution_state: 'proposed' },
+            { step_id: 'compare_sources', title: 'Extract comparison fields', description: 'Match available abstract sentences to comparison dimensions.', execution_state: 'proposed' },
+          ],
+          max_depth: 1,
+          max_wall_clock_seconds: 45,
+          max_model_calls: 0,
+          max_output_tokens: 0,
+          synthesis_available: false,
+          estimated_cost_usd: null,
+          cost_tracking_available: false,
+          execution_available: false,
+          limits_are_preview_only: true,
+        };
       } else if (url.pathname === '/api/research/synthesize' && method === 'POST') {
         body = {
           query: 'diffusion recall',
@@ -156,6 +177,25 @@ describe('ProjectWorkspacePage', () => {
     expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
     await waitFor(() => expect(request.mock.calls.some(([input]) => String(input).endsWith('/api/research/capabilities'))).toBe(true));
     expect(screen.queryByRole('button', { name: 'Synthesize' })).not.toBeInTheDocument();
+  });
+
+  it('previews a bounded plan without executing research', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval methods' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Preview only. This plan has not run');
+    expect(screen.getByRole('list', { name: 'Proposed research steps' })).toBeInTheDocument();
+    expect(screen.getByText('Not measured')).toBeInTheDocument();
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/api/research/plan') && init?.method === 'POST',
+    )).toBe(true));
+    expect(request.mock.calls.some(([input, init]) =>
+      init?.method === 'POST' && ['/api/research/synthesize', '/api/research/answer', '/api/research/compare'].includes(new URL(String(input)).pathname),
+    )).toBe(false);
   });
 
   it('attaches a paper, saves a note, and shows project-scoped abstract evidence', async () => {

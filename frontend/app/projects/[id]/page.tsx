@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getJWT } from '@/lib/auth';
 import { fetchProjectSources } from '@/lib/project-api';
 import { buildProjectExport, type ExportFormat, type ProjectExportNote, type ProjectExportPaper, type ProjectExportSource } from '@/lib/project-export';
+import type { ResearchPlanPreview } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -148,6 +149,8 @@ interface ResearchCapabilities {
   research_synthesis_enabled: boolean;
 }
 
+type ResearchPlanResponse = ResearchPlanPreview;
+
 interface ProjectDocument {
   id: string;
   filename: string;
@@ -168,8 +171,8 @@ interface ProjectDocumentPages {
   pages: ProjectDocumentPage[];
 }
 
-type ResearchMode = 'search' | 'evidence' | 'answer' | 'compare' | 'synthesize';
-type ResearchResponse = EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse | SynthesisResponse;
+type ResearchMode = 'search' | 'plan' | 'evidence' | 'answer' | 'compare' | 'synthesize';
+type ResearchResponse = ResearchPlanResponse | EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse | SynthesisResponse;
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getJWT();
@@ -218,6 +221,10 @@ function isComparisonResponse(value: ResearchResponse): value is ComparisonRespo
 
 function isProjectSearchResponse(value: ResearchResponse): value is ProjectSearchResponse {
   return 'results' in value;
+}
+
+function isResearchPlanResponse(value: ResearchResponse): value is ResearchPlanResponse {
+  return 'steps' in value && 'execution_available' in value;
 }
 
 function downloadProjectExport(
@@ -519,6 +526,7 @@ export default function ProjectWorkspacePage() {
               <div className="flex flex-wrap gap-2">
                 {([
                   ['search', 'Search in project'],
+                  ['plan', 'Plan'],
                   ['evidence', 'Evidence map'],
                   ['answer', 'Answer'],
                   ['compare', 'Compare'],
@@ -550,9 +558,9 @@ export default function ProjectWorkspacePage() {
               required
             />
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-zenith-muted">{researchMode === 'synthesize' ? 'Uses at most six public abstract sentences and two bounded model calls; PDF text is excluded.' : 'Results quote abstracts; they are not scientific synthesis.'}</p>
+              <p className="text-xs text-zenith-muted">{researchMode === 'plan' ? 'Preview only. No sources, providers, or tools are accessed.' : researchMode === 'synthesize' ? 'Uses at most six public abstract sentences and two bounded model calls; PDF text is excluded.' : 'Results quote abstracts; they are not scientific synthesis.'}</p>
               <button type="submit" disabled={research.isPending || !researchQuery.trim()} className="rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-50">
-                {research.isPending ? 'Searching…' : 'Run research'}
+                {research.isPending ? 'Working…' : researchMode === 'plan' ? 'Preview plan' : 'Run research'}
               </button>
             </div>
           </form>
@@ -562,6 +570,33 @@ export default function ProjectWorkspacePage() {
           {result && (
             <div className="mt-6 border-t border-zenith-border pt-5" aria-live="polite">
               <h3 className="mb-3 font-serif text-lg text-ink-900">Results</h3>
+              {isResearchPlanResponse(result) && (
+                <section aria-labelledby="research-plan-preview-heading" className="space-y-4">
+                  <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    Preview only. This plan has not run; its limits do not constrain separate research requests.
+                  </div>
+                  <div>
+                    <h4 id="research-plan-preview-heading" className="font-semibold text-ink-900">{result.task_type.replace('_', ' ')} · {result.source_scope === 'project' ? 'project sources' : 'public corpus'}</h4>
+                    <p className="mt-1 text-sm text-zenith-body">{result.query}</p>
+                  </div>
+                  <ol className="space-y-2" aria-label="Proposed research steps">
+                    {result.steps.map((step, index) => (
+                      <li key={`${index}:${step.step_id}`} className="rounded-lg border border-zenith-border bg-white p-3">
+                        <p className="text-sm font-semibold text-ink-900">{index + 1}. {step.title} <span className="font-mono text-[10px] uppercase text-zenith-muted">· proposed</span></p>
+                        <p className="mt-1 text-xs leading-5 text-zenith-body">{step.description}</p>
+                      </li>
+                    ))}
+                  </ol>
+                  <dl className="grid grid-cols-2 gap-2 rounded-lg bg-zenith-surface p-3 text-xs">
+                    <div><dt className="text-zenith-muted">Source cap</dt><dd className="font-semibold text-ink-900">{result.max_sources}</dd></div>
+                    <div><dt className="text-zenith-muted">Tool calls</dt><dd className="font-semibold text-ink-900">{result.max_tool_calls}</dd></div>
+                    <div><dt className="text-zenith-muted">Model calls</dt><dd className="font-semibold text-ink-900">{result.max_model_calls}</dd></div>
+                    <div><dt className="text-zenith-muted">Time ceiling</dt><dd className="font-semibold text-ink-900">{result.max_wall_clock_seconds}s</dd></div>
+                    <div><dt className="text-zenith-muted">Output token cap</dt><dd className="font-semibold text-ink-900">{result.max_output_tokens}</dd></div>
+                    <div><dt className="text-zenith-muted">Dollar cost</dt><dd className="font-semibold text-ink-900">Not measured</dd></div>
+                  </dl>
+                </section>
+              )}
               {isEvidenceResponse(result) && (
                 <div className="space-y-3">
                   <p className="text-sm text-zenith-body">{result.explanation}</p>
