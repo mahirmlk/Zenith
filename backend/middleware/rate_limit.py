@@ -35,6 +35,10 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
             route.endpoint = limiter.exempt(route.endpoint)  # type: ignore[no-untyped-call]
         elif route.path == "/api/auth/token":
             route.endpoint = limiter.limit("5/minute")(route.endpoint)
+        elif route.path.startswith("/api/projects/") and "/invitations" in route.path and route.methods and "POST" in route.methods:
+            route.endpoint = limiter.limit("5/minute")(route.endpoint)
+        elif route.path.startswith("/api/project-invitations/") and route.methods and "POST" in route.methods:
+            route.endpoint = limiter.limit("10/minute")(route.endpoint)
         elif (
             route.path.startswith("/api/papers")
             and route.methods

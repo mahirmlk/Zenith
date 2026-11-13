@@ -93,3 +93,25 @@ def test_project_pdf_page_migration_is_scoped_and_page_bounded():
     assert "public.can_write_project(project_id)" in normalized
     assert "page_number integer not null check (page_number between 1 and 500)" in normalized
     assert "char_length(text) <= 100000" in normalized
+
+
+def test_project_email_invitation_migration_is_atomic_and_service_only():
+    migration = (ROOT / "supabase" / "migrations" / "0014_project_email_invitations.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "create table if not exists public.project_invitations" in normalized
+    assert "on public.project_invitations (normalized_email)" in normalized
+    assert "on public.project_invitations (project_id, normalized_email)" not in normalized
+    assert "alter table public.project_invitations enable row level security" in normalized
+    assert "for select to authenticated" in normalized
+    assert "public.is_project_owner(project_id)" in normalized
+    assert "revoke all on public.project_invitations from public, anon" in normalized
+    assert "revoke insert, update, delete on public.project_invitations from authenticated" in normalized
+    assert "security definer" in normalized and "set search_path = ''" in normalized
+    assert "u.email_confirmed_at" in normalized
+    assert "v_user_email <> v_invitation.normalized_email" in normalized
+    assert "p.deleted_at is null" in normalized
+    assert "on conflict (project_id, user_id)" in normalized
+    assert "do nothing returning role into v_member_role" in normalized
+    assert "select pm.role into v_member_role" in normalized
+    assert "do update set role = excluded.role" not in normalized
+    assert "grant execute on function public.accept_project_invitation(uuid, uuid) to service_role" in normalized
