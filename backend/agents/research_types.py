@@ -4,12 +4,41 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+ResearchPlanStepId = Literal[
+    "retrieve_sources",
+    "extract_evidence",
+    "compare_sources",
+    "identify_gaps",
+    "draft_synthesis",
+    "review_claims",
+    "synthesis_unavailable",
+]
+ResearchPlanScope = Literal["public_corpus", "project"]
+
+
+class ResearchPlanStep(BaseModel):
+    step_id: ResearchPlanStepId
+    title: str
+    description: str
+    execution_state: Literal["proposed"] = "proposed"
+
 
 class ResearchPlan(BaseModel):
     query: str
     task_type: Literal["feed", "explain", "compare", "deep_research"] = "feed"
     max_tool_calls: int = Field(default=10, ge=1, le=50)
     max_sources: int = Field(default=10, ge=1, le=50)
+    source_scope: ResearchPlanScope = "public_corpus"
+    steps: list[ResearchPlanStep] = Field(default_factory=list)
+    max_depth: int = Field(default=1, ge=0, le=2)
+    max_wall_clock_seconds: int = Field(default=30, ge=1, le=90)
+    max_model_calls: int = Field(default=0, ge=0, le=2)
+    max_output_tokens: int = Field(default=0, ge=0, le=1800)
+    synthesis_available: bool = False
+    estimated_cost_usd: None = None
+    cost_tracking_available: bool = False
+    execution_available: bool = False
+    limits_are_preview_only: bool = True
 
 
 class SourceCandidate(BaseModel):
@@ -116,13 +145,13 @@ class ResearchAnswer(BaseModel):
 
 def classify_task(query: str) -> ResearchPlan:
     """Deterministic routing (update.md §9.1): planner only for complex tasks."""
-    q = (query or "").lower()
+    q = re.sub(r"\s+", " ", (query or "").strip().casefold())
     task: Literal["feed", "explain", "compare", "deep_research"]
-    if any(w in q for w in ("compare", "comparison", "vs", "versus", "difference between")):
+    if re.search(r"\b(?:compare|comparison|comparative|versus|vs\.?|differences? between)\b", q):
         task = "compare"
-    elif any(w in q for w in ("explain", "what is", "how does", "summarize", "summarise")):
+    elif re.search(r"\b(?:explain|what is|what are|how does|how do|summari[sz]e)\b", q):
         task = "explain"
-    elif any(w in q for w in ("deep", "survey", "literature", "state of the art", "sota")):
+    elif re.search(r"\b(?:deep research|survey|literature review|state of the art|sota)\b", q):
         task = "deep_research"
     else:
         task = "feed"

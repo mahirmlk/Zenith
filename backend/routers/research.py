@@ -15,12 +15,13 @@ from agents.research_types import (
     EvidenceMapResponse,
     PdfEvidenceItem,
     ResearchCapabilities,
+    ResearchPlan,
+    ResearchPlanScope,
     ResearchComparisonResponse,
     ResearchSynthesisResponse,
     SynthesisEvidenceItem,
     ResearchAnswer,
     build_comparison,
-    classify_task,
 )
 from dependencies import get_current_user
 from config import get_settings
@@ -29,6 +30,7 @@ from security.output_validation import validate_citations
 from services.retrieval import hybrid_rank, query_entities, query_terms
 from services.supabase_client import get_supabase
 from services.synthesis import SynthesisOutputError, SynthesisProviderError, synthesize_claims
+from services.research_planner import build_research_plan
 from security.prompt_injection import scan_untrusted
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,39 @@ async def research_capabilities(
         research_synthesis_enabled=get_settings().research_synthesis_enabled
     )
 
+
+async def _require_project_access(
+    project_id: str,
+    user: dict[str, Any],
+    supabase: Any,
+) -> dict[str, Any]:
+    project_result = await (
+        supabase.table("projects")
+        .select("owner_id")
+        .eq("id", project_id)
+        .is_("deleted_at", "null")
+        .maybe_single()
+        .execute()
+    )
+    project = project_result.data
+    if not isinstance(project, dict):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    member_result = await (
+        supabase.table("project_members")
+        .select("user_id,role")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    member_roles = {
+        row["user_id"]: row["role"]
+        for row in (member_result.data or [])
+        if row.get("user_id") and row.get("role")
+    }
+    if not can_access_project(project.get("owner_id", ""), member_roles, user["user_id"]):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
     project_id: str | None = None
@@ -57,13 +92,28 @@ class ProjectEvidenceMapRequest(ResearchRequest):
     project_id: str = Field(..., min_length=1, max_length=128)
 
 
-@router.post("/plan")
+@router.post("/plan", response_model=ResearchPlan)
 async def research_plan(
     body: ResearchRequest,
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-) -> Any:
-    return classify_task(body.query)
+    supabase: Any = Depends(get_supabase),
+) -> ResearchPlan:
+    try:
+        source_scope: ResearchPlanScope = "public_corpus"
+        if body.project_id:
+            await _require_project_access(body.project_id, user, supabase)
+            source_scope = "project"
+        return build_research_plan(
+            body.query,
+            source_scope=source_scope,
+            synthesis_enabled=get_settings().research_synthesis_enabled,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("research_plan failed")
+        raise HTTPException(status_code=500, detail="Research plan unavailable") from exc
 
 
 def _paper_rows(data: object) -> list[dict[str, Any]]:
@@ -85,33 +135,7 @@ async def _papers_for_request(
     """Load a bounded public corpus or only papers attached to an accessible project."""
     query = supabase.table("papers").select("id,title,abstract")
     if body.project_id:
-        project_result = await (
-            supabase.table("projects")
-            .select("owner_id")
-            .eq("id", body.project_id)
-            .is_("deleted_at", "null")
-            .maybe_single()
-            .execute()
-        )
-        project = project_result.data
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        member_result = await (
-            supabase.table("project_members")
-            .select("user_id,role")
-            .eq("project_id", body.project_id)
-            .execute()
-        )
-        member_roles = {
-            row["user_id"]: row["role"]
-            for row in (member_result.data or [])
-            if row.get("user_id") and row.get("role")
-        }
-        if not can_access_project(project.get("owner_id", ""), member_roles, user["user_id"]):
-            # Do not disclose whether another user's project exists.
-            raise HTTPException(status_code=404, detail="Project not found")
-
+        await _require_project_access(body.project_id, user, supabase)
         source_result = await (
             supabase.table("project_sources")
             .select("paper_id")

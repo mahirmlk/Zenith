@@ -14,6 +14,7 @@ from routers.research import (
     research_compare,
     research_evidence_map,
     research_capabilities,
+    research_plan,
     research_synthesize,
 )
 from services.retrieval import hybrid_rank
@@ -28,6 +29,7 @@ class FakeSupabase:
         self.documents = documents or []
         self.pages = pages or []
         self.range_calls = []
+        self.executed_tables = []
 
     def table(self, name):
         return FakeQuery(self, name)
@@ -78,6 +80,7 @@ class FakeQuery:
         return self
 
     async def execute(self):
+        self.db.executed_tables.append(self.name)
         if self.name == "projects":
             data = self.db.project
             if data and any(data.get(key) is not None for key in self.require_null):
@@ -115,6 +118,84 @@ def test_classify_deep():
 
 def test_classify_feed_default():
     assert classify_task("new papers on diffusion").task_type == "feed"
+
+
+@pytest.mark.asyncio
+async def test_public_research_plan_is_a_provider_free_preview(monkeypatch):
+    supabase = FakeSupabase()
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    result = await research_plan(
+        ResearchRequest(query="compare retrieval methods"),
+        object(),
+        {"user_id": "reader"},
+        supabase,
+    )
+
+    assert result.task_type == "compare"
+    assert result.source_scope == "public_corpus"
+    assert result.execution_available is False
+    assert result.limits_are_preview_only is True
+    assert supabase.executed_tables == []
+
+
+@pytest.mark.asyncio
+async def test_research_plan_ignores_client_budget_overrides(monkeypatch):
+    supabase = FakeSupabase()
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    result = await research_plan(
+        ResearchRequest.model_validate({
+            "query": "compare retrieval methods",
+            "max_tool_calls": 50,
+            "max_sources": 500,
+        }),
+        object(),
+        {"user_id": "reader"},
+        supabase,
+    )
+
+    assert result.max_tool_calls == 4
+    assert result.max_sources == 10
+
+
+@pytest.mark.asyncio
+async def test_project_research_plan_authorizes_scope_before_returning_preview(monkeypatch):
+    supabase = FakeSupabase(
+        project={"owner_id": "owner"},
+        members=[{"project_id": "proj", "user_id": "member", "role": "viewer"}],
+    )
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    result = await research_plan(
+        ResearchRequest(query="deep survey of retrieval", project_id="proj"),
+        object(),
+        {"user_id": "member"},
+        supabase,
+    )
+
+    assert result.source_scope == "project"
+    assert supabase.executed_tables == ["projects", "project_members"]
+
+
+@pytest.mark.asyncio
+async def test_project_research_plan_hides_unauthorized_project_before_source_reads(monkeypatch):
+    supabase = FakeSupabase(
+        project={"owner_id": "owner"},
+        members=[{"project_id": "proj", "user_id": "member", "role": "viewer"}],
+    )
+    monkeypatch.setattr("routers.research.get_settings", Settings)
+
+    with pytest.raises(HTTPException) as error:
+        await research_plan(
+            ResearchRequest(query="compare methods", project_id="proj"),
+            object(),
+            {"user_id": "outsider"},
+            supabase,
+        )
+
+    assert error.value.status_code == 404
+    assert supabase.executed_tables == ["projects", "project_members"]
 
 
 def test_build_comparison_marks_code_unverified():
