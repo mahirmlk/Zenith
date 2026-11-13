@@ -17,6 +17,7 @@ describe('ProjectWorkspacePage', () => {
   let pageExtractionMethods: ('native' | 'ocr' | 'empty' | 'ocr_limit')[];
   let currentRole: 'owner' | 'editor' | 'viewer';
   let synthesisEnabled: boolean;
+  let planExecutionAvailable: boolean;
   let request: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -28,6 +29,7 @@ describe('ProjectWorkspacePage', () => {
     pageExtractionMethods = ['native'];
     currentRole = 'owner';
     synthesisEnabled = true;
+    planExecutionAvailable = false;
     request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
@@ -35,6 +37,8 @@ describe('ProjectWorkspacePage', () => {
 
       if (url.pathname === '/api/research/capabilities' && method === 'GET') {
         body = { research_synthesis_enabled: synthesisEnabled };
+      } else if (url.pathname === '/api/research/execute' && method === 'POST') {
+        body = { run_id: 'plan-run-1' };
       } else if (url.pathname === '/api/projects/project-1' && method === 'GET') {
         body = { id: 'project-1', owner_id: 'user-1', title: 'Alpha Project', description: 'A research workspace', current_role: currentRole };
       } else if (url.pathname === '/api/projects/project-1/notes' && method === 'GET') {
@@ -136,8 +140,8 @@ describe('ProjectWorkspacePage', () => {
           synthesis_available: false,
           estimated_cost_usd: null,
           cost_tracking_available: false,
-          execution_available: false,
-          limits_are_preview_only: true,
+          execution_available: planExecutionAvailable,
+          limits_are_preview_only: !planExecutionAvailable,
         };
       } else if (url.pathname === '/api/research/synthesize' && method === 'POST') {
         body = {
@@ -198,12 +202,39 @@ describe('ProjectWorkspacePage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Preview only. This plan has not run');
     expect(screen.getByRole('list', { name: 'Proposed research steps' })).toBeInTheDocument();
     expect(screen.getByText('Not measured')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Execute plan' })).not.toBeInTheDocument();
     await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
       String(input).endsWith('/api/research/plan') && init?.method === 'POST',
     )).toBe(true));
     expect(request.mock.calls.some(([input, init]) =>
       init?.method === 'POST' && ['/api/research/synthesize', '/api/research/answer', '/api/research/compare'].includes(new URL(String(input)).pathname),
     )).toBe(false);
+  });
+
+  it('offers execution only when the preview enables it and starts the selected project query', async () => {
+    planExecutionAvailable = true;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval methods' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+    const executeButton = await screen.findByRole('button', { name: 'Execute plan' });
+    expect(screen.getByRole('status')).toHaveTextContent('Preview only. This plan has not run');
+    fireEvent.click(executeButton);
+
+    expect(await screen.findByRole('heading', { name: 'Plan execution' })).toBeInTheDocument();
+    await waitFor(() => {
+      const executeRequest = request.mock.calls.find(([input, init]) =>
+        new URL(String(input)).pathname === '/api/research/execute' && init?.method === 'POST',
+      );
+      expect(executeRequest).toBeDefined();
+      expect(JSON.parse(String(executeRequest?.[1]?.body))).toEqual({ query: 'compare retrieval methods', project_id: 'project-1' });
+      expect(executeRequest?.[1]?.headers).toEqual(expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
+    });
+    expect(request.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname === '/api/research/execute' && init?.method === 'POST',
+    )).toBe(true);
   });
 
   it('attaches a paper, saves a note, and shows project-scoped abstract evidence', async () => {

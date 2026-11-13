@@ -94,8 +94,64 @@ export interface AgentStep {
 }
 
 export interface StreamEvent {
-  event: 'agent_step' | 'result' | 'error';
-  data: AgentStep | PaperSearchResult | { message: string };
+  event: 'agent_step' | 'result' | 'error' | 'cancelled';
+  data: AgentStep | PaperSearchResult | ResearchPlanExecutionResult | { message: string } | ResearchRunCancelledEvent;
+}
+
+export interface ResearchRunCancelledEvent {
+  run_id: string;
+  status: 'cancelled';
+}
+
+export interface ResearchPlanExecutionStep {
+  step_id: ResearchPlanStepId;
+  status: string;
+  count?: number;
+}
+
+export interface ResearchPlanExecutionEvidence {
+  citation_id: string;
+  paper_id?: string;
+  document_id?: string;
+  page_number?: number;
+  title?: string;
+  sentence: string;
+  start_offset: number;
+  end_offset: number;
+}
+
+export interface ResearchPlanExecutionComparisonRow {
+  paper_id: string;
+  problem?: string | null;
+  methods?: string | null;
+  datasets?: string | null;
+  metrics?: string | null;
+  limitations?: string | null;
+  code_status?: string;
+}
+
+export interface ResearchPlanExecutionSynthesisClaim {
+  text: string;
+  status: 'supported' | 'conflicting' | 'uncertain';
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  cited_evidence_ids: string[];
+  explanation: string;
+}
+
+export interface ResearchPlanExecutionResult {
+  kind: 'research_plan_execution';
+  run_id: string;
+  task_type: ResearchTaskType;
+  source_scope: ResearchPlanScope;
+  steps: ResearchPlanExecutionStep[];
+  sources: { paper_id: string; title: string }[];
+  evidence: ResearchPlanExecutionEvidence[];
+  gaps: string[];
+  comparison?: ResearchPlanExecutionComparisonRow[];
+  synthesis?: ResearchPlanExecutionSynthesisClaim[];
+  cost_tracking_available: false;
+  estimated_cost_usd: null;
 }
 
 export type ResearchTaskType = 'feed' | 'explain' | 'compare' | 'deep_research';
@@ -130,8 +186,8 @@ export interface ResearchPlanPreview {
   synthesis_available: boolean;
   estimated_cost_usd: null;
   cost_tracking_available: false;
-  execution_available: false;
-  limits_are_preview_only: true;
+  execution_available: boolean;
+  limits_are_preview_only: boolean;
 }
 
 export type LLMModel =

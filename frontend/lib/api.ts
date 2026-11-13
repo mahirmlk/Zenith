@@ -1,4 +1,4 @@
-import { AgentStep, ImplementationPlan, Paper, PaperSearchResult, UserPrefs } from '@/types';
+import { AgentStep, ImplementationPlan, Paper, PaperSearchResult, ResearchPlanExecutionResult, ResearchRunCancelledEvent, UserPrefs } from '@/types';
 import { getJWT } from './auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -46,6 +46,25 @@ export async function searchPapers(query: string, model?: string): Promise<{ run
     throw new ApiError(await parseError(res), res.status);
   }
   // Backend returns snake_case { run_id }; expose camelCase to callers.
+  const data = await res.json();
+  return { runId: data.run_id ?? data.runId };
+}
+
+export async function executeResearchPlan(
+  query: string,
+  projectId?: string,
+): Promise<{ runId: string }> {
+  const idempotencyKey = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const res = await fetch(`${API_BASE}/api/research/execute`, {
+    method: 'POST',
+    headers: { ...(await getHeaders()), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ query, ...(projectId ? { project_id: projectId } : {}) }),
+  });
+  if (!res.ok) {
+    handleAuthRedirect(res);
+    throw new ApiError(await parseError(res), res.status);
+  }
   const data = await res.json();
   return { runId: data.run_id ?? data.runId };
 }
@@ -207,7 +226,7 @@ export async function fetchGraphData(id: string): Promise<{ nodes: unknown[]; ed
 
 export async function streamSearch(
   runId: string,
-  onEvent: (event: AgentStep | PaperSearchResult, eventId?: string) => void,
+  onEvent: (event: AgentStep | PaperSearchResult | ResearchPlanExecutionResult | ResearchRunCancelledEvent, eventId?: string) => void,
   onError?: (err: Error) => void
 ) {
   const token = await getJWT();
@@ -241,6 +260,17 @@ export async function streamSearch(
       evtSource.close();
     } catch {
       // ignore parse errors
+    }
+  });
+
+  evtSource.addEventListener('cancelled', (e: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(e.data) as { run_id?: string };
+      onEvent({ run_id: payload.run_id ?? runId, status: 'cancelled' }, e.lastEventId || undefined);
+    } catch {
+      onEvent({ run_id: runId, status: 'cancelled' });
+    } finally {
+      evtSource.close();
     }
   });
 

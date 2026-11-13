@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getJWT } from '@/lib/auth';
+import { executeResearchPlan } from '@/lib/api';
 import { fetchProjectSources } from '@/lib/project-api';
+import ResearchPlanExecutionPanel from '@/components/ResearchPlanExecutionPanel';
 import { buildProjectExport, type ExportFormat, type ProjectExportNote, type ProjectExportPaper, type ProjectExportSource } from '@/lib/project-export';
 import type { ResearchPlanPreview } from '@/types';
 
@@ -278,6 +280,7 @@ export default function ProjectWorkspacePage() {
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<ResearchMode>('evidence');
   const [researchResults, setResearchResults] = useState<ResearchResponse | null>(null);
+  const [executionRunId, setExecutionRunId] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
@@ -443,6 +446,11 @@ export default function ProjectWorkspacePage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-invitations', projectId] }),
   });
 
+  const executePlan = useMutation({
+    mutationFn: ({ query, projectId: scopedProjectId }: { query: string; projectId?: string }) => executeResearchPlan(query, scopedProjectId),
+    onSuccess: ({ runId }) => setExecutionRunId(runId),
+  });
+
   const research = useMutation({
     mutationFn: ({ query, mode }: { query: string; mode: ResearchMode }) => {
       const path = mode === 'search' ? '/api/retrieval/search' : `/api/research/${mode === 'evidence' ? 'evidence-map' : mode}`;
@@ -454,7 +462,11 @@ export default function ProjectWorkspacePage() {
         body: JSON.stringify(body),
       });
     },
-    onSuccess: setResearchResults,
+    onSuccess: (data) => {
+      setResearchResults(data);
+      setExecutionRunId(null);
+      executePlan.reset();
+    },
   });
 
   function handleNoteSubmit(event: FormEvent<HTMLFormElement>) {
@@ -466,7 +478,11 @@ export default function ProjectWorkspacePage() {
   function handleResearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const query = researchQuery.trim();
-    if (query) research.mutate({ query, mode: researchMode });
+    if (query) {
+      setExecutionRunId(null);
+      executePlan.reset();
+      research.mutate({ query, mode: researchMode });
+    }
   }
 
   if (projectQuery.isLoading) {
@@ -613,6 +629,15 @@ export default function ProjectWorkspacePage() {
                     <div><dt className="text-zenith-muted">Output token cap</dt><dd className="font-semibold text-ink-900">{result.max_output_tokens}</dd></div>
                     <div><dt className="text-zenith-muted">Dollar cost</dt><dd className="font-semibold text-ink-900">Not measured</dd></div>
                   </dl>
+                  {result.execution_available && (
+                    <div className="space-y-3">
+                      <button type="button" onClick={() => executePlan.mutate({ query: result.query, projectId: result.source_scope === 'project' ? projectId : undefined })} disabled={executePlan.isPending || Boolean(executionRunId)} className="rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        {executePlan.isPending ? 'Starting…' : executionRunId ? 'Plan started' : 'Execute plan'}
+                      </button>
+                      {executePlan.isError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{executePlan.error instanceof Error ? executePlan.error.message : 'Could not start plan execution.'}</p>}
+                      {executionRunId && <ResearchPlanExecutionPanel runId={executionRunId} />}
+                    </div>
+                  )}
                 </section>
               )}
               {isEvidenceResponse(result) && (
