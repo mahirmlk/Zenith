@@ -1050,3 +1050,15 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Existing production gates in [docs/STATUS.md](docs/STATUS.md) remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.18 Resumable account deletion and portable export (2026-11-13)
+
+- [x] Added migration 0016 with a service-role-only durable deletion ledger, unique active request per user, cross-replica leases, persisted step progress, retry scheduling, and 30-day completion-marker retention. The ledger has no Auth foreign key so it survives Auth deletion.
+- [x] `DELETE /api/account` now persists intent and returns 202 with a request receipt. A background worker cancels runs, waits for active leases, cleans Mem0/checkpoints/queues/run storage and user-owned rows, deletes Auth last, and resumes safely after a worker restart. Authenticated requests are blocked while deletion is pending or complete; this lock is enforced when Supabase is configured and fails closed if the configured ledger cannot be read.
+- [x] Account export now includes only public metadata for papers referenced by the caller's saved papers and project sources. Updated settings/login UX and the migration, security, and architecture documentation.
+- [x] Fixed author/citation watchlist ingestion to trust the provider's target-specific result filter instead of dropping valid results that lack a title/query token match.
+- [x] Local validation: backend 266 passed / 6 skipped; Ruff and strict mypy passed for 76 application files; frontend lint/typecheck and 43 tests across 8 files passed; Next.js production build completed all 13 static pages. Build output reports missing public Supabase configuration in this local environment. `git diff --check` passes.
+- [ ] Apply migrations through 0016 and verify deletion recovery, active-run deferral, service-role RPC permissions, export scope, account-lock behavior, and Auth deletion in staging. Local fakes/static migration checks do not prove cross-service cleanup against live Supabase, Redis, checkpoints, or Mem0.
+- [ ] Production release remains blocked on current-head CI, staging migrations/RLS, restore and provider/recovery exercises, monitoring and deployment verification, and remaining product/evaluation gates in `docs/STATUS.md`.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.

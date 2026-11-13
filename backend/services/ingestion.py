@@ -120,7 +120,14 @@ async def _notify_watchlists(
             if paper.get("id")
             and (published := _as_utc(paper.get("published_at"))) is not None
             and published >= since
-            and _watchlist_matches(query, paper)
+            # Provider watch endpoints already select papers by stable author
+            # identity or inbound citation direction. Applying the topic text
+            # matcher here would suppress valid results when names/seed titles
+            # do not appear in the citing paper's title or abstract.
+            and (
+                target_type in {"author", "citation"}
+                or _watchlist_matches(query, paper)
+            )
         ][:5]
 
         try:

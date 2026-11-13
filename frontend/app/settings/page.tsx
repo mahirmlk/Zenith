@@ -63,7 +63,7 @@ export default function SettingsPage() {
         // The account has already been deleted server-side; still leave the
         // authenticated settings page and prevent a stale local session.
       } finally {
-        window.location.replace('/login?accountDeleted=1');
+        window.location.replace('/login?accountDeletionAccepted=1');
       }
     },
     onError: (error) => {
@@ -141,8 +141,7 @@ export default function SettingsPage() {
             Account data
           </h2>
           <p className="mb-5 text-[13px] leading-6 text-zenith-muted">
-            Download a JSON copy of your account data, or permanently delete your account and its stored data.
-            If a research run is active, deletion will pause and you can retry after it stops.
+            Download a JSON copy of your account data, or request permanent deletion. Once accepted, you will be signed out while cleanup continues and retries safely in the background.
           </p>
 
           {accountMessage && (

@@ -30,7 +30,18 @@ def test_every_user_table_has_rls():
 
 def test_no_destructive_statements():
     for m in MIGRATIONS:
-        assert not DESTRUCTIVE.search(m.read_text()), m.name
+        text = m.read_text()
+        if m.name == "0016_resumable_account_deletions.sql":
+            normalized = " ".join(text.lower().split())
+            assert "where j.status = 'complete' and j.completed_at < now() - interval '30 days'" in normalized
+            text = re.sub(
+                r"create or replace function public\.prune_account_deletion_jobs\(\).*?\$\$;",
+                "",
+                text,
+                flags=re.I | re.S,
+            )
+        text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("--"))
+        assert not DESTRUCTIVE.search(text), m.name
 
 
 def test_migrations_are_additive():
@@ -125,3 +136,18 @@ def test_semantic_scholar_watch_targets_preserve_topic_rows_and_add_bounds():
     assert "target_type in ('author', 'citation')" in normalized
     assert "length(target_id) between 1 and 200" in normalized
     assert "drop column if exists target_id" in normalized
+
+
+def test_account_deletion_jobs_are_durable_service_only_and_resumable():
+    migration = (ROOT / "supabase" / "migrations" / "0016_resumable_account_deletions.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "create table if not exists public.account_deletion_jobs" in normalized
+    assert "user_id uuid not null," in normalized
+    assert "user_id uuid not null references auth.users" not in normalized
+    assert "enable row level security" in normalized
+    assert "revoke all on public.account_deletion_jobs from public, anon, authenticated" in normalized
+    assert "for update skip locked" in normalized
+    assert "on public.account_deletion_jobs (user_id) where status in ('pending', 'processing')" in normalized
+    assert "cardinality(j.completed_steps) = 8" in normalized
+    assert "completed_at < now() - interval '30 days'" in normalized
+    assert "grant execute on function public.claim_account_deletion_job(text, integer) to service_role" in normalized

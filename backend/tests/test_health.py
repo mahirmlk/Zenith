@@ -37,6 +37,7 @@ async def test_readiness_returns_503_when_required_dependency_is_unreachable(mon
             "redis": False,
             "run_store": False,
             "graph_checkpointer": False,
+            "account_deletion_jobs": False,
         },
     }
 
@@ -95,6 +96,7 @@ async def test_production_readiness_fails_when_run_store_schema_is_missing(monke
             "redis": True,
             "run_store": False,
             "graph_checkpointer": False,
+            "account_deletion_jobs": False,
         },
     }
 
@@ -123,6 +125,9 @@ async def test_production_readiness_fails_when_graph_checkpointer_is_unavailable
 
     class Supabase:
         def table(self, _name):
+            return SupabaseQuery()
+
+        def rpc(self, *_args):
             return SupabaseQuery()
 
     class Redis:
@@ -158,5 +163,6 @@ async def test_production_readiness_fails_when_graph_checkpointer_is_unavailable
             "redis": True,
             "run_store": True,
             "graph_checkpointer": False,
+            "account_deletion_jobs": True,
         },
     }

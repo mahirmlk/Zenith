@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jwt.exceptions import InvalidTokenError
 from services.jwt_validator import decode_supabase_token
@@ -17,6 +17,7 @@ async def _decode_token(token: str) -> dict[str, Any] | None:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict[str, Any]:
     if not credentials:
@@ -39,6 +40,44 @@ async def get_current_user(
     user_id = payload.get("sub")
     if not isinstance(user_id, str) or not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: no subject")
+
+    # A persisted deletion request is irreversible. Block other sessions from
+    # changing account data while the background worker resumes cleanup, but
+    # allow DELETE retries to return the same idempotent accepted response.
+    from config import get_settings
+
+    settings = get_settings()
+    # Local development can validate JWTs without a configured persistence
+    # layer. Production readiness requires Supabase, so an enabled ledger
+    # check remains fail-closed there if its table/RPC cannot be reached.
+    if settings.supabase_url and settings.supabase_service_role_key:
+        try:
+            from services.supabase_client import get_supabase
+
+            supabase = await get_supabase()
+            pending = await (
+                supabase.table("account_deletion_jobs")
+                .select("id,status")
+                .eq("user_id", user_id)
+                .in_("status", ["pending", "processing", "complete"])
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Account authorization is temporarily unavailable",
+            ) from exc
+        deletion_job = (pending.data or [None])[0]
+        if deletion_job and not (
+            request.method == "DELETE"
+            and request.url.path == "/api/account"
+            and deletion_job.get("status") in {"pending", "processing"}
+        ):
+            raise HTTPException(
+                status_code=423,
+                detail="Account deletion is in progress",
+            )
     email = payload.get("email")
     return {"user_id": user_id, "email": email if isinstance(email, str) else None}
 

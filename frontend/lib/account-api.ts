@@ -37,6 +37,11 @@ export async function exportAccountData(): Promise<Record<string, unknown>> {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
-export async function deleteAccount(): Promise<void> {
-  await request('/api/account', 'DELETE');
+export async function deleteAccount(): Promise<{ status: 'accepted'; request_id: string }> {
+  const response = await request('/api/account', 'DELETE');
+  const body = await response.json() as { status?: string; request_id?: string };
+  if (body.status !== 'accepted' || typeof body.request_id !== 'string') {
+    throw new AccountApiError('The account deletion request was not confirmed.', response.status);
+  }
+  return { status: 'accepted', request_id: body.request_id };
 }

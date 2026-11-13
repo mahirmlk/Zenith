@@ -47,11 +47,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     from services.job_queue import start_worker, stop_worker
     from services.daily_scheduler import start_daily_scheduler, stop_daily_scheduler
+    from services.account_deletion import start_account_deletion_worker, stop_account_deletion_worker
 
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    deletion_worker_started = bool(
+        app_settings.supabase_url and app_settings.supabase_service_role_key
+    )
     try:
         start_worker()
         start_daily_scheduler()
+        if deletion_worker_started:
+            start_account_deletion_worker()
         yield
     finally:
         cleanup_task.cancel()
@@ -62,8 +68,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             try:
                 await stop_daily_scheduler()
             finally:
-                await stop_checkpointer()
-                logger.info("Shutting down backend")
+                try:
+                    await stop_account_deletion_worker()
+                finally:
+                    await stop_checkpointer()
+                    logger.info("Shutting down backend")
 
 
 app = FastAPI(

@@ -161,27 +161,31 @@ async def test_partial_source_failure_does_not_advance_watchlist_cursor():
 
 
 @pytest.mark.asyncio
-async def test_citation_watch_fetches_inbound_results_and_persists_linked_paper(monkeypatch):
+@pytest.mark.parametrize("target_type,target_id", [("author", "author-id"), ("citation", "seed-id")])
+async def test_provider_watch_persists_results_without_topic_text_overlap(
+    monkeypatch, target_type, target_id
+):
     now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
     db = FakeSupabase([{
         "id": "watch-citations",
         "user_id": "u1",
-        "query": "Seed paper",
-        "target_type": "citation",
-        "target_id": "seed-id",
+        "query": "Provider display label",
+        "target_type": target_type,
+        "target_id": target_id,
         "cadence": "daily",
         "enabled": True,
     }])
-    provider_paper = make_paper("new-citer", "A paper citing the seed", now - timedelta(hours=1))
+    provider_paper = make_paper("provider-result", "Independent work", now - timedelta(hours=1))
 
     async def fetch_watch_papers(target_type, target_id, since):
-        assert (target_type, target_id) == ("citation", "seed-id")
+        assert (target_type, target_id) == (watch_type, target_id)
         return [provider_paper]
 
+    watch_type = target_type
     monkeypatch.setattr("services.semantic_scholar.fetch_watch_papers", fetch_watch_papers)
     count = await _notify_watchlists(db, [], now=now)
 
     assert count == 1
-    assert db.notifications[0]["paper_id"] == "new-citer"
-    assert db.provider_papers[0]["id"] == "new-citer"
+    assert db.notifications[0]["paper_id"] == "provider-result"
+    assert db.provider_papers[0]["id"] == "provider-result"
     assert db.watchlists[0]["last_checked_at"] == now.isoformat()

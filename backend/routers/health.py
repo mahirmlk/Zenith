@@ -77,6 +77,25 @@ async def readiness(response: Response) -> dict[str, object]:
     if settings.app_env == "production":
         checks["run_store"] = False
         checks["graph_checkpointer"] = False
+        checks["account_deletion_jobs"] = False
+        try:
+            from services.supabase_client import get_supabase
+
+            supabase_client = await get_supabase()
+            await supabase_client.table("account_deletion_jobs").select("id").limit(0).execute()
+            # Safe no-op probe: the sentinel ID cannot match a real job.
+            await supabase_client.rpc(
+                "release_account_deletion_job",
+                {
+                    "p_job_id": "00000000-0000-0000-0000-000000000000",
+                    "p_lease_owner": "readiness-probe",
+                    "p_error_code": "readiness_probe",
+                    "p_delay_seconds": 5,
+                },
+            ).execute()
+            checks["account_deletion_jobs"] = True
+        except Exception:
+            checks["account_deletion_jobs"] = False
         if checks["supabase"] and checks["redis"]:
             try:
                 from services.run_store import PostgresRunStore, get_run_store

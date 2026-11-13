@@ -8,8 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from dependencies import get_current_user
 from services import mem0_client
-from services.job_queue import remove_runs
-from services.run_store import get_run_store
+from services.account_deletion import request_account_deletion
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -20,12 +19,6 @@ def _rows(data: Any) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         return []
     return [row for row in data if isinstance(row, dict)]
-
-
-async def _run_rows(supabase: Any, user_id: str) -> list[dict[str, Any]]:
-    return await _fetch_all(
-        lambda: supabase.table("research_runs").select("*").eq("user_id", user_id)
-    )
 
 
 async def _fetch_all(query_factory: Callable[[], Any], page_size: int = 500) -> list[dict[str, Any]]:
@@ -91,6 +84,15 @@ async def export_account(
             project_documents = []
             project_document_pages = []
 
+        paper_ids = list(dict.fromkeys(
+            str(row["paper_id"])
+            for row in [*saved, *sources]
+            if row.get("paper_id")
+        ))
+        paper_metadata = await _fetch_in_chunks(
+            supabase, "papers", "id", paper_ids
+        )
+
         run_ids = [str(row["id"]) for row in runs if row.get("id")]
         run_events = await _fetch_in_chunks(supabase, "run_events", "run_id", run_ids)
 
@@ -104,6 +106,7 @@ async def export_account(
             "user_id": uid,
             "email": user.get("email"),
             "saved_papers": saved,
+            "paper_metadata": paper_metadata,
             "prefs": prefs,
             "projects": projects,
             "project_memberships": member_rows,
@@ -185,93 +188,17 @@ async def _project_content_rows(
     return own_content + member_content
 
 
-@router.delete("")
+@router.delete("", status_code=202)
 async def delete_account(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
 ) -> dict[str, str]:
-    """Delete only the authenticated caller and their stored account data."""
-    uid = user["user_id"]
+    """Persist the caller's deletion intent for resumable background cleanup."""
+    del request, supabase  # Dependencies authenticate the caller and verify service access.
     try:
-        runs = await _run_rows(supabase, uid)
-        run_ids = [str(row["id"]) for row in runs if row.get("id")]
-        run_store = await get_run_store()
-
-        # Make every pending/running run terminal in canonical Postgres before
-        # touching leases, checkpoints, or queue entries. Workers that read an
-        # older state will fail their atomic try_start/update against this row.
-        for row in runs:
-            run_id = str(row["id"])
-            if row.get("status") in {"pending", "running", "queued"}:
-                await (
-                    supabase.table("research_runs")
-                    .update({"status": "cancelled"})
-                    .eq("id", run_id)
-                    .eq("user_id", uid)
-                    .in_("status", ["pending", "running", "queued"])
-                    .execute()
-                )
-                await run_store.update(run_id, status="cancelled")
-
-        active_ids = [run_id for run_id in run_ids if await run_store.has_active_run(run_id)]
-        if active_ids:
-            # The caller retries after workers release their leases; do not
-            # erase a live checkpoint or remove its run record mid-execution.
-            raise HTTPException(
-                status_code=409,
-                detail="Active research runs were cancelled. Retry account deletion after workers release them.",
-            )
-
-        # If Mem0 is configured, failure to remove those records must not be
-        # silently reported as complete. Retrying is safe if later cleanup fails.
-        if mem0_client.is_configured():
-            try:
-                await mem0_client.delete_user_memories(uid)
-            except Exception as exc:
-                logger.exception("Mem0 account cleanup failed")
-                raise HTTPException(status_code=502, detail="Account data cleanup is temporarily unavailable") from exc
-
-        from agents.orchestrator import delete_checkpoints_for_runs
-
-        await delete_checkpoints_for_runs(run_ids)
-        await remove_runs(set(run_ids))
-        for run_id in run_ids:
-            await run_store.delete_run(run_id)
-
-        # Delete account-owned rows and records authored by the caller in shared
-        # projects before deleting the Auth identity. Auth FK cascades remain a
-        # final safety net for any user-scoped rows not listed here.
-        if run_ids:
-            for offset in range(0, len(run_ids), 200):
-                await (
-                    supabase.table("run_events")
-                    .delete()
-                    .in_("run_id", run_ids[offset : offset + 200])
-                    .execute()
-                )
-
-        for table, column in (
-            ("research_runs", "user_id"),
-            ("user_papers", "user_id"),
-            ("user_prefs", "user_id"),
-            ("watchlists", "user_id"),
-            ("notifications", "user_id"),
-            ("project_members", "user_id"),
-            ("notes", "created_by"),
-            ("project_sources", "created_by"),
-            ("projects", "owner_id"),
-        ):
-            query = supabase.table(table).delete()
-            query = query.eq(column, uid)
-            await query.execute()
-
-        # This trusted server-side admin call targets the subject from the
-        # verified JWT, never an ID supplied in the request body.
-        await supabase.auth.admin.delete_user(uid)
-        return {"status": "ok"}
-    except HTTPException:
-        raise
+        job_id = await request_account_deletion(user["user_id"])
+        return {"status": "accepted", "request_id": job_id}
     except Exception:
-        logger.exception("delete_account failed")
-        raise HTTPException(status_code=500, detail="Internal error")
+        logger.exception("Could not persist account deletion intent")
+        raise HTTPException(status_code=503, detail="Account deletion could not be queued; please retry")

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AccountApiError, deleteAccount, exportAccountData } from '@/lib/account-api';
+import { deleteAccount, exportAccountData } from '@/lib/account-api';
 
 vi.mock('@/lib/auth', () => ({ getJWT: vi.fn(async () => 'user-token') }));
 
@@ -17,15 +17,13 @@ describe('account API', () => {
     );
   });
 
-  it('preserves a 409 response so the UI can explain active-run retries', async () => {
+  it('returns the durable deletion request receipt', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
-      JSON.stringify({ detail: 'Active research run.' }),
-      { status: 409, headers: { 'Content-Type': 'application/json' } },
+      JSON.stringify({ status: 'accepted', request_id: 'job-1' }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
     )));
 
-    const error = await deleteAccount().catch((reason: unknown) => reason);
-    expect(error).toBeInstanceOf(AccountApiError);
-    expect(error).toMatchObject({ status: 409, message: 'Active research run.' });
+    await expect(deleteAccount()).resolves.toEqual({ status: 'accepted', request_id: 'job-1' });
   });
 
   it('does not call the API without an authenticated session', async () => {

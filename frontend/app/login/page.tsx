@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
@@ -22,6 +22,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('accountDeletionAccepted') === '1') {
+      setSuccess('Your account deletion request was accepted. Cleanup will continue automatically.');
+    }
+  }, []);
 
   const validatePassword = (value: string): string | null => {
     if (value.length < 6) return 'Password must be at least 6 characters.';
