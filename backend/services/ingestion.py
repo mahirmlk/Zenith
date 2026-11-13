@@ -15,6 +15,7 @@ from models.schemas import AgentStep
 logger = logging.getLogger(__name__)
 
 MAX_EMBED_BATCH = 100
+MAX_ARXIV_VERSION_POLL = 200
 SUMMARY_BATCH_SIZE = 5
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -51,6 +52,16 @@ def _watchlist_matches(query: str, paper: dict[str, Any]) -> bool:
 
 def _watchlist_reason(target_type: str, query: str, paper: dict[str, Any]) -> tuple[str, str]:
     """Explain the verified match basis without asserting scientific importance."""
+    previous_version = paper.get("_version_change_from")
+    current_version = paper.get("source_version")
+    if target_type == "topic" and previous_version and current_version:
+        updated_at = str(paper.get("source_updated_at") or "")[:10]
+        date_text = f" on {updated_at}" if updated_at else ""
+        return (
+            "preprint_version_updated",
+            f"arXiv reports this preprint changed from v{previous_version} to v{current_version}{date_text}; "
+            "its title or abstract also matches this topic watch.",
+        )
     if target_type == "author":
         return "author_relation", "Semantic Scholar returned this paper for the author you follow."
     if target_type == "citation":
@@ -73,12 +84,56 @@ def _watchlist_reason(target_type: str, query: str, paper: dict[str, Any]) -> tu
     return "topic_term_overlap", reason[:500]
 
 
+async def _load_existing_paper_rows(supabase: Any, papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fetch candidate rows and their known preprint versions in bounded batches."""
+    candidate_ids = list(dict.fromkeys(str(paper["id"]) for paper in papers if paper.get("id")))
+    preprint_ids = list(dict.fromkeys(
+        str(paper["preprint_id"]) for paper in papers if paper.get("preprint_id")
+    ))
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for column, values in (("id", candidate_ids), ("preprint_id", preprint_ids)):
+        for offset in range(0, len(values), MAX_EMBED_BATCH):
+            batch = values[offset : offset + MAX_EMBED_BATCH]
+            response = await (
+                supabase.table("papers")
+                .select("id,preprint_id,source_version")
+                .in_(column, batch)
+                .execute()
+            )
+            for row in response.data or []:
+                if row.get("id"):
+                    rows_by_id[str(row["id"])] = row
+    return list(rows_by_id.values())
+
+
+def _mark_preprint_version_changes(
+    papers: list[dict[str, Any]], existing_rows: list[dict[str, Any]]
+) -> None:
+    """Mark only version advances over a previously stored arXiv version."""
+    latest_existing_versions: dict[str, int] = {}
+    for row in existing_rows:
+        preprint_id = row.get("preprint_id")
+        version = row.get("source_version")
+        if preprint_id and isinstance(version, int):
+            latest_existing_versions[str(preprint_id)] = max(
+                latest_existing_versions.get(str(preprint_id), 0), version
+            )
+    for paper in papers:
+        preprint_id = paper.get("preprint_id")
+        version = paper.get("source_version")
+        previous_version = latest_existing_versions.get(str(preprint_id)) if preprint_id else None
+        if isinstance(version, int) and previous_version and version > previous_version:
+            paper["_version_change_from"] = previous_version
+
+
 async def _notify_watchlists(
     supabase: Any,
     papers: list[dict[str, Any]],
     *,
     now: datetime | None = None,
     sources_complete: bool = True,
+    arxiv_updates_complete: bool = True,
+    arxiv_updates_oldest_at: datetime | None = None,
 ) -> int:
     """Deliver idempotent, cadence-aware in-app alerts for recent papers.
 
@@ -108,8 +163,14 @@ async def _notify_watchlists(
             continue
         since = last_checked or now - interval
         watch_papers = papers
-        watch_sources_complete = sources_complete
         target_type = watch.get("target_type") or "topic"
+        watch_sources_complete = sources_complete if target_type == "topic" else True
+        if target_type == "topic" and not arxiv_updates_complete:
+            oldest_update = _as_utc(arxiv_updates_oldest_at)
+            # The provider result is sorted newest first. Even a capped result
+            # covers this watch window when its last record predates `since`.
+            if oldest_update is None or oldest_update >= since:
+                watch_sources_complete = False
         if target_type in {"author", "citation"}:
             try:
                 from services.semantic_scholar import fetch_watch_papers
@@ -142,7 +203,7 @@ async def _notify_watchlists(
         matches_by_id: dict[str, dict[str, Any]] = {}
         for paper in watch_papers:
             paper_id = str(paper.get("id") or "")
-            published = _as_utc(paper.get("published_at"))
+            published = _as_utc(paper.get("source_updated_at") or paper.get("published_at"))
             if not paper_id or published is None or published < since:
                 continue
             # Provider watch endpoints already select papers by stable author
@@ -164,7 +225,10 @@ async def _notify_watchlists(
                         "watchlist_id": watch["id"],
                         "project_id": watch.get("project_id"),
                         "kind": "watchlist",
-                        "title": f"New paper for {query}"[:200],
+                        "title": (
+                            f"New arXiv version for {query}"
+                            if paper.get("_version_change_from") else f"New paper for {query}"
+                        )[:200],
                         "body": str(paper.get("title") or "")[:200],
                         "reason_code": reason_code,
                         "reason_text": reason_text,
@@ -210,7 +274,7 @@ async def run_daily_fetch(
     callback: Callable[[AgentStep], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Fetch, embed, store, and summarise newly published papers."""
-    from services.arxiv import fetch_latest_papers
+    from services.arxiv import fetch_latest_papers, fetch_recently_updated_papers
     from services.huggingface import fetch_hf_daily
     from services.embeddings import embed_texts
     from services.retry import async_retry
@@ -224,8 +288,26 @@ async def run_daily_fetch(
     arxiv_papers = await fetch_latest_papers(max_results=max_results)
     logger.info("Found %s ArXiv papers", len(arxiv_papers))
 
-    logger.info("Fetching HuggingFace daily papers...")
     sources_complete = True
+    arxiv_updates_complete = True
+    arxiv_updates_oldest_at: datetime | None = None
+    try:
+        updated_arxiv_papers, arxiv_updates_complete = await fetch_recently_updated_papers(
+            max_results=MAX_ARXIV_VERSION_POLL
+        )
+        arxiv_papers.extend(updated_arxiv_papers)
+        update_times = [
+            parsed for paper in updated_arxiv_papers
+            if (parsed := _as_utc(paper.get("source_updated_at"))) is not None
+        ]
+        arxiv_updates_oldest_at = min(update_times) if update_times else None
+        if not arxiv_updates_complete:
+            logger.warning("ArXiv version update poll reached its result bound; some topic-watch cursors may pause")
+    except Exception as exc:
+        logger.warning("ArXiv version update poll failed: %s", exc)
+        arxiv_updates_complete = False
+
+    logger.info("Fetching HuggingFace daily papers...")
     try:
         hf_papers = await fetch_hf_daily()
     except Exception as exc:
@@ -237,14 +319,19 @@ async def run_daily_fetch(
     deduped = {p["id"]: p for p in arxiv_papers + hf_papers}
     papers = list(deduped.values())
 
-    response = await supabase.table("papers").select("id").execute()
-    existing_ids = {row["id"] for row in (response.data or [])}
+    existing_rows = await _load_existing_paper_rows(supabase, papers)
+    existing_ids = {str(row["id"]) for row in existing_rows if row.get("id")}
+    _mark_preprint_version_changes(papers, existing_rows)
     new_papers = [p for p in papers if p["id"] not in existing_ids]
     logger.info("%s new papers to insert", len(new_papers))
 
     if not new_papers:
         notified = await _notify_watchlists(
-            supabase, papers, sources_complete=sources_complete
+            supabase,
+            papers,
+            sources_complete=sources_complete,
+            arxiv_updates_complete=arxiv_updates_complete,
+            arxiv_updates_oldest_at=arxiv_updates_oldest_at,
         )
         return {
             "fetched": len(papers),
@@ -270,6 +357,9 @@ async def run_daily_fetch(
             "authors": p.get("authors", []),
             "url": p.get("url", ""),
             "published_at": p.get("published_at"),
+            "preprint_id": p.get("preprint_id"),
+            "source_version": p.get("source_version"),
+            "source_updated_at": p.get("source_updated_at"),
             "embedding": emb,
         })
 
@@ -308,7 +398,11 @@ async def run_daily_fetch(
         logger.warning("Summary generation failed: %s", exc)
 
     notified = await _notify_watchlists(
-        supabase, papers, sources_complete=sources_complete
+        supabase,
+        papers,
+        sources_complete=sources_complete,
+        arxiv_updates_complete=arxiv_updates_complete,
+        arxiv_updates_oldest_at=arxiv_updates_oldest_at,
     )
 
     return {

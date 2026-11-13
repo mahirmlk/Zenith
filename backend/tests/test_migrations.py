@@ -94,6 +94,21 @@ def test_watchlist_notification_reasons_are_additive_and_bounded():
     assert "drop column if exists reason_text" in rollback
 
 
+def test_arxiv_version_metadata_preserves_distinct_versions_and_adds_alert_reason():
+    migration = (ROOT / "supabase" / "migrations" / "0022_arxiv_preprint_version_metadata.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "add column if not exists preprint_id text" in normalized
+    assert "add column if not exists source_version integer" in normalized
+    assert "add column if not exists source_updated_at timestamptz" in normalized
+    assert "regexp_replace(id, 'v[1-9][0-9]*$', '')" in normalized
+    assert "idx_papers_preprint_id_version" in normalized
+    assert "'preprint_version_updated'" in normalized
+    assert "drop table" not in normalized
+    rollback = (ROOT / "supabase" / "rollbacks" / "0022_arxiv_preprint_version_metadata.sql").read_text().lower()
+    assert "drop column if exists source_version" in rollback
+    assert "drop column if exists source_updated_at" in rollback
+
+
 def test_project_rls_helpers_reject_soft_deleted_projects():
     migration = (ROOT / "supabase" / "migrations" / "0012_hide_deleted_projects_in_rls.sql").read_text()
     normalized = " ".join(migration.lower().split())

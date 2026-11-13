@@ -4,7 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.ingestion import _notify_watchlists, _watchlist_reason
+from services.ingestion import (
+    _load_existing_paper_rows,
+    _mark_preprint_version_changes,
+    _notify_watchlists,
+    _watchlist_reason,
+)
 
 
 class FakeQuery:
@@ -24,6 +29,10 @@ class FakeQuery:
         self.filters[key] = value
         return self
 
+    def in_(self, key, values):
+        self.filters[f"in:{key}"] = set(values)
+        return self
+
     def update(self, payload):
         self.action = "update"
         self.payload = payload
@@ -40,6 +49,13 @@ class FakeQuery:
             rows = self.db.watchlists
             if self.filters.get("enabled") is not None:
                 rows = [row for row in rows if row.get("enabled") == self.filters["enabled"]]
+            return SimpleNamespace(data=rows)
+        if self.table == "papers" and self.action == "select":
+            rows = self.db.paper_rows
+            for key, values in self.filters.items():
+                if key.startswith("in:"):
+                    column = key.split(":", 1)[1]
+                    rows = [row for row in rows if row.get(column) in values]
             return SimpleNamespace(data=rows)
         if self.table == "watchlists" and self.action == "update":
             if self.db.fail_cursor_update:
@@ -74,6 +90,7 @@ class FakeSupabase:
         self.watchlists = watchlists
         self.notifications = []
         self.provider_papers = []
+        self.paper_rows = []
         self.fail_cursor_update = fail_cursor_update
 
     def table(self, name):
@@ -95,6 +112,11 @@ def make_paper(paper_id, title, published_at):
         ("topic", "transformer language", {"title": "Transformer Models", "abstract": "Language systems."}, "topic_term_overlap", "2/2 topic-watch terms"),
         ("author", "Author label", {}, "author_relation", "Semantic Scholar returned this paper"),
         ("citation", "Seed title", {}, "citation_relation", "reports that this paper cites"),
+        (
+            "topic", "graph retrieval",
+            {"_version_change_from": 1, "source_version": 2, "source_updated_at": "2026-11-12T00:00:00Z"},
+            "preprint_version_updated", "arXiv reports this preprint changed from v1 to v2",
+        ),
     ],
 )
 def test_watchlist_reason_explains_auditable_match_basis(
@@ -181,6 +203,40 @@ async def test_partial_source_failure_does_not_advance_watchlist_cursor():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("oldest_update", "expected_cursor"),
+    [
+        ("2026-11-12T11:00:00Z", True),
+        ("2026-11-12T13:00:00Z", False),
+    ],
+)
+async def test_capped_arxiv_poll_advances_only_when_its_records_cover_watch_window(
+    oldest_update, expected_cursor
+):
+    now = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+    last_checked = datetime(2026, 11, 12, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "topic-watch",
+        "user_id": "u1",
+        "query": "graph retrieval",
+        "cadence": "daily",
+        "enabled": True,
+        "last_checked_at": last_checked.isoformat(),
+    }])
+    oldest_update_at = datetime.fromisoformat(oldest_update.replace("Z", "+00:00"))
+
+    await _notify_watchlists(
+        db,
+        [],
+        now=now,
+        arxiv_updates_complete=False,
+        arxiv_updates_oldest_at=oldest_update_at,
+    )
+
+    assert (db.watchlists[0].get("last_checked_at") == now.isoformat()) is expected_cursor
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target_type,target_id", [("author", "author-id"), ("citation", "seed-id")])
 async def test_provider_watch_persists_results_without_topic_text_overlap(
     monkeypatch, target_type, target_id
@@ -203,7 +259,13 @@ async def test_provider_watch_persists_results_without_topic_text_overlap(
 
     watch_type = target_type
     monkeypatch.setattr("services.semantic_scholar.fetch_watch_papers", fetch_watch_papers)
-    count = await _notify_watchlists(db, [], now=now)
+    count = await _notify_watchlists(
+        db,
+        [],
+        now=now,
+        arxiv_updates_complete=False,
+        arxiv_updates_oldest_at=now,
+    )
 
     assert count == 1
     assert db.notifications[0]["paper_id"] == "provider-result"
@@ -234,3 +296,62 @@ async def test_duplicate_provider_candidates_create_one_notification(monkeypatch
 
     assert count == 1
     assert len(db.notifications) == 1
+
+
+@pytest.mark.asyncio
+async def test_preprint_update_uses_source_update_time_and_explains_version_change():
+    now = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "topic-watch",
+        "user_id": "u1",
+        "query": "graph retrieval",
+        "target_type": "topic",
+        "cadence": "daily",
+        "enabled": True,
+    }])
+    paper = {
+        "id": "2401.12345v2",
+        "title": "Graph retrieval for research",
+        "abstract": "A revised method for graph retrieval.",
+        "published_at": "2024-01-01T00:00:00Z",
+        "source_updated_at": "2026-11-12T13:00:00Z",
+        "source_version": 2,
+        "_version_change_from": 1,
+    }
+
+    count = await _notify_watchlists(db, [paper], now=now)
+
+    assert count == 1
+    notification = db.notifications[0]
+    assert notification["title"] == "New arXiv version for graph retrieval"
+    assert notification["reason_code"] == "preprint_version_updated"
+    assert "v1 to v2" in notification["reason_text"]
+
+
+@pytest.mark.asyncio
+async def test_existing_paper_lookup_is_candidate_bounded_and_includes_prior_versions():
+    db = FakeSupabase([])
+    db.paper_rows = [
+        {"id": "2401.12345v1", "preprint_id": "2401.12345", "source_version": 1},
+        {"id": "other", "preprint_id": None, "source_version": None},
+    ]
+
+    existing = await _load_existing_paper_rows(db, [{"id": "2401.12345v2", "preprint_id": "2401.12345"}])
+
+    assert existing == [db.paper_rows[0]]
+
+
+def test_preprint_version_change_requires_a_known_older_version():
+    papers = [
+        {"id": "2401.12345v2", "preprint_id": "2401.12345", "source_version": 2},
+        {"id": "2401.12345v1", "preprint_id": "2401.12345", "source_version": 1},
+        {"id": "2402.99999v2", "preprint_id": "2402.99999", "source_version": 2},
+    ]
+
+    _mark_preprint_version_changes(papers, [
+        {"id": "2401.12345v1", "preprint_id": "2401.12345", "source_version": 1},
+    ])
+
+    assert papers[0]["_version_change_from"] == 1
+    assert "_version_change_from" not in papers[1]
+    assert "_version_change_from" not in papers[2]
