@@ -29,6 +29,13 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
 
         if route.path == "/api/search":
             route.endpoint = limiter.limit("10/minute")(route.endpoint)
+        elif (
+            route.path.startswith("/api/projects/")
+            and route.path.endswith("/documents")
+            and route.methods
+            and "POST" in route.methods
+        ):
+            route.endpoint = limiter.limit("3/minute")(route.endpoint)
         elif route.path.startswith("/api/stream/"):
             route.endpoint = limiter.limit("20/minute")(route.endpoint)
         elif route.path == "/api/health":

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user
@@ -16,7 +16,8 @@ from services.supabase_client import get_supabase
 from services.pdf_ingestion import (
     MAX_PDF_BYTES,
     PdfIngestionError,
-    extract_pdf_pages,
+    PdfOcrUnavailableError,
+    extract_pdf_pages_async,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ async def _writable_project(
 @router.post("/{project_id}/documents", status_code=201)
 async def upload_project_pdf(
     project_id: str,
+    request: Request,
     file: UploadFile = File(...),
     user: dict[str, Any] = Depends(get_current_user),
     supabase: Any = Depends(get_supabase),
@@ -108,7 +110,14 @@ async def upload_project_pdf(
     payload = await file.read(MAX_PDF_BYTES + 1)
     await file.close()
     try:
-        pages = extract_pdf_pages(payload)
+        from config import get_settings
+
+        pages = await extract_pdf_pages_async(
+            payload,
+            ocr_enabled=get_settings().ocr_enabled,
+        )
+    except PdfOcrUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PdfIngestionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -129,6 +138,7 @@ async def upload_project_pdf(
                 "document_id": document_id,
                 "page_number": page["page_number"],
                 "text": page["text"],
+                "extraction_method": page["extraction_method"],
             }
             for page in pages
         ]).execute()
@@ -172,7 +182,7 @@ async def list_project_pdf_pages(
             raise HTTPException(status_code=404, detail="Document not found")
         response = await (
             supabase.table("project_document_pages")
-            .select("page_number,text")
+            .select("page_number,text,extraction_method")
             .eq("document_id", document_id)
             .order("page_number")
             .execute()

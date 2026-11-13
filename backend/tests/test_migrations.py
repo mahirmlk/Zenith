@@ -176,3 +176,14 @@ def test_account_deletion_is_serialized_with_research_run_admission():
     assert "create or replace function public.request_account_deletion" in rollback.lower()
     assert "create or replace function public.create_research_run_atomic" in rollback.lower()
     assert "pg_advisory_xact_lock" not in rollback.lower()
+
+
+def test_pdf_page_extraction_method_is_additive_and_scope_preserving():
+    migration = (
+        ROOT / "supabase" / "migrations" / "0018_pdf_page_extraction_method.sql"
+    ).read_text()
+    normalized = " ".join(migration.lower().split())
+    assert "add column if not exists extraction_method text not null default 'native'" in normalized
+    assert "where text = '' and extraction_method = 'native'" in normalized
+    assert "check (extraction_method in ('native', 'ocr', 'empty', 'ocr_limit'))" in normalized
+    assert "enable row level security" not in normalized
