@@ -97,9 +97,16 @@ interface ComparisonResponse {
 
 interface ProjectSearchResult {
   id: string;
+  source_type: 'paper' | 'pdf_page';
   title: string;
   abstract?: string;
+  snippet?: string;
   score?: number;
+  citation_id?: string;
+  filename?: string;
+  page_number?: number;
+  start_offset?: number;
+  end_offset?: number;
 }
 
 interface ProjectSearchResponse {
@@ -452,13 +459,13 @@ export default function ProjectWorkspacePage() {
           <div className="mb-5 flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Project research</p>
-              <h2 id="research-heading" className="mt-1 font-serif text-xl text-ink-900">Explore attached papers</h2>
+              <h2 id="research-heading" className="mt-1 font-serif text-xl text-ink-900">Search project sources</h2>
             </div>
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-[9px] uppercase tracking-wide text-amber-900">Abstract evidence</span>
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-[9px] uppercase tracking-wide text-amber-900">Paper + PDF search</span>
           </div>
 
           <div className="mb-4 rounded-xl border border-zenith-border bg-zenith-surface/60 p-4 text-sm leading-6 text-zenith-body">
-            Project answers and evidence maps can quote exact sentences from attached-paper abstracts and uploaded PDF pages. General search and comparisons still use paper metadata/abstracts, and no cross-paper synthesis is generated.
+            Project search, answers, and evidence maps can use attached-paper abstracts and exact sentences from up to 10 uploaded PDFs/500 pages. Public search and comparisons still use paper metadata/abstracts, and no cross-paper synthesis is generated.
           </div>
 
           <form onSubmit={handleResearchSubmit} className="space-y-4">
@@ -559,8 +566,12 @@ export default function ProjectWorkspacePage() {
                   <ul className="space-y-3">
                     {result.results.map((paper) => (
                       <li key={paper.id} className="rounded-xl border border-zenith-border bg-white p-4">
-                        <h4 className="text-sm font-semibold text-ink-900">{paper.title}</h4>
+                        <h4 className="text-sm font-semibold text-ink-900">
+                          {paper.source_type === 'pdf_page' ? `${paper.filename ?? paper.title} · page ${paper.page_number ?? '?'}` : paper.title}
+                        </h4>
                         <p className="mt-1 font-mono text-[10px] text-zenith-muted">{paper.id}{typeof paper.score === 'number' ? ` · score ${paper.score.toFixed(2)}` : ''}</p>
+                        {paper.snippet && <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{paper.snippet}”</blockquote>}
+                        {paper.citation_id && <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{paper.citation_id}] · page offsets {paper.start_offset}–{paper.end_offset}</p>}
                         {paper.abstract && <p className="mt-2 line-clamp-4 text-sm leading-6 text-zenith-body">{paper.abstract}</p>}
                       </li>
                     ))}

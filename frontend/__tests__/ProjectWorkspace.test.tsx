@@ -97,7 +97,10 @@ describe('ProjectWorkspacePage', () => {
           explanation: 'Exact abstract evidence from attached papers.',
         };
       } else if (url.pathname === '/api/retrieval/search' && method === 'POST') {
-        body = { results: [{ id: 'paper-1', title: 'Reliable Retrieval', abstract: 'A useful project paper.', score: 0.9 }] };
+        body = { results: [
+          { id: 'paper-1', source_type: 'paper', title: 'Reliable Retrieval', abstract: 'A useful project paper.', score: 0.9 },
+          { id: 'document-1:page:4', source_type: 'pdf_page', title: 'methods.pdf', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', snippet: 'The PDF reports retrieval quality.', start_offset: 5, end_offset: 39, score: 0.8 },
+        ] };
       } else if (url.pathname === '/api/research/answer' && method === 'POST') {
         body = {
           summary: 'Extractive evidence from a project PDF.',
@@ -155,6 +158,8 @@ describe('ProjectWorkspacePage', () => {
     fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
     expect(await screen.findByText('A useful project paper.')).toBeInTheDocument();
+    expect(await screen.findByText('“The PDF reports retrieval quality.”')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:4] · page offsets 5–39')).toBeInTheDocument();
     await waitFor(() => {
       const searchRequest = request.mock.calls.find(([input, init]) =>
         String(input).endsWith('/api/retrieval/search') && init?.method === 'POST',
