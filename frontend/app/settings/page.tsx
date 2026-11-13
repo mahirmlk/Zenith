@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ModelSelector } from '@/components/ModelSelector';
+import EmailNotificationPreferences from '@/components/EmailNotificationPreferences';
 import { useAppStore } from '@/store/useAppStore';
 import { fetchPrefs, updatePrefs } from '@/lib/api';
 import { AccountApiError, deleteAccount, exportAccountData } from '@/lib/account-api';
@@ -134,6 +135,8 @@ export default function SettingsPage() {
           >
             {saveMutation.isPending ? 'Saving...' : 'Save Preferences'}
           </button>
+
+          <EmailNotificationPreferences />
         </div>
 
         <section aria-labelledby="account-data-heading" className="mt-6 surface-card p-6 lg:p-8">

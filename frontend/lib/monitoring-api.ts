@@ -28,6 +28,14 @@ export interface AppNotification {
   read_at: string | null;
 }
 
+export interface NotificationPreferences {
+  available: boolean;
+  email_opt_in: boolean;
+  email_frequency: 'daily' | 'weekly';
+  timezone: string;
+  suppressed: boolean;
+}
+
 export class MonitoringApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
@@ -102,4 +110,12 @@ export function markNotificationsRead(): Promise<{ status: string }> {
 
 export function markNotificationRead(id: string): Promise<{ status: string }> {
   return request(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+}
+
+export function fetchNotificationPreferences(): Promise<NotificationPreferences> {
+  return request('/api/notifications/preferences');
+}
+
+export function updateNotificationPreferences(input: Pick<NotificationPreferences, 'email_opt_in' | 'email_frequency' | 'timezone'>): Promise<NotificationPreferences> {
+  return request('/api/notifications/preferences', { method: 'PUT', body: JSON.stringify(input) });
 }

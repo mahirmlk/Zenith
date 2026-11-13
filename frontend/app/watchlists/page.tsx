@@ -176,7 +176,7 @@ export default function WatchlistsPage() {
           </ul>
           {(update.error || remove.error) && <p role="alert" className="mt-3 text-sm text-red-700">{(update.error ?? remove.error)?.message ?? 'The watchlist could not be updated.'}</p>}
         </section>
-        <p className="mt-6 text-xs leading-5 text-zenith-muted">Topic monitoring checks ingested papers. Author and citation monitoring uses Semantic Scholar stable IDs and runs when ingestion executes; provider outages pause that watch’s cursor for retry. Notifications are in-app only.</p>
+        <p className="mt-6 text-xs leading-5 text-zenith-muted">Topic monitoring checks ingested papers. Author and citation monitoring uses Semantic Scholar stable IDs and runs when ingestion executes; provider outages pause that watch’s cursor for retry. New matches appear in your in-app notifications. You can optionally enable email digests in <Link href="/settings" className="font-medium underline underline-offset-2">Settings</Link>.</p>
       </div>
     </main>
   );

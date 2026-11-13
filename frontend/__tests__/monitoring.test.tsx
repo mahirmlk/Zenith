@@ -4,26 +4,31 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import WatchlistsPage from '@/app/watchlists/page';
 import NotificationsPage from '@/app/notifications/page';
+import EmailNotificationPreferences from '@/components/EmailNotificationPreferences';
 import {
   createWatchlist,
   deleteWatchlist,
   fetchNotifications,
+  fetchNotificationPreferences,
   fetchWatchedProjects,
   fetchWatchlists,
   markNotificationRead,
   markNotificationsRead,
   updateWatchlist,
+  updateNotificationPreferences,
 } from '@/lib/monitoring-api';
 
 vi.mock('@/lib/monitoring-api', () => ({
   createWatchlist: vi.fn(),
   deleteWatchlist: vi.fn(),
   fetchNotifications: vi.fn(),
+  fetchNotificationPreferences: vi.fn(),
   fetchWatchedProjects: vi.fn(),
   fetchWatchlists: vi.fn(),
   markNotificationRead: vi.fn(),
   markNotificationsRead: vi.fn(),
   updateWatchlist: vi.fn(),
+  updateNotificationPreferences: vi.fn(),
 }));
 
 function renderWithQuery(ui: React.ReactNode) {
@@ -81,6 +86,66 @@ describe('monitoring pages', () => {
     await waitFor(() => expect(updateWatchlist).toHaveBeenCalledWith('watch-1', { enabled: false }));
     expect(screen.getByRole('link', { name: 'Protein project' })).toHaveAttribute('href', '/projects/project-1');
     expect(deleteWatchlist).not.toHaveBeenCalled();
+  });
+
+  it('keeps email controls hidden when the backend reports the feature unavailable', async () => {
+    vi.mocked(fetchNotificationPreferences).mockResolvedValue({
+      available: false, email_opt_in: false, email_frequency: 'daily', timezone: 'UTC', suppressed: false,
+    });
+    renderWithQuery(<EmailNotificationPreferences />);
+
+    await waitFor(() => expect(fetchNotificationPreferences).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('heading', { name: 'Email notifications' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email me watchlist updates')).not.toBeInTheDocument();
+  });
+
+  it('lets an already opted-in user remove consent while email delivery is unavailable', async () => {
+    vi.mocked(fetchNotificationPreferences).mockResolvedValue({
+      available: false, email_opt_in: true, email_frequency: 'weekly', timezone: 'Asia/Kolkata', suppressed: false,
+    });
+    vi.mocked(updateNotificationPreferences).mockResolvedValue({
+      available: false, email_opt_in: false, email_frequency: 'weekly', timezone: 'Asia/Kolkata', suppressed: false,
+    });
+    renderWithQuery(<EmailNotificationPreferences />);
+
+    expect(await screen.findByText(/Email delivery is unavailable, so no email will be sent/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Email me watchlist updates')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email frequency')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off email opt-in' }));
+
+    await waitFor(() => expect(updateNotificationPreferences).toHaveBeenCalledWith({
+      email_opt_in: false, email_frequency: 'weekly', timezone: 'Asia/Kolkata',
+    }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Email opt-in turned off.');
+  });
+
+  it('saves explicit email opt-in, frequency, and time zone preferences', async () => {
+    const initial = { available: true, email_opt_in: false, email_frequency: 'weekly' as const, timezone: 'UTC', suppressed: false };
+    vi.mocked(fetchNotificationPreferences).mockResolvedValue(initial);
+    vi.mocked(updateNotificationPreferences).mockImplementation(async (input) => ({ ...initial, ...input }));
+    renderWithQuery(<EmailNotificationPreferences />);
+
+    const optIn = await screen.findByRole('checkbox', { name: 'Email me watchlist updates' });
+    expect(screen.getByText(/A verified email address is required for delivery/)).toBeInTheDocument();
+    fireEvent.click(optIn);
+    fireEvent.change(screen.getByLabelText('Email frequency'), { target: { value: 'daily' } });
+    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'Asia/Kolkata' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save email preferences' }));
+
+    await waitFor(() => expect(updateNotificationPreferences).toHaveBeenCalledWith({
+      email_opt_in: true, email_frequency: 'daily', timezone: 'Asia/Kolkata',
+    }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Email preferences saved.');
+  });
+
+  it('discloses suppression without revealing suppression details', async () => {
+    vi.mocked(fetchNotificationPreferences).mockResolvedValue({
+      available: true, email_opt_in: true, email_frequency: 'daily', timezone: 'UTC', suppressed: true,
+    });
+    renderWithQuery(<EmailNotificationPreferences />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Email delivery is currently paused. In-app notifications remain available.');
+    expect(screen.getByRole('checkbox', { name: 'Email me watchlist updates' })).toBeChecked();
   });
 
   it('marks notifications read and displays paper links', async () => {
