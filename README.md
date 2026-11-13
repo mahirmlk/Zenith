@@ -31,7 +31,7 @@ Status: feature slices are under review; **not production-ready**. Run #48 passe
 | Streaming | SSE with start-once durable runs, event replay, reconnect-safe, cancel |
 | Citation graph | Cached Semantic Scholar edges, deterministic layout |
 | Projects | CRUD, notes, paper sources, project PDFs with page citations, owner/editor/viewer roles, invitations, soft-delete |
-| Research evidence | Project-scoped PDF/page retrieval, evidence maps, answers, comparison context, and heuristic abstract comparison rows; no multi-paper synthesis |
+| Research evidence | Project-scoped PDF/page retrieval, evidence maps, answers, heuristic abstract comparison rows, and bounded cross-paper abstract synthesis with model-reviewed claim status |
 | Paper-to-code | Evidence-backed abstract-level brief + Markdown export; arbitrary execution is always disabled |
 | Monitoring | Watchlists (daily/weekly) + in-app notifications |
 | Guardrails | Deny-by-default tool policy, backend approvals, citation validation, SSRF defence |
@@ -140,7 +140,7 @@ Before production, apply [migrations](docs/MIGRATIONS_RUNBOOK.md) `0001-0014` to
 | `GET /api/papers` · `/saved` · `/{id}` · `POST /{id}/save` | JWT | Papers + personal library |
 | `GET /api/graph/{id}` | JWT | Citation graph (cached) |
 | `POST /api/retrieval/search` | JWT | Hybrid (BM25 + vector), project-scoped |
-| `POST /api/research/{plan,compare,answer,evidence-map}` | JWT | Task routing and bounded extractive research evidence; no synthesis |
+| `POST /api/research/{plan,compare,answer,evidence-map,synthesize}` | JWT | Task routing, bounded extractive evidence, and provisional cross-paper synthesis with exact abstract citations |
 | `GET /api/implementations/{id}/{plan,export}` | JWT | Paper-to-code plan (no execution) |
 | `/api/projects` · `/notes` · `/members` | JWT (owner/member) | Research workspace |
 | `/api/watchlists` · `/notifications` | JWT | Monitoring + in-app alerts |
@@ -198,9 +198,9 @@ GitHub Actions run on every PR/push: lint, typecheck, tests, eval smoke, Docker 
 | Phase | Status |
 |---|---|
 | Security, guardrails, durable runs, evals | Shipped |
-| Research workspaces, hybrid retrieval | Implemented locally; deep research synthesis remains open |
+| Research workspaces, hybrid retrieval | Implemented locally; synthesis is bounded and provisional, with provider and human-quality review still open |
 | Evidence map and paper-to-code plan/export | Implemented locally; evaluation and staging verification remain |
-| Multi-paper synthesis, secure paper-code execution, invitation UX, integrations | Not implemented |
+| Deep multi-step research planning, secure paper-code execution, integrations | Not implemented |
 | Staging release gates and production deployment | Blocked on live infrastructure and remote CI evidence |
 
 Live status matrix: [docs/STATUS.md](docs/STATUS.md). Full plan: [update.md](update.md).

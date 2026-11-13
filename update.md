@@ -1007,3 +1007,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Apply and verify migrations/RLS and account export/deletion cascades against staging. Cross-paper synthesis and claim verification, OCR, broader reliability/quality validation, current-head CI, and other production gates remain open.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release gates.
+
+### §24.14 Bounded project-scoped cross-paper synthesis (2026-11-13)
+
+- [x] Added `POST /api/research/synthesize`. It authorizes project membership before reading attached papers, selects up to six exact abstract sentences from distinct papers, validates local character offsets, and returns stable server-created evidence IDs. It does not query uploaded PDF tables or send private PDF text to providers.
+- [x] Added bounded two-stage provider flow through `llm_router.py`: claim drafting and separate support/conflict/uncertainty review, each capped at 900 output tokens and 20 seconds. The endpoint limits each user to 10 daily synthesis requests using the shared Redis budget namespace and fails closed if production Redis is unavailable.
+- [x] Validates strict response schemas, rejects unknown or single-source evidence references, downgrades single-paper support and unsubstantiated conflict to uncertain, and returns exact cited abstract sentences with titles and offsets. UI labels statuses as model-reviewed and provisional. This is not independent scientific verification.
+- [x] Added backend, budget, service, and frontend regression coverage plus `cross_paper_synthesis_v1` mocked-provider contract fixtures for opposing findings, weak-support downgrade, and fabricated evidence-ID rejection.
+- [x] Local validation: backend 237 passed / 6 skipped; frontend 40 tests across 8 files; frontend lint/typecheck/build pass; Ruff passed; strict mypy passed for 74 application files; evals 18/18 paper, 6/6 PDF, 3/3 synthesis contract fixtures passed.
+- [ ] Current-head CI, staging provider/budget/recovery checks, blinded domain-expert review, and calibrated claim-level quality evaluation remain required. The small mocked eval does not establish model output quality.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.

@@ -14,7 +14,7 @@ It is a **full-stack reference application under active development**, built aro
 
 | Audience | What they get |
 |----------|---------------|
-| **End users** | A paper feed, project libraries, summaries, citation graph, extractive answers, evidence map, and non-executing implementation briefs |
+| **End users** | A paper feed, project libraries, summaries, citation graph, extractive answers, evidence map, provisional cross-paper synthesis, and non-executing implementation briefs |
 | **Developers** | A four-layer codebase with API documentation, tests, CI, and decision records |
 | **Operators** | Docker/Fly/Vercel configuration and readiness checks; live deployment and operational recovery still require staging validation |
 
@@ -25,13 +25,13 @@ Researchers and ML engineers are overwhelmed by the volume of new papers. Zenith
 1. **Discovery** — pulls new papers daily from ArXiv and HuggingFace Daily Papers (see [FLOW.md](./FLOW.md) and [ADR-004](./adr/0004-daily-ingestion-scheduler.md)).
 2. **Summarisation** — LLM-generated TL;DR, three key contributions, and a difficulty rating per paper (see [ADR-002](./adr/0002-llm-routing.md), [ADR-008](./adr/0008-summary-cost-cap.md)).
 3. **Personalisation** — ranks papers against user interests and available embeddings, with deterministic retrieval fallbacks.
-4. **Research and implementation** — returns extractive evidence from attached project papers and source-grounded, abstract-level implementation briefs. It does not generate a verified literature synthesis or reproduce code.
+4. **Research and implementation** — returns extractive evidence from attached project papers, provisional claim synthesis over public abstracts, and source-grounded implementation briefs. Model-reviewed synthesis is not independently verified and does not reproduce code.
 5. **Presentation** — a web UI for the feed, paper details, project workspace, streaming research runs, and citation graph.
 
 ## Non-goals (explicitly out of scope)
 
 - **Organization-wide collaboration** — project membership and email invitation flows are implemented locally; delivery and acceptance remain unverified in staging, and account discovery/complete collaboration workflows remain incomplete.
-- **Verified scientific synthesis or reproduction** — current research responses are extractive and implementation briefs are not experimental reproductions.
+- **Independently verified scientific synthesis or reproduction** — bounded abstract-level synthesis is available with provisional model-reviewed evidence labels; implementation briefs are not experimental reproductions.
 - **Desktop / mobile apps** — web-only (Next.js).
 - **Closed model lock-in** — every LLM path routes through a provider-agnostic gateway (see [ADR-002](./adr/0002-llm-routing.md)).
 

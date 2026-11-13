@@ -127,6 +127,7 @@ All routes below require a user JWT.
 | `POST /api/research/compare` | Heuristic comparison rows plus exact PDF page evidence for an authorized project; global requests stay PDF-free |
 | `POST /api/research/answer` | Extractive answer: returns exact matching abstract sentences, and for project requests exact PDF page sentences with document/page citations; abstains when no sentence matches |
 | `POST /api/research/evidence-map` | Bounded extractive evidence from a required accessible `project_id`; considers up to 10 attached papers and 10 uploaded documents/500 page rows, returning at most 5 combined exact spans |
+| `POST /api/research/synthesize` | Bounded provisional claims from up to six exact abstract sentences; project requests require membership and never include private PDF text in provider input |
 
 Request body for these endpoints:
 
@@ -166,6 +167,21 @@ Project-scoped search results discriminate `source_type: "paper"` and
 `end_offset` values into that page's extracted text. Result `id` equals the
 stable page citation ID for PDF results. Paper rows expose only `id`, `title`,
 and `abstract` as source fields; embedding vectors are never returned.
+
+`/api/research/synthesize` uses the same request shape and requires matching
+sentences from at least two distinct papers. It selects at most six exact
+abstract sentences with server-created `E1`-style evidence IDs, drafts no more
+than five claims, and sends a second bounded provider request to review
+supporting and contradicting sources. Responses include each claim's
+`supported`, `conflicting`, or `uncertain` status and the exact evidence items
+with paper ID, title, and half-open abstract offsets. Unknown evidence IDs are
+rejected; single-source support and unsupported conflict labels are downgraded
+to uncertain. These statuses are model-reviewed and provisional, not
+independent scientific verification. At most 10 synthesis requests per user
+per UTC day are allowed; production requires shared Redis. Provider requests
+are limited to 900 output tokens and 20 seconds each. Uploaded PDF text is not
+read by this route or sent to providers. Provider failure returns 503 and
+malformed or fabricated-anchor output returns 502.
 
 ## Projects, watchlists, and notifications
 

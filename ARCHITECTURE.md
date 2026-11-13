@@ -1,6 +1,6 @@
 # Zenith — Current Runtime Architecture
 
-> Reviewed against the checked-in code on 2026-11-12. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
+> Reviewed against the checked-in code on 2026-11-13. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
 
 ---
 
@@ -8,7 +8,7 @@
 
 Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings and account privacy controls, citation graph, project workspaces, topic watchlists, notifications, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search requests enter a Redis Streams worker queue; the worker runs the LangGraph Research → Summary → Memory pipeline. The pipeline uses ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive evidence maps, answers, and comparisons. A Redis-leased scheduler triggers watchlist ingestion and creates caller-scoped in-app notifications.
 
-**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. Non-project answers, general retrieval, and comparisons remain abstract/metadata based. No route produces a synthesized scientific conclusion. See `docs/STATUS.md` for release blockers.
+**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. The separate `/api/research/synthesize` endpoint drafts up to five provisional claims from at most six exact abstract sentences, then asks a second provider call to review evidence relations. It returns server-validated citations and model-reviewed status labels, not independently verified scientific conclusions; private PDFs are excluded. Non-project answers, general retrieval, and comparison dimensions remain abstract/metadata based. See `docs/STATUS.md` for release blockers.
 
 ---
 
