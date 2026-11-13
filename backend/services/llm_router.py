@@ -42,7 +42,7 @@ def validate_model(model: str | None, agent: str = "summary_default") -> str | N
     return model
 
 
-def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
+def get_openrouter_llm(model: str, temperature: float = 0.3, max_tokens: int = 4096) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
 
     settings = get_settings()
@@ -53,7 +53,7 @@ def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
         api_key=settings.openrouter_api_key,  # type: ignore[arg-type]
         model=model,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=max_tokens,
         default_headers={
             "HTTP-Referer": settings.app_url,
             "X-Title": "Zenith",
@@ -61,7 +61,9 @@ def get_openrouter_llm(model: str, temperature: float = 0.3) -> BaseChatModel:
     )
 
 
-def get_anthropic_llm(model: str = "claude-sonnet-4-5", temperature: float = 0.3) -> BaseChatModel:
+def get_anthropic_llm(
+    model: str = "claude-sonnet-4-5", temperature: float = 0.3, max_tokens: int = 4096
+) -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
 
     settings = get_settings()
@@ -71,11 +73,11 @@ def get_anthropic_llm(model: str = "claude-sonnet-4-5", temperature: float = 0.3
         model=model,
         api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
 
 
-def get_openai_llm(model: str = "gpt-4o", temperature: float = 0.3) -> BaseChatModel:
+def get_openai_llm(model: str = "gpt-4o", temperature: float = 0.3, max_tokens: int = 4096) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
 
     settings = get_settings()
@@ -85,11 +87,13 @@ def get_openai_llm(model: str = "gpt-4o", temperature: float = 0.3) -> BaseChatM
         model=model,
         api_key=settings.openai_api_key,  # type: ignore[arg-type]
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
 
 
-def get_gemini_llm(model: str = "gemini-2.0-flash", temperature: float = 0.3) -> BaseChatModel:
+def get_gemini_llm(
+    model: str = "gemini-2.0-flash", temperature: float = 0.3, max_tokens: int = 4096
+) -> BaseChatModel:
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     settings = get_settings()
@@ -99,11 +103,13 @@ def get_gemini_llm(model: str = "gemini-2.0-flash", temperature: float = 0.3) ->
         model=model,
         google_api_key=settings.google_api_key,
         temperature=temperature,
-        max_output_tokens=4096,
+        max_output_tokens=max_tokens,
     )
 
 
-def get_mistral_llm(model: str = "mistral-large-latest", temperature: float = 0.3) -> BaseChatModel:
+def get_mistral_llm(
+    model: str = "mistral-large-latest", temperature: float = 0.3, max_tokens: int = 4096
+) -> BaseChatModel:
     from langchain_mistralai import ChatMistralAI
     from pydantic import SecretStr
 
@@ -114,7 +120,7 @@ def get_mistral_llm(model: str = "mistral-large-latest", temperature: float = 0.
         model_name=model,
         api_key=SecretStr(settings.mistral_api_key),
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
 
 
@@ -122,7 +128,10 @@ def get_llm(
     agent: str = "summary_default",
     model_override: Optional[str] = None,
     temperature: float = 0.3,
+    max_tokens: int = 4096,
 ) -> BaseChatModel:
+    if not 1 <= max_tokens <= 4096:
+        raise ValueError("max_tokens must be between 1 and 4096")
     if model_override is not None:
         validate_model(model_override, agent)
     model = model_override or AGENT_MODEL_MAP.get(agent, AGENT_MODEL_MAP["summary_default"])
@@ -130,19 +139,19 @@ def get_llm(
     # Try OpenRouter first for any model string that looks like an OpenRouter ID
     if "/" in model:
         try:
-            return get_openrouter_llm(model, temperature)
+            return get_openrouter_llm(model, temperature, max_tokens)
         except RuntimeError:
             pass
 
     # Fallback to direct providers based on model prefix
     if model.startswith("claude"):
-        return get_anthropic_llm(model, temperature)
+        return get_anthropic_llm(model, temperature, max_tokens)
     if model.startswith("gpt"):
-        return get_openai_llm(model, temperature)
+        return get_openai_llm(model, temperature, max_tokens)
     if model.startswith("gemini"):
-        return get_gemini_llm(model, temperature)
+        return get_gemini_llm(model, temperature, max_tokens)
     if model.startswith("mistral"):
-        return get_mistral_llm(model, temperature)
+        return get_mistral_llm(model, temperature, max_tokens)
 
     # Final fallback: OpenAI direct with the given model name
-    return get_openai_llm(model, temperature)  # type: ignore[no-any-return,unused-ignore]
+    return get_openai_llm(model, temperature, max_tokens)  # type: ignore[no-any-return,unused-ignore]

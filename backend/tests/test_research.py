@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from agents.research_types import build_comparison, classify_task
+from agents.research_types import SynthesisClaim, build_comparison, classify_task
 from routers.research import (
     ProjectEvidenceMapRequest,
     ResearchRequest,
@@ -12,6 +12,7 @@ from routers.research import (
     research_answer,
     research_compare,
     research_evidence_map,
+    research_synthesize,
 )
 from services.retrieval import hybrid_rank
 
@@ -525,6 +526,98 @@ async def test_global_comparison_never_reads_project_pdf_tables():
         table in {"project_documents", "project_document_pages"}
         for table, _, _ in supabase.range_calls
     )
+
+
+@pytest.mark.asyncio
+async def test_project_synthesis_uses_only_attached_public_abstract_spans(monkeypatch):
+    papers = [
+        {"id": "paper-a", "title": "Diffusion retrieval A", "abstract": "Diffusion retrieval increased recall in the Harbor benchmark."},
+        {"id": "paper-b", "title": "Diffusion retrieval B", "abstract": "Diffusion retrieval decreased recall in the Redwood benchmark."},
+        {"id": "unattached", "title": "Diffusion retrieval C", "abstract": "Unattached diffusion retrieval source."},
+    ]
+    private_text = "Private PDF sentence must never be sent to the model."
+    supabase = FakeSupabase(
+        project={"owner_id": "owner"},
+        members=[{"project_id": "proj", "user_id": "member", "role": "viewer"}],
+        sources=[
+            {"project_id": "proj", "paper_id": "paper-a"},
+            {"project_id": "proj", "paper_id": "paper-b"},
+        ],
+        papers=papers,
+        documents=[{"id": "private-doc", "project_id": "proj", "filename": "private.pdf"}],
+        pages=[{"document_id": "private-doc", "page_number": 1, "text": private_text}],
+    )
+    budget_calls = []
+    service_calls = []
+
+    async def consume(user_id, daily_limit, *, namespace):
+        budget_calls.append((user_id, daily_limit, namespace))
+        return True
+
+    async def synthesize(query, evidence):
+        service_calls.append((query, evidence))
+        return [SynthesisClaim(
+            text="The studies report different recall outcomes.",
+            status="conflicting",
+            supporting_evidence_ids=["E1"],
+            contradicting_evidence_ids=["E2"],
+            cited_evidence_ids=["E1", "E2"],
+            explanation="The abstracts report different directions.",
+        )]
+
+    from services import budget
+    monkeypatch.setattr(budget, "consume", consume)
+    monkeypatch.setattr("routers.research.synthesize_claims", synthesize)
+
+    result = await research_synthesize(
+        ResearchRequest(query="diffusion retrieval recall", project_id="proj"),
+        object(),
+        {"user_id": "member"},
+        supabase,
+    )
+
+    assert result.abstained is False
+    assert result.claims[0].status == "conflicting"
+    assert {item.paper_id for item in result.evidence} == {"paper-a", "paper-b"}
+    assert all(
+        item.sentence in next(paper["abstract"] for paper in papers if paper["id"] == item.paper_id)
+        for item in result.evidence
+    )
+    assert private_text not in str(service_calls)
+    assert "unattached" not in {item.paper_id for item in result.evidence}
+    assert budget_calls == [("member", 10, "synthesis")]
+    assert not any(
+        table in {"project_documents", "project_document_pages"}
+        for table, _, _ in supabase.range_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_synthesis_abstains_before_budget_without_two_papers(monkeypatch):
+    supabase = FakeSupabase(
+        project={"owner_id": "owner"},
+        sources=[{"project_id": "proj", "paper_id": "paper-a"}],
+        papers=[{"id": "paper-a", "title": "Diffusion", "abstract": "Diffusion retrieval increased recall."}],
+    )
+    calls = []
+
+    async def consume(*_args, **_kwargs):
+        calls.append("budget")
+        return True
+
+    from services import budget
+    monkeypatch.setattr(budget, "consume", consume)
+
+    result = await research_synthesize(
+        ResearchRequest(query="diffusion retrieval", project_id="proj"),
+        object(),
+        {"user_id": "owner"},
+        supabase,
+    )
+
+    assert result.abstained is True
+    assert result.claims == []
+    assert calls == []
 
 
 @pytest.mark.asyncio

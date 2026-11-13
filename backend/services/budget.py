@@ -13,7 +13,7 @@ from typing import Any, cast
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-_counts: dict[tuple[str, str], int] = defaultdict(int)
+_counts: dict[tuple[str, str, str], int] = defaultdict(int)
 _lock = asyncio.Lock()
 _redis = None
 _redis_url: str | None = None
@@ -44,11 +44,13 @@ async def _get_redis_client(redis_url: str) -> Any:
     return _redis
 
 
-async def _consume_redis(user_id: str, daily_limit: int, redis_url: str) -> bool:
+async def _consume_redis(
+    user_id: str, daily_limit: int, redis_url: str, namespace: str
+) -> bool:
     client = await _get_redis_client(redis_url)
     day, ttl = _utc_day_and_ttl()
     user_digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
-    key = f"zenith:budget:search:{user_digest}:{day}"
+    key = f"zenith:budget:{namespace}:{user_digest}:{day}"
     # The entire check/increment/expiry operation runs atomically in Redis.
     script = """
     local current = tonumber(redis.call('GET', KEYS[1]) or '0')
@@ -61,31 +63,33 @@ async def _consume_redis(user_id: str, daily_limit: int, redis_url: str) -> bool
     return bool(await client.eval(script, 1, key, daily_limit, ttl))
 
 
-async def _consume_memory(user_id: str, daily_limit: int) -> bool:
+async def _consume_memory(user_id: str, daily_limit: int, namespace: str) -> bool:
     day, _ = _utc_day_and_ttl()
     async with _lock:
         # Keep the development-only map bounded across UTC day changes.
         expired = [key for key in _counts if key[1] != day]
         for key in expired:
             del _counts[key]
-        key = (user_id, day)
+        key = (user_id, day, namespace)
         if _counts[key] >= daily_limit:
             return False
         _counts[key] += 1
         return True
 
 
-async def consume(user_id: str, daily_limit: int) -> bool:
+async def consume(user_id: str, daily_limit: int, namespace: str = "search") -> bool:
     """Consume one slot if available; raises in production if Redis is unavailable."""
     settings = get_settings()
     if not user_id:
         raise ValueError("user_id is required for search budgeting")
+    if not namespace or not namespace.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("budget namespace must contain only letters, numbers, '-' or '_'")
     if daily_limit <= 0:
         return False
 
     if settings.redis_url:
         try:
-            return await _consume_redis(user_id, daily_limit, settings.redis_url)
+            return await _consume_redis(user_id, daily_limit, settings.redis_url, namespace)
         except Exception as exc:
             if settings.app_env.lower() == "production":
                 raise BudgetUnavailableError("Shared search budget store unavailable") from exc
@@ -93,15 +97,15 @@ async def consume(user_id: str, daily_limit: int) -> bool:
     elif settings.app_env.lower() == "production":
         raise BudgetUnavailableError("Redis is required for production search budgets")
 
-    return await _consume_memory(user_id, daily_limit)
+    return await _consume_memory(user_id, daily_limit, namespace)
 
 
-async def refund(user_id: str) -> None:
+async def refund(user_id: str, namespace: str = "search") -> None:
     """Refund a reservation when a concurrent idempotent create replays."""
     settings = get_settings()
     day, _ = _utc_day_and_ttl()
     user_digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
-    key = f"zenith:budget:search:{user_digest}:{day}"
+    key = f"zenith:budget:{namespace}:{user_digest}:{day}"
     if settings.redis_url:
         client = await _get_redis_client(settings.redis_url)
         await client.eval(
@@ -115,8 +119,8 @@ async def refund(user_id: str) -> None:
     if settings.app_env.lower() == "production":
         raise BudgetUnavailableError("Redis is required for production search budgets")
     async with _lock:
-        if _counts.get((user_id, day), 0) > 0:
-            _counts[(user_id, day)] -= 1
+        if _counts.get((user_id, day, namespace), 0) > 0:
+            _counts[(user_id, day, namespace)] -= 1
 
 
 def reset_for_tests() -> None:

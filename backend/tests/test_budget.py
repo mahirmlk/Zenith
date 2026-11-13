@@ -47,6 +47,24 @@ async def test_redis_budget_enforces_limit_and_isolates_user_and_day(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_redis_budget_namespaces_are_isolated(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(
+        budget,
+        "get_settings",
+        lambda: SimpleNamespace(redis_url="redis://redis", app_env="production"),
+    )
+    monkeypatch.setattr(budget, "_get_redis_client", lambda _url: _return(fake))
+
+    assert await budget.consume("user-a", 1, namespace="search") is True
+    assert await budget.consume("user-a", 1, namespace="synthesis") is True
+    assert await budget.consume("user-a", 1, namespace="synthesis") is False
+    assert len(fake.counts) == 2
+    assert any(":search:" in key for key in fake.counts)
+    assert any(":synthesis:" in key for key in fake.counts)
+
+
+@pytest.mark.asyncio
 async def test_production_budget_fails_closed_when_redis_is_not_configured(monkeypatch):
     monkeypatch.setattr(
         budget,

@@ -69,6 +69,36 @@ class ResearchComparisonResponse(BaseModel):
     pdf_evidence: list[PdfEvidenceItem] = Field(default_factory=list)
 
 
+class SynthesisEvidenceItem(BaseModel):
+    """A sentence selected from a public paper abstract with exact offsets."""
+
+    evidence_id: str
+    paper_id: str
+    title: str = ""
+    sentence: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
+
+
+class SynthesisClaim(BaseModel):
+    """A generated cross-paper claim with model-assessed evidence relations."""
+
+    text: str
+    status: Literal["supported", "conflicting", "uncertain"]
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    contradicting_evidence_ids: list[str] = Field(default_factory=list)
+    cited_evidence_ids: list[str] = Field(default_factory=list)
+    explanation: str = ""
+
+
+class ResearchSynthesisResponse(BaseModel):
+    query: str
+    claims: list[SynthesisClaim] = Field(default_factory=list)
+    evidence: list[SynthesisEvidenceItem] = Field(default_factory=list)
+    abstained: bool = True
+    explanation: str = ""
+
+
 class ResearchAnswer(BaseModel):
     summary: str
     claims: list[str] = Field(default_factory=list)

@@ -16,6 +16,8 @@ from agents.research_types import (
     EvidenceMapResponse,
     PdfEvidenceItem,
     ResearchComparisonResponse,
+    ResearchSynthesisResponse,
+    SynthesisEvidenceItem,
     ResearchAnswer,
     build_comparison,
     classify_task,
@@ -25,10 +27,12 @@ from security.authorization import can_access_project
 from security.output_validation import validate_citations
 from services.retrieval import hybrid_rank, query_entities, query_terms
 from services.supabase_client import get_supabase
+from services.synthesis import SynthesisOutputError, SynthesisProviderError, synthesize_claims
 from security.prompt_injection import scan_untrusted
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/research", tags=["research"])
+MAX_DAILY_SYNTHESIS_REQUESTS = 10
 
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
@@ -65,7 +69,7 @@ async def _papers_for_request(
     supabase: Any,
 ) -> list[dict[str, Any]]:
     """Load a bounded public corpus or only papers attached to an accessible project."""
-    query = supabase.table("papers").select("*")
+    query = supabase.table("papers").select("id,title,abstract")
     if body.project_id:
         project_result = await (
             supabase.table("projects")
@@ -545,4 +549,90 @@ async def research_answer(
         raise
     except Exception:
         logger.exception("research_answer failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.post("/synthesize", response_model=ResearchSynthesisResponse)
+async def research_synthesize(
+    body: ResearchRequest,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> ResearchSynthesisResponse:
+    """Return bounded, model-reviewed claims over public paper abstract spans.
+
+    Project authorization happens in `_papers_for_request` before retrieval.
+    Private project PDF text is deliberately excluded from provider input.
+    """
+    try:
+        papers = await _papers_for_request(body, user, supabase)
+        ranked = hybrid_rank(body.query, papers)[:10]
+        evidence: list[SynthesisEvidenceItem] = []
+        for paper in ranked:
+            candidate = _extractive_evidence_items(body.query, [paper], limit=1)
+            if not candidate:
+                continue
+            item = candidate[0]
+            abstract = paper.get("abstract")
+            if (
+                not isinstance(abstract, str)
+                or item.start_offset < 0
+                or item.end_offset > len(abstract)
+                or abstract[item.start_offset:item.end_offset] != item.sentence
+            ):
+                continue
+            evidence.append(
+                SynthesisEvidenceItem(
+                    evidence_id=f"E{len(evidence) + 1}",
+                    paper_id=item.paper_id,
+                    title=item.title,
+                    sentence=item.sentence,
+                    start_offset=item.start_offset,
+                    end_offset=item.end_offset,
+                )
+            )
+            if len(evidence) >= 6:
+                break
+
+        if len({item.paper_id for item in evidence}) < 2:
+            return ResearchSynthesisResponse(
+                query=body.query,
+                evidence=evidence,
+                abstained=True,
+                explanation="Cross-paper synthesis needs matching evidence from at least two papers.",
+            )
+
+        from services import budget
+
+        try:
+            within_budget = await budget.consume(
+                user["user_id"], MAX_DAILY_SYNTHESIS_REQUESTS, namespace="synthesis"
+            )
+        except budget.BudgetUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="Research synthesis temporarily unavailable") from exc
+        if not within_budget:
+            raise HTTPException(status_code=429, detail="Daily synthesis limit reached")
+
+        claims = await synthesize_claims(body.query, evidence)
+        return ResearchSynthesisResponse(
+            query=body.query,
+            claims=claims,
+            evidence=evidence,
+            abstained=not claims,
+            explanation=(
+                "Claims were generated from public abstract sentences and separately model-reviewed for support and conflict. This is not independent scientific verification."
+                if claims
+                else "No cross-paper claim passed the bounded evidence and review steps."
+            ),
+        )
+    except HTTPException:
+        raise
+    except SynthesisProviderError as exc:
+        logger.warning("research_synthesis provider unavailable")
+        raise HTTPException(status_code=503, detail="Research synthesis temporarily unavailable") from exc
+    except SynthesisOutputError as exc:
+        logger.warning("research_synthesis response failed validation")
+        raise HTTPException(status_code=502, detail="Research synthesis could not be validated") from exc
+    except Exception:
+        logger.exception("research_synthesis failed")
         raise HTTPException(status_code=500, detail="Internal error")
