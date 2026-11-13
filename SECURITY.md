@@ -161,7 +161,7 @@ Follow this checklist when deploying to production:
 
 ### Database
 
-- [ ] **Apply and verify Row-Level Security (RLS) policies** on your Supabase tables. Versioned policies are in `supabase/migrations/0001`–`0012`; `schema.sql` is a reference snapshot. Apply the ordered migration set to staging and test owner/member/editor/viewer/outsider/anonymous access, including soft-deleted projects, before production. The presence of policy SQL does not prove live RLS is enabled or correct.
+- [ ] **Apply and verify Row-Level Security (RLS) policies** on your Supabase tables. Versioned policies are in `supabase/migrations/0001`–`0014`; `schema.sql` is a reference snapshot. Apply the ordered migration set to staging and test owner/member/editor/viewer/outsider/anonymous access, including soft-deleted projects, PDF documents/pages, and invitations, before production. The presence of policy SQL does not prove live RLS is enabled or correct.
 - [ ] **Enable backups** for your Supabase project (available on Pro plan and above).
 - [ ] **Use the Supabase service role key** (`SUPABASE_SERVICE_ROLE_KEY`) only in the backend — never expose it in client-side code. The frontend should only use `SUPABASE_ANON_KEY`.
 

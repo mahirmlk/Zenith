@@ -8,7 +8,7 @@
 
 **Zenith** is a research workspace for discovering and understanding academic papers. It ingests ArXiv and Hugging Face Daily Papers, supports paper projects, ranks and summarizes papers, and provides extractive research evidence with source references. Provider behavior and live ingestion still require staging verification.
 
-It is a **full-stack reference application under active development**, built around the four-layer architecture in [ADR-001](./adr/0001-four-layer-architecture.md). The current branch's backend, frontend, evaluation, and Docker CI gates pass, but the product is **not production-ready** until staging migrations/RLS, distributed recovery, provider behavior, backup restore, monitoring, and deployment are verified. See the live [shipment status](./STATUS.md).
+It is a **full-stack reference application under active development**, built around the four-layer architecture in [ADR-001](./adr/0001-four-layer-architecture.md). Local backend, frontend, and deterministic evaluation gates pass. Current-head remote CI and Docker image builds are unverified; the product is **not production-ready** until staging migrations/RLS, distributed recovery, provider behavior, backup restore, monitoring, and deployment are verified. See the live [shipment status](./STATUS.md).
 
 ## Who it is for
 
@@ -30,7 +30,7 @@ Researchers and ML engineers are overwhelmed by the volume of new papers. Zenith
 
 ## Non-goals (explicitly out of scope)
 
-- **Organization-wide collaboration** — project membership exists, but invitation delivery and complete collaboration workflows are not implemented.
+- **Organization-wide collaboration** — project membership and email invitation flows are implemented locally; delivery and acceptance remain unverified in staging, and account discovery/complete collaboration workflows remain incomplete.
 - **Verified scientific synthesis or reproduction** — current research responses are extractive and implementation briefs are not experimental reproductions.
 - **Desktop / mobile apps** — web-only (Next.js).
 - **Closed model lock-in** — every LLM path routes through a provider-agnostic gateway (see [ADR-002](./adr/0002-llm-routing.md)).
