@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="150" viewBox="0 0 680 150" role="img" aria-labelledby="title description">
+  <title id="title">Zenith</title>
+  <desc id="description">Zenith research workspace wordmark with a minimal horizon and peak symbol.</desc>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 105 72 45l50 60" stroke="#24343A" stroke-width="4" />
+    <path d="M30 105h84" stroke="#4D8B83" stroke-width="4" />
+    <path d="M72 64v41" stroke="#4D8B83" stroke-width="2" opacity=".65" />
+  </g>
+  <circle cx="72" cy="34" r="7" fill="#4D8B83" />
+  <text x="160" y="88" fill="#24343A" font-family="Inter, Avenir, Helvetica, Arial, sans-serif" font-size="58" font-weight="650" letter-spacing="8">ZENITH</text>
+  <text x="164" y="119" fill="#627276" font-family="Inter, Avenir, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" letter-spacing="4.2">RESEARCH WORKSPACE</text>
+</svg>
