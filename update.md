@@ -1514,3 +1514,11 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Keep current-head CI/review and all staging/provider/recovery/quality gates open. The user explicitly asked to keep the local commits local; do not push this branch.
 
 **Current status remains not production-ready.** The local branch is 10 commits ahead of the remote PR head; see [docs/STATUS.md](docs/STATUS.md).
+
+### §24.66 Evaluation documentation aligned with gated plan execution (2026-11-20)
+
+- [x] Corrected `docs/EVALUATIONS.md` to distinguish the deterministic preview fixture from the implemented, production-gated LangGraph executor. The fixture does not cover service-backed execution, recovery, cancellation, changing project membership, provider behavior, or end-to-end quality; these remain staging release gates.
+- [x] Cross-checked the statement against the current backend route and frontend execution flow. Parallel frontend and scope audits found no additional locally fixable release blocker.
+- [ ] Keep production readiness blocked on current-head CI/review and staging/provider/recovery/quality evidence. The user requested that all commits remain local; no push was made.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the remaining external release gates.
