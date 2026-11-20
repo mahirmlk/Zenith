@@ -1506,3 +1506,11 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Production Auth/API values still need to be configured in the actual deployment system and verified in staging. Current-head CI, staging migrations/RLS, live providers/recovery/monitoring, and the remaining human-reviewed product-quality gates remain open.
 
 **Current status remains not production-ready.** The audit changes add one local commit beyond the remote PR head after verification; see [docs/STATUS.md](docs/STATUS.md).
+
+### §24.65 Inspection plan reconciled with current branch evidence (2026-11-20)
+
+- [x] Refreshed `plans/code-inspection-plan.md` after the final local security, CI, and frontend configuration fixes. It now reports backend 468/6, frontend 104/104, the required HTTPS test-configured frontend build, current local branch head, and the historical remote CI failure without claiming current-head CI.
+- [x] Verified the inspection plan no longer reports stale 455/6 or 97-test totals and that `git diff --check` passes.
+- [ ] Keep current-head CI/review and all staging/provider/recovery/quality gates open. The user explicitly asked to keep the local commits local; do not push this branch.
+
+**Current status remains not production-ready.** The local branch is 10 commits ahead of the remote PR head; see [docs/STATUS.md](docs/STATUS.md).
