@@ -2,7 +2,7 @@
 
 > This is a legacy schema reference for Supabase (Postgres) tables and Pydantic representations. It is not a complete current-schema specification.
 
-> **Current source of truth:** the ordered files in [`supabase/migrations/`](../supabase/migrations/) (currently 0001–0033) define the supported database schema. Read [`MIGRATIONS_RUNBOOK.md`](./MIGRATIONS_RUNBOOK.md) and apply the migration sequence to staging before production. `supabase/schema.sql` is an incomplete legacy baseline; do not use it to initialize or upgrade a production database.
+> **Current source of truth:** the ordered files in [`supabase/migrations/`](../supabase/migrations/) (currently 0001–0034) define the supported database schema. Read [`MIGRATIONS_RUNBOOK.md`](./MIGRATIONS_RUNBOOK.md) and apply the migration sequence to staging before production. `supabase/schema.sql` is an incomplete legacy baseline; do not use it to initialize or upgrade a production database.
 
 ---
 
@@ -29,7 +29,7 @@
 
 ## Overview
 
-Zenith uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. This document's opening table descriptions are a legacy overview and omit objects added by later migrations. The supported schema is the cumulative result of migrations `0001`–`0033`.
+Zenith uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. This document's opening table descriptions are a legacy overview and omit objects added by later migrations. The supported schema is the cumulative result of migrations `0001`–`0034`.
 
 - **Database:** PostgreSQL (via Supabase)
 - **Vector extension:** `pgvector` — for 1536-dimensional paper embeddings

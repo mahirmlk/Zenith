@@ -316,7 +316,7 @@ Full stack with Docker: `docker compose up --build` from the repository root (fr
 | `ADMIN_API_KEY` | Scheduler | Authenticates `POST /api/internal/ingest` |
 | `SANDBOX_ENABLED` | Ignored by current runner | Arbitrary paper-code execution is always refused |
 
-The root [.env.example](.env.example) is the canonical full configuration reference. For the local frontend, copy [frontend/.env.local.example](frontend/.env.local.example) to `frontend/.env.local` and set the Supabase public URL/key. In production, configure Redis and Postgres, set nonzero budgets intentionally, and leave model-backed synthesis, plan execution, and email delivery disabled until their release gates pass. Before production, apply migrations `0001–0030` using the [migration runbook](docs/MIGRATIONS_RUNBOOK.md), then verify RLS, invitations, provider behavior, and rollback/restore in staging.
+The root [.env.example](.env.example) is the canonical full configuration reference. For the local frontend, copy [frontend/.env.local.example](frontend/.env.local.example) to `frontend/.env.local` and set the Supabase public URL/key. In production, configure Redis and Postgres, set nonzero budgets intentionally, and leave model-backed synthesis, plan execution, and email delivery disabled until their release gates pass. Before production, apply migrations `0001–0034` using the [migration runbook](docs/MIGRATIONS_RUNBOOK.md), then verify RLS, invitations, provider behavior, and rollback/restore in staging.
 
 ## API
 
@@ -365,7 +365,7 @@ Zenith/
 
 JWT verification accepts ES256, RS256, and EdDSA signatures, with HS256 only as a legacy fallback. Issuer and audience are validated; JWKS keys are refreshed during rotation; Supabase `service_role` tokens are rejected as user sessions. Protected handlers apply server-side ownership and membership checks, and project roles constrain write access. Ownerless runs cannot be read through the user API.
 
-Ordered Supabase migrations define row-level security and the service-only tables used for run metadata, spend accounting, email delivery, and plan metadata. Static tests check important SQL and rollback boundaries. Migrations `0001–0030` have not been applied to staging in the recorded release review, so the live RLS policies and tenant-access matrix are **not yet verified**.
+Ordered Supabase migrations define row-level security and the service-only tables used for run metadata, spend accounting, email delivery, and plan metadata. Static tests check important SQL and rollback boundaries. Migrations `0001–0034` have not been applied to staging in the recorded release review, so the live RLS policies and tenant-access matrix are **not yet verified**.
 
 ### Untrusted papers and model output
 

@@ -1,6 +1,6 @@
 # Migration Runbook (update.md §5.3, §16)
 
-Migrations 0001–0033 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention; migration 0027 adds owner-bound lease renewal. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. Migration 0019 persists the plan configuration attached to existing durable run records; it adds no second queue. Migration 0020 adds service-role-only notification preferences and consent audit, normalized recipient suppressions, and a per-user/digest-window unique outbox for opt-in watchlist email delivery. Migration 0021 adds bounded watch-match reasons and migration 0028 adds optional bounded project-term relevance hints. Migration 0023 adds the provider spend ledger and atomic budget RPCs; migration 0026 explicitly removes direct table privileges so the service role must use those RPCs. Migration 0025 adds DOI/Crossref update provenance, per-user status-watch RLS, and idempotency keys for paper-status notifications. Migration 0029 preserves the Crossref relation depositor/source separately from the Crossref registry source; rows collected before it retain an unknown/null depositor source. Migration 0030 adds a nullable crawl-cache parser version; the disabled crawl service does not read or refresh this legacy cache. Migration 0031 adds project annotations with source membership composite foreign keys, owner/editor write RLS, and an immutable source anchor. Migration 0032 adds personal/project saved-search configurations with role-scoped RLS and immutable ownership/scope. Migration 0033 adds versioned project briefs, source validation, append-only service-only RPC writes, and account deletion/export handling. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
+Migrations 0001–0034 live in `supabase/migrations/`. They are additive SQL migration files; policy replacements use `DROP POLICY IF EXISTS` for idempotent re-runs. Migration 0008 makes Postgres the canonical production run/event store and adds service-role-only atomic RPCs. Migration 0009 aligns direct authenticated project access with owner/editor/viewer roles. Migration 0010 enforces one paper attachment per project and intentionally fails if duplicate relations need reconciliation. Migration 0011 adds nullable project context to watchlist notifications. Migration 0012 updates the three project authorization helpers so direct PostgREST access also rejects soft-deleted projects. Migration 0013 adds project-scoped extracted PDF document/page text with RLS. Migration 0014 adds owner-readable email invitations, a global active-email uniqueness rule, and a service-role-only atomic verified-email acceptance RPC; direct client writes are revoked. Migration 0015 adds stable Semantic Scholar author/citation target columns while retaining existing topic rows. Migration 0016 adds a service-only resumable account-deletion ledger, cross-replica leases, step progress, and 30-day completion-marker retention; migration 0027 adds owner-bound lease renewal. Migration 0017 serializes per-user run creation with deletion requests to close the in-flight run snapshot race. Migration 0018 adds page extraction-source metadata without changing project RLS. Migration 0019 persists the plan configuration attached to existing durable run records; it adds no second queue. Migration 0020 adds service-role-only notification preferences and consent audit, normalized recipient suppressions, and a per-user/digest-window unique outbox for opt-in watchlist email delivery. Migration 0021 adds bounded watch-match reasons and migration 0028 adds optional bounded project-term relevance hints. Migration 0023 adds the provider spend ledger and atomic budget RPCs; migration 0026 explicitly removes direct table privileges so the service role must use those RPCs. Migration 0025 adds DOI/Crossref update provenance, per-user status-watch RLS, and idempotency keys for paper-status notifications. Migration 0029 preserves the Crossref relation depositor/source separately from the Crossref registry source; rows collected before it retain an unknown/null depositor source. Migration 0030 adds a nullable crawl-cache parser version; the disabled crawl service does not read or refresh this legacy cache. Migration 0031 adds project annotations with source membership composite foreign keys, owner/editor write RLS, and an immutable source anchor. Migration 0032 adds personal/project saved-search configurations with role-scoped RLS and immutable ownership/scope. Migration 0033 adds versioned project briefs, source validation, append-only service-only RPC writes, and account deletion/export handling. These migrations have not been applied or exercised against a live Supabase project. Apply and verify in staging before production.
 
 **Apply order:** staging first, then production. Never apply to production without staging verification.
 **Status:** drafted and statically checked; NOT yet applied to any live database. The Postgres/RLS behavior, migration rollback, backups, and tenant isolation still need staging evidence (see [STATUS.md](STATUS.md)).
@@ -8,43 +8,45 @@ Apply migration 0028 before deploying the worker or API revision that writes `pr
 
 Migration 0020's preference, consent-event, unsubscribe-token, and outbox rows cascade with Auth user deletion. Its normalized recipient suppression table deliberately has no user foreign key, retaining only a keyed hash so an address with a bounce/complaint is not contacted after account recreation. All five tables and their RPCs are service-role-only. The SQL header contains the rollback statements; rollback drops consent, suppression, token, and queued delivery state and is destructive.
 
-LangGraph's Postgres checkpointer uses `DATABASE_URL` to the same Supabase Postgres database as the run store. App startup calls the checkpointer's additive `setup()` migration and fails closed if it cannot initialize. Provision a dedicated least-privilege application connection with the required table DDL rights, verify the resulting `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, and `checkpoint_migrations` tables in staging, and include them in backups/restores. These library-owned tables are not part of application migrations 0001–0033. Expired graph threads are deleted with their expired terminal run records; active runs are retained.
+LangGraph's Postgres checkpointer uses `DATABASE_URL` to the same Supabase Postgres database as the run store. App startup calls the checkpointer's additive `setup()` migration and fails closed if it cannot initialize. Provision a dedicated least-privilege application connection with the required table DDL rights, verify the resulting `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, and `checkpoint_migrations` tables in staging, and include them in backups/restores. These library-owned tables are not part of application migrations 0001–0034. Expired graph threads are deleted with their expired terminal run records; active runs are retained.
 
 ```bash
 # 1. Apply in order (Supabase dashboard SQL editor or psql)
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0001_enable_rls_and_projects.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0002_projects_notes_sources.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0003_watchlists.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0004_notifications.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0005_rls_policies_completion.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0006_summary_contributions.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0007_watchlist_notification_dedupe.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0008_canonical_research_runs.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0009_project_role_rls.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0010_unique_project_paper_sources.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0011_notifications_project_scope.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0012_hide_deleted_projects_in_rls.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0013_project_pdf_pages.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0014_project_email_invitations.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0015_semantic_scholar_watch_targets.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0016_resumable_account_deletions.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0017_serialize_account_deletion_and_run_admission.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0018_pdf_page_extraction_method.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0019_durable_research_plan_execution.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0020_notification_email_delivery.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0021_watchlist_notification_reasons.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0022_arxiv_preprint_version_metadata.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0023_provider_spend_metering.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0024_summary_provenance.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0025_crossref_publication_status.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0026_restrict_spend_ledger_table_access.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0027_renew_account_deletion_leases.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0028_project_watch_relevance_explanations.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0029_crossref_notice_deposit_source.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0030_crawled_content_cache_identity.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0031_project_annotations.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0032_saved_searches.sql
-psql "$STAGING_DATABASE_URL" -f supabase/migrations/0033_versioned_project_briefs.sql
+set -euo pipefail
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0001_enable_rls_and_projects.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0002_projects_notes_sources.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0003_watchlists.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0004_notifications.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0005_rls_policies_completion.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0006_summary_contributions.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0007_watchlist_notification_dedupe.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0008_canonical_research_runs.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0009_project_role_rls.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0010_unique_project_paper_sources.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0011_notifications_project_scope.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0012_hide_deleted_projects_in_rls.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0013_project_pdf_pages.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0014_project_email_invitations.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0015_semantic_scholar_watch_targets.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0016_resumable_account_deletions.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0017_serialize_account_deletion_and_run_admission.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0018_pdf_page_extraction_method.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0019_durable_research_plan_execution.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0020_notification_email_delivery.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0021_watchlist_notification_reasons.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0022_arxiv_preprint_version_metadata.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0023_provider_spend_metering.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0024_summary_provenance.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0025_crossref_publication_status.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0026_restrict_spend_ledger_table_access.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0027_renew_account_deletion_leases.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0028_project_watch_relevance_explanations.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0029_crossref_notice_deposit_source.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0030_crawled_content_cache_identity.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0031_project_annotations.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0032_saved_searches.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0033_versioned_project_briefs.sql
+psql "$STAGING_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0034_official_benchmark_monitoring.sql
 
 # 2. Verify RLS: run the owner/member/editor/viewer/outsider/anon matrix in
 #    docs/security/SECURITY_TEST_PLAN.md, including project metadata, notes,
@@ -162,7 +164,7 @@ Migration 0029 rollback drops the optional Crossref depositor-source field and d
 
 Migration 0030 rollback removes the parser-version invalidation marker and makes cache reads paper-ID-only again. Keep the version-aware application code disabled or rolled back before applying `supabase/rollbacks/0030_crawled_content_cache_identity.sql`.
 
-**Current status (2026-11-15):** migrations 0001–0033 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
+**Current status (2026-11-20):** migrations 0001–0034 are drafted and statically checked but **not yet applied to any live database**. No live database credentials or staging environment were available in this workspace. This is a release blocker, not a routine post-deploy step.
 
 For email onboarding, set the Supabase “Invite user” template and SMTP provider,
 allow the exact `APP_URL/projects/invitations/accept` URL in Auth redirect URLs,
@@ -175,3 +177,6 @@ Migration 0031 rollback removes the annotation table, its trigger/function, and 
 Migration 0032 rollback removes saved-search rows and should only be used after the saved-search API is rolled back. Apply with `psql "$STAGING_DATABASE_URL" -f supabase/rollbacks/0032_saved_searches.sql`. Verify personal creator isolation, project member reads/runs, creator/owner/editor writes while membership remains active, outsiders' denial, and fresh metered run creation in staging.
 
 Migration 0033 rollback permanently removes project briefs and their complete version history. Roll back the brief API first, then apply `psql "$STAGING_DATABASE_URL" -f supabase/rollbacks/0033_versioned_project_briefs.sql`. Verify member reads, owner/editor append authorization, stale-version conflicts under concurrent saves, cross-project and stale quote rejection in the atomic RPC, immutable version writes, account deletion, and restore from backup in staging.
+
+
+Migration 0034 adds official Hugging Face benchmark watch targets and service-only per-watch snapshots. Apply it after migration 0033. In staging, verify that only public ungated datasets tagged benchmark:official can be watched; first successful polls seed silently; snapshot updates and notifications are retry-safe; failures do not advance observations; and the top-100 verified-entry and request/size/concurrency bounds are enforced. The snapshot table is service-role-only and cascades with its watch. The rollback intentionally raises if benchmark watches, alerts, or snapshots remain; export or deliberately remove them before applying supabase/rollbacks/0034_official_benchmark_monitoring.sql. HF verification is a provider label, not scientific validation, and this API does not provide event timestamps.

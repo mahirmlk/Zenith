@@ -14,7 +14,7 @@ ALTER TABLE public.watchlists
   );
 
 CREATE INDEX IF NOT EXISTS idx_watchlists_enabled_benchmark
-  ON public.watchlists (id)
+  ON public.watchlists (last_checked_at ASC NULLS FIRST, id)
   WHERE enabled AND target_type = 'benchmark';
 
 CREATE TABLE IF NOT EXISTS public.benchmark_watch_snapshots (

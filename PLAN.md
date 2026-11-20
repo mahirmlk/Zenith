@@ -1,6 +1,6 @@
 # Zenith Product Plan
 
-> Current implementation and release evidence live in [docs/STATUS.md](docs/STATUS.md). This plan describes remaining work; [ARCHITECTURE.md](ARCHITECTURE.md) describes the runtime. Reviewed 2026-11-15.
+> Current implementation and release evidence live in [docs/STATUS.md](docs/STATUS.md). This plan describes remaining work; [ARCHITECTURE.md](ARCHITECTURE.md) describes the runtime. Reviewed 2026-11-20.
 
 ## Product goal
 
@@ -14,7 +14,7 @@ Help researchers discover papers, inspect source-backed evidence, organize work 
 | Research workspace | Implemented locally, incomplete UX | Projects, roles, notes, paper attachments, PDF page evidence, source-anchored annotations, project-scoped saved searches, versioned user-authored briefs, exports, and email invitations exist. The product intentionally discards original PDF bytes after extraction; complete collaboration flows remain open. |
 | Evidence and synthesis | Implemented with strict limits | Extractive answers and heuristic comparisons use exact citations. Synthesis is provisional, abstract-only, and disabled by default; it is not scientific verification. |
 | Paper-to-code | Planning/export only | Exact abstract evidence and unverified public GitHub candidates support a reproducibility plan. Arbitrary repository execution is refused. |
-| Watchlists | Partial | Topic, author, citation, and DOI-backed Crossref update watches exist. Crossref publisher versus Retraction Watch deposit source is preserved when present. Benchmark changes, broader source-backed status coverage, and human-calibrated alert quality remain open. |
+| Watchlists | Implemented locally with bounded coverage | Topic, author, inbound-citation, DOI-backed Crossref status, and official Hugging Face benchmark result watches exist. Benchmark alerts compare Zenith snapshots and report observation time for the top 100 Hugging Face-verified entries. Author/citation version tracking, broader authoritative coverage, live provider behavior, and human-calibrated alert quality remain open. |
 | Notifications | Implemented locally, delivery unverified | In-app alerts and opt-in, gated email digests exist. Live sender, webhook, suppression, retry, and delivery behavior need staging verification. |
 | Account privacy | Implemented locally, cross-service behavior unverified | Export and durable deletion workflows exist; live deletion and recovery across services need staging exercises. |
 
@@ -28,15 +28,15 @@ See [docs/STATUS.md](docs/STATUS.md) for tests, limitations, and exact release g
 - [x] Add source-anchored project annotations for attached-paper abstracts and uploaded PDF pages, with editor/owner write permissions and stable citation locators (implemented locally; staging RLS and end-to-end verification remain open).
 - [x] Add project-scoped saved searches with validated query/model configuration, repeatable metered execution, and explicit ownership/role rules. Topic watchlists remain separate; staging RLS/runtime verification is open.
 - [x] Add versioned user-authored project briefs with immutable revisions, exact attached-paper/PDF citations, provenance hashes, and optimistic conflict checks. Migration 0033 is implemented locally; staging RLS/RPC verification remains open.
-- [ ] Provide section/page-grounded evidence for public papers only after a licensed, redirect-safe fetch boundary exists; hosted Firecrawl and its legacy cache remain disabled until then.
+- [x] Add a bounded, authenticated public-paper page-evidence path for exact-version arXiv papers with CC BY 4.0 or CC0 1.0 licensing; it remains disabled by default pending staging verification. Hosted Firecrawl and its legacy cache remain disabled.
 - [ ] Complete collaboration onboarding and roster UX without exposing a global user directory; verify email changes, invitation expiry/revocation, and role transitions.
-- [ ] Extend monitoring only where authoritative sources provide explicit provenance for retractions, withdrawals, benchmark changes, and author/citation versions. Keep unknown status distinct from “no update.”
+- [x] Add Crossref notice monitoring with depositor provenance and official Hugging Face leaderboard observation-based benchmark alerts; unknown status remains distinct from “no update.” Author/citation version changes, broader source coverage, and live-source quality evaluation remain open.
 - [ ] Build labeled, human-reviewed datasets for project relevance, live-source precision/recall, missed important updates, and claim-level synthesis quality. Establish release thresholds before enabling model-backed features.
 - [ ] Complete the paper-to-code isolation design before considering any execution feature; the current fail-closed runner is the expected behavior until an isolated execution environment is reviewed.
 
 ### 2. Verify service-backed behavior in staging
 
-- [ ] Apply migrations 0001–0033 in order; test rollback procedures, row-level security, tenant isolation, and authorization against a real staging Supabase project.
+- [ ] Apply migrations 0001–0034 in order; test rollback procedures, row-level security, tenant isolation, and authorization against a real staging Supabase project.
 - [ ] Exercise Redis queueing, Postgres run/checkpoint recovery, cancellation, retention, account-deletion leases, and multi-worker operation under failure and restart.
 - [ ] Verify configured Auth redirects, SMTP invitation delivery, Resend digest consent and suppression, Svix signature handling, provider timeouts/retries, Crossref coverage, and spend reconciliation against provider usage reports.
 - [ ] Test backup restore, deployment rollback, alerting, rate/budget enforcement, and incident response. Record evidence and owners in the release checklist.
