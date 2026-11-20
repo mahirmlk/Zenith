@@ -424,3 +424,15 @@ def test_pdf_page_extraction_method_is_additive_and_scope_preserving():
     assert "where text = '' and extraction_method = 'native'" in normalized
     assert "check (extraction_method in ('native', 'ocr', 'empty', 'ocr_limit'))" in normalized
     assert "enable row level security" not in normalized
+
+
+def test_pdf_extraction_provenance_rollback_preserves_irreplaceable_values():
+    runbook = (ROOT / "docs" / "MIGRATIONS_RUNBOOK.md").read_text(encoding="utf-8").lower()
+    for migration in ("0002", "0003", "0004", "0005", "0007", "0009", "0014"):
+        assert migration in runbook
+    assert "application-only rollback by default" in runbook
+    assert "do not drop user data or automatically restore earlier policies" in runbook
+    assert "stop invitation creation/acceptance and preserve pending invitations" in runbook
+    assert "migration 0018 rollback is application-only" in runbook
+    assert "leave the additive column and its values in the database" in runbook
+    assert "original pdf bytes are discarded after extraction" in runbook

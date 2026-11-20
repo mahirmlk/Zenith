@@ -68,6 +68,17 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    # Compose interpolates these required values for both config validation and
+    # image builds. They are reserved test-only placeholders, not secrets.
+    env:
+      APP_URL: https://app.example.invalid
+      DATABASE_URL: postgresql://ci:ci@example.invalid:5432/zenith
+      NEXT_PUBLIC_API_URL: https://api.example.invalid
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+      NEXT_PUBLIC_SUPABASE_URL: https://project.example.invalid
+      REDIS_URL: redis://redis.example.invalid:6379/0
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
+      SUPABASE_URL: https://project.example.invalid
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Compose expects a local env file for runtime configuration. Image builds
@@ -75,15 +86,6 @@ jobs:
       - name: Create secret-free Compose env file
         run: touch .env
       - name: Validate production Compose configuration
-        env:
-          APP_URL: https://app.example.invalid
-          DATABASE_URL: postgresql://ci:ci@example.invalid:5432/zenith
-          NEXT_PUBLIC_API_URL: https://api.example.invalid
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
-          NEXT_PUBLIC_SUPABASE_URL: https://project.example.invalid
-          REDIS_URL: redis://redis.example.invalid:6379/0
-          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
-          SUPABASE_URL: https://project.example.invalid
         run: docker compose -f docker-compose.prod.yml config --quiet
       - name: Build Docker images
-        run: docker compose build
+        run: docker compose -f docker-compose.prod.yml build

@@ -79,6 +79,12 @@ async def decode_supabase_token(token: str) -> dict[str, Any]:
     except InvalidTokenError:
         raise InvalidTokenError("Invalid token header") from None
 
+    token_type = header.get("typ")
+    if token_type is not None and (
+        not isinstance(token_type, str) or token_type.upper() != "JWT"
+    ):
+        raise InvalidTokenError("Unsupported token type")
+
     alg = header.get("alg")
 
     # Explicit alg allowlist (update.md §5.2): reject alg=none and anything
@@ -88,10 +94,23 @@ async def decode_supabase_token(token: str) -> dict[str, Any]:
         raise InvalidTokenError(f"Unsupported signing algorithm: {alg!r}")
 
     def _check_claims(payload: dict[str, Any]) -> dict[str, Any]:
-        # iss/aud enforcement when present (Supabase issues aud=authenticated,
-        # iss={SUPABASE_URL}/auth/v1). Tokens without these claims (legacy
-        # HS256 test tokens) are still signature-checked; a token that
-        # *claims* a foreign issuer/audience is rejected.
+        # Supabase user sessions include these claims. Production must reject
+        # signed but incomplete tokens as well as tokens with foreign claims.
+        if settings.app_env == "production":
+            if not settings.supabase_url:
+                raise InvalidTokenError("Supabase URL is not configured for JWT validation")
+            expected_issuer = settings.supabase_url.rstrip("/") + "/auth/v1"
+            if payload.get("iss") != expected_issuer:
+                raise InvalidTokenError("Invalid token issuer")
+            if payload.get("aud") != "authenticated":
+                raise InvalidTokenError("Invalid token audience")
+            if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+                raise InvalidTokenError("Invalid token subject")
+            if "exp" not in payload:
+                raise InvalidTokenError("Token expiration is required")
+
+        # Development may use minimal, locally signed fixtures. Any issuer or
+        # audience claim they do provide is still checked against Supabase.
         iss = payload.get("iss")
         if iss and settings.supabase_url:
             expected = settings.supabase_url.rstrip("/") + "/auth/v1"
@@ -140,6 +159,9 @@ async def decode_supabase_token(token: str) -> dict[str, Any]:
             token,
             settings.supabase_jwt_secret,
             algorithms=["HS256"],
-            options={"verify_aud": False},
+            options={
+                "verify_aud": False,
+                "require": ["exp", "sub"] if settings.app_env == "production" else [],
+            },
         )
     )

@@ -33,3 +33,25 @@ def test_production_compose_requires_essential_frontend_and_runtime_settings() -
         "DATABASE_URL",
     ):
         assert f"${{{variable}:?" in compose
+
+
+def test_ci_docker_build_inherits_compose_interpolation_placeholders() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    docker_job = workflow.split("  docker:\n", maxsplit=1)[1]
+    job_header, _, steps = docker_job.partition("    steps:\n")
+
+    assert "    env:\n" in job_header
+    for variable in (
+        "APP_URL",
+        "DATABASE_URL",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "REDIS_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL",
+    ):
+        assert f"      {variable}:" in job_header
+    assert "docker compose -f docker-compose.prod.yml build" in steps
