@@ -199,11 +199,8 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 | **ArXiv API** | Paper discovery and DOI metadata | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
 | **Crossref REST API** | Opt-in publication update notices for DOI papers | Bounded async `httpx` lookups from backend ingestion | No | Six-hour per-watch retry backoff; five concurrent lookups |
 | **HuggingFace Daily Papers** | Curated highlights | REST API (`httpx`) | No | Yes (3 retries) |
-| **OpenRouter** | Primary LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
-| **Anthropic (direct)** | Claude fallback | `langchain-anthropic` | API key | Yes (transient errors at call site) |
-| **OpenAI (direct)** | GPT fallback + embeddings | `langchain-openai` + direct `httpx` for embeddings | API key | Yes (transient errors at call site) |
-| **Google Gemini (direct)** | Gemini fallback | `langchain-google-genai` | API key | Yes (transient errors at call site) |
-| **Mistral (direct)** | Mistral fallback | `langchain-mistralai` | API key | Yes (transient errors at call site) |
+| **OpenRouter** | Only chat LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
+| **OpenAI (direct)** | Metered embeddings only | Direct `httpx` embeddings endpoint | API key | Yes (transient errors at call site) |
 | **Firecrawl** | Full paper crawl | `firecrawl-py` SDK | API key | No (cached in Supabase, keyed by paper ID) |
 | **Mem0** | User memory | `mem0` Python client | API key | No |
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
@@ -211,9 +208,9 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 | **GitHub repository search** | Public repository candidates by DOI/arXiv ID or title | GitHub REST `search/repositories` (`httpx`) | Optional `GITHUB_TOKEN` | Bounded timeout and result count; candidates remain unverified |
 | **Redis** | Streams queue, worker leases, global rate limits, per-user budgets, scheduler leases | `redis.asyncio` (required for production) | `REDIS_URL` | Pending-entry reclaim; bounded readiness check |
 
-Retry is kept separate from the provider fallback chain: `async_retry` handles
-same-provider transient failures (connect/read timeouts, 5xx, rate limits on
-any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
+Retry is kept separate from provider selection: `async_retry` handles
+same-provider transient failures (connect/read timeouts, 5xx, and rate limits);
+`llm_router` enforces the global model gate and routes chat through OpenRouter.
 
 Author and inbound-citation watchlists use Semantic Scholar stable IDs. The
 author endpoint returns papers by that author; the citation endpoint returns
@@ -369,24 +366,32 @@ Memories are auto-consolidated and deduplicated by Mem0 over time.
 
 ## 6. LLM Routing Strategy
 
-All LLM calls flow through `services/llm_router.py`.
+All chat model construction flows through `services/llm_router.py`; embedding
+and model-backed Mem0 provider boundaries use its central feature gate.
+
+`LLM_ENABLED` is the global model-feature switch and defaults to `false`.
+Chat creation, embeddings, and model-backed Mem0 reads/writes check this gate;
+when it is disabled, model calls fail closed and `/api/models` reports an
+unavailable catalog. Production readiness reports `model_gateway_status=gated`
+without treating this optional state as a dependency failure. Setting the gate
+to `true` does not enable synthesis or durable plan execution; their separate
+feature flags remain independently controlled. Metered chat still requires an
+OpenRouter key, positive daily/monthly caps, and a working spend-ledger RPC.
 
 **Primary path:** OpenRouter (single API key, unified OpenAI-compatible interface). Identified by the presence of `/` in the model name (e.g. `anthropic/claude-sonnet-4-5`).
 
-**Fallback chain:** When OpenRouter is unavailable (API key missing or runtime error):
-1. `claude-*` models → Anthropic direct SDK
-2. `gpt-*` models → OpenAI direct SDK
-3. `gemini-*` models → Google Gemini direct SDK
-4. `mistral-*` models → Mistral direct SDK
-5. Everything else → OpenAI direct (as final fallback)
+**Provider behavior:** Chat uses OpenRouter only. Direct provider fallback is
+disabled so an unavailable or unmetered route cannot silently bypass model
+allowlists and spend reservations. Embeddings use the separately metered
+OpenAI embeddings endpoint.
 
 **Agent model map:**
 | Agent | Default Model | Reason |
 |-------|--------------|--------|
-| Orchestrator | `anthropic/claude-opus-4` | Best reasoning |
+| Orchestrator | `anthropic/claude-opus-5.5` | Best reasoning |
 | Research | `openai/gpt-4o-mini` | Fast tool calls |
-| Summary (default) | `anthropic/claude-sonnet-4-5` | Long context + quality |
-| Summary (fast) | `google/gemini-2.0-flash` | Batch summarisation |
+| Summary (default) | `anthropic/claude-sonnet-5.5` | Long context + quality |
+| Summary (fast) | `google/gemini-3.6-flash` | Batch summarisation |
 | Memory | `openai/gpt-4o-mini` | Lightweight scoring |
 
 **Cost guardrails:**
@@ -446,7 +451,7 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 - `services/arxiv.py` — ArXiv API calls (3 retries)
 - `services/huggingface.py` — HuggingFace Daily Papers API (3 retries)
 - `services/semantic_scholar.py` — Semantic Scholar API (3 retries)
-- `agents/summary_agent.py` — LLM calls per paper (3 retries, on any OpenRouter or direct-provider SDK)
+- `agents/summary_agent.py` — metered OpenRouter LLM calls per paper (3 retries)
 - `services/embeddings.py` — OpenAI embedding calls (3 retries)
 - `services/ingestion.py` — Supabase upserts during daily fetch (3 retries)
 
@@ -456,9 +461,9 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 any `httpx.HTTPError` (connect/read timeouts, 5xx), and vendor LLM SDK errors
 matched by class name (`APIConnectionError`, `RateLimitError`,
 `InternalServerError`, `ServiceUnavailable`, `Unavailable`, etc.). Non-transient
-errors (validation, JSON parse) are re-raised immediately. Retry is orthogonal
-to the provider fallback chain in `llm_router.py` — retry handles the same
-provider's transient failure, fallback handles provider unavailability.
+errors (validation, JSON parse, disabled model gate) are re-raised immediately.
+Chat uses OpenRouter only; retry handles transient failures for the configured
+provider without switching to an unmetered direct-provider fallback.
 
 ---
 
@@ -535,6 +540,7 @@ See **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** for step-by-step deployment i
 
 See `.env.example` for the full list. Key categories:
 - **LLM Providers:** `OPENROUTER_API_KEY` is required for metered chat; `OPENAI_API_KEY` is required for metered embeddings. Direct chat-provider keys do not enable unmetered fallback.
+- **Model feature gate:** `LLM_ENABLED` defaults to `false`; enable only after staging validates the OpenRouter configuration, positive spend caps, and spend-ledger RPC. Synthesis and research-plan execution have separate opt-in flags.
 - **Repository discovery:** optional `GITHUB_TOKEN` raises the GitHub public repository search quota. Queries include `is:public`; returned matches are unverified candidates, not claims of official authorship.
 - **Data Sources:** `FIRECRAWL_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`
 - **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (HS256 legacy fallback only)

@@ -239,6 +239,7 @@ async def test_export_skips_mem0_when_external_spend_limit_is_unconfirmed(monkey
     db = FakeSupabase(_export_tables())
     monkeypatch.setattr(account.mem0_client, "is_configured", lambda: False)
     monkeypatch.setattr(account.mem0_client, "has_credentials", lambda: True)
+    monkeypatch.setattr(account.mem0_client, "model_features_enabled", lambda: False)
 
     async def memories(_user_id: str) -> list[dict[str, Any]]:
         raise AssertionError("Mem0 usage was attempted without spend-limit confirmation")
@@ -246,7 +247,7 @@ async def test_export_skips_mem0_when_external_spend_limit_is_unconfirmed(monkey
     monkeypatch.setattr(account.mem0_client, "get_user_profile", memories)
     result = await account.export_account(object(), {"user_id": "u1", "email": "u1@example.com"}, db)
 
-    assert result["memory_export_status"] == "withheld: provider spend limit unconfirmed"
+    assert result["memory_export_status"] == "withheld: model features disabled"
     assert result["memories"] == []
 
 

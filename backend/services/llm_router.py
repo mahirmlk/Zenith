@@ -7,6 +7,22 @@ if TYPE_CHECKING:
 from config import get_settings
 from services.openrouter_catalog import MODEL_PRICES
 
+
+class LLMDisabledError(RuntimeError):
+    """Raised when model-backed features are intentionally gated off."""
+
+
+def llm_is_enabled(settings: object | None = None) -> bool:
+    """Return the single global model-feature switch, failing closed by default."""
+    current = settings if settings is not None else get_settings()
+    return bool(getattr(current, "llm_enabled", False))
+
+
+def require_llm_enabled() -> None:
+    """Enforce the global gate at every backend provider-call boundary."""
+    if not llm_is_enabled():
+        raise LLMDisabledError("LLM_ENABLED is false; model-backed features are disabled")
+
 AGENT_MODEL_MAP = {
     # Lifecycle audit 2026-11-13: Anthropic retired Claude Opus 4 on 2026-06-15,
     # and Google shut down Gemini 2.0 Flash on 2026-06-01. These defaults use
@@ -50,7 +66,8 @@ def effective_models() -> list[dict[str, object]]:
     from services.openrouter_catalog import MODEL_PRICES
 
     if (
-        not settings.openrouter_api_key
+        not llm_is_enabled(settings)
+        or not settings.openrouter_api_key
         or not settings.supabase_url
         or not settings.supabase_service_role_key
         or settings.llm_daily_spend_cap_usd_micros <= 0
@@ -67,6 +84,7 @@ def effective_models() -> list[dict[str, object]]:
 def get_openrouter_llm(
     model: str, temperature: float = 0.3, max_tokens: int = 4096
 ) -> BaseChatModel:
+    require_llm_enabled()
     from langchain_openai import ChatOpenAI
 
     settings = get_settings()
@@ -109,6 +127,7 @@ def get_llm(
         raise ValueError("max_tokens must be between 1 and 4096")
     if model_override is not None:
         validate_model(model_override, agent)
+    require_llm_enabled()
     model = model_override or AGENT_MODEL_MAP.get(agent, AGENT_MODEL_MAP["summary_default"])
 
     if not get_settings().openrouter_api_key:

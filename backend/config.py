@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     max_summaries_per_run: int = 20
     max_searches_per_day_per_user: int = 100
+    llm_enabled: bool = False
     llm_daily_spend_cap_usd_micros: int = 0
     llm_monthly_spend_cap_usd_micros: int = 0
     mem0_provider_spend_limit_confirmed: bool = False

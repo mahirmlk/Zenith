@@ -153,7 +153,11 @@ async def export_account(
             memories = await mem0_client.get_user_profile(uid)
             memory_status = "exported"
         elif mem0_client.has_credentials():
-            memory_status = "withheld: provider spend limit unconfirmed"
+            memory_status = (
+                "withheld: model features disabled"
+                if not mem0_client.model_features_enabled()
+                else "withheld: provider spend limit unconfirmed"
+            )
 
         return {
             "user_id": uid,

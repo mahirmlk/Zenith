@@ -427,6 +427,7 @@ Live status matrix: [docs/STATUS.md](docs/STATUS.md). Full plan: [update.md](upd
 | [docs/FLOW.md](docs/FLOW.md) | Search, streaming, evidence, and research workflow diagrams. |
 | [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Local development, code layout, checks, and implementation conventions. |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Runtime configuration, deployment shape, health checks, and operational notes. |
+| [docs/CLOUDFLARE_VERCEL_DEPLOYMENT.md](docs/CLOUDFLARE_VERCEL_DEPLOYMENT.md) | Cloudflare Container gateway and Vercel frontend setup, beta/paid-plan limits, and staging gates. |
 | [docs/MIGRATIONS_RUNBOOK.md](docs/MIGRATIONS_RUNBOOK.md) | Ordered database migration and rollback procedure. |
 | [docs/EVALUATIONS.md](docs/EVALUATIONS.md) and [evals/README.md](evals/README.md) | Evaluation datasets, metric thresholds, and benchmark limitations. |
 | [docs/STATUS.md](docs/STATUS.md) | Dated release status, local validation evidence, and production blockers. |

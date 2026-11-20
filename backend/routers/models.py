@@ -5,13 +5,20 @@ Frontend ModelSelector fetches this instead of hardcoding IDs.
 from fastapi import APIRouter
 from typing import Any, cast
 
-from services.llm_router import AGENT_MODEL_MAP, effective_models
+from services.llm_router import AGENT_MODEL_MAP, effective_models, llm_is_enabled
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
 @router.get("")
 async def list_models() -> dict[str, Any]:
+    if not llm_is_enabled():
+        return {
+            "available": False,
+            "default_model": None,
+            "models": [],
+            "availability_reason": "llm_disabled",
+        }
     models = effective_models()
     from services.spend_meter import meter_ready
 
@@ -26,4 +33,5 @@ async def list_models() -> dict[str, Any]:
         "available": bool(summary_models and available_default),
         "default_model": available_default,
         "models": models,
+        "availability_reason": None if models else "metering_unavailable",
     }

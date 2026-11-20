@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "zenith-backend-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-20",
+  "secrets": {
+    "required": [
+      "APP_URL",
+      "SUPABASE_URL",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "REDIS_URL",
+      "DATABASE_URL"
+    ]
+  },
+  "containers": [
+    {
+      "class_name": "ZenithBackendContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "backend": {
+          "dockerfile": "../../backend/Dockerfile",
+          "build_context": "../../backend"
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ZENITH_BACKEND",
+        "class_name": "ZenithBackendContainer"
+      }
+    ]
+  },
+  "exports": {
+    "ZenithBackendContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

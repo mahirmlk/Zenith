@@ -23,7 +23,7 @@ def test_metered_model_calls_require_openrouter(
     monkeypatch.setattr(
         llm_router,
         "get_settings",
-        lambda: SimpleNamespace(openrouter_api_key=""),
+        lambda: SimpleNamespace(openrouter_api_key="", llm_enabled=True),
     )
     with pytest.raises(RuntimeError, match="required for metered model calls"):
         llm_router.get_llm(agent=agent, model_override=model_id)
@@ -35,7 +35,7 @@ def test_namespaced_model_prefers_openrouter_when_key_is_configured(
     monkeypatch.setattr(
         llm_router,
         "get_settings",
-        lambda: SimpleNamespace(openrouter_api_key="configured"),
+        lambda: SimpleNamespace(openrouter_api_key="configured", llm_enabled=True),
     )
     expected = object()
     openrouter_calls: list[tuple[str, float, int]] = []
@@ -63,7 +63,7 @@ def test_openrouter_only_families_fail_clearly_without_openrouter(
     monkeypatch.setattr(
         llm_router,
         "get_settings",
-        lambda: SimpleNamespace(openrouter_api_key=""),
+        lambda: SimpleNamespace(openrouter_api_key="", llm_enabled=True),
     )
     with pytest.raises(RuntimeError, match="required for metered model calls"):
         llm_router.get_llm(agent=agent, model_override=model_id)
@@ -75,7 +75,7 @@ def test_openrouter_constructor_failure_is_not_hidden_by_direct_fallback(
     monkeypatch.setattr(
         llm_router,
         "get_settings",
-        lambda: SimpleNamespace(openrouter_api_key="configured"),
+        lambda: SimpleNamespace(openrouter_api_key="configured", llm_enabled=True),
     )
     monkeypatch.setattr(
         llm_router,
@@ -136,7 +136,7 @@ def test_model_catalog_exposes_server_selected_default(monkeypatch: pytest.Monke
         lambda: SimpleNamespace(
             openrouter_api_key="configured", supabase_url="url",
             supabase_service_role_key="service", llm_daily_spend_cap_usd_micros=1_000_000,
-            llm_monthly_spend_cap_usd_micros=10_000_000,
+            llm_monthly_spend_cap_usd_micros=10_000_000, llm_enabled=True,
         ),
     )
     async def ready() -> bool:
@@ -146,6 +146,7 @@ def test_model_catalog_exposes_server_selected_default(monkeypatch: pytest.Monke
     response = _run_immediate(list_models())
 
     assert response["available"] is True
+    assert response["availability_reason"] is None
     assert response["default_model"] == llm_router.AGENT_MODEL_MAP["summary_default"]
     models = response["models"]
     assert response["default_model"] in {model["id"] for model in models}
@@ -163,9 +164,15 @@ def test_model_catalog_is_empty_when_metering_is_unconfigured(monkeypatch: pytes
         lambda: SimpleNamespace(
             openrouter_api_key="", supabase_url="url", supabase_service_role_key="service",
             llm_daily_spend_cap_usd_micros=1, llm_monthly_spend_cap_usd_micros=1,
+            llm_enabled=True,
         ),
     )
-    assert _run_immediate(list_models()) == {"available": False, "default_model": None, "models": []}
+    assert _run_immediate(list_models()) == {
+        "available": False,
+        "default_model": None,
+        "models": [],
+        "availability_reason": "metering_unavailable",
+    }
 
 
 @pytest.mark.parametrize(
@@ -189,7 +196,9 @@ def test_openrouter_constructor_omits_temperature_only_for_anthropic(
     monkeypatch.setattr(
         llm_router,
         "get_settings",
-        lambda: SimpleNamespace(openrouter_api_key="secret", app_url="https://zenith.test"),
+        lambda: SimpleNamespace(
+            openrouter_api_key="secret", app_url="https://zenith.test", llm_enabled=True
+        ),
     )
 
     llm_router.get_openrouter_llm(model_id, temperature=0.2, max_tokens=256)
@@ -198,3 +207,38 @@ def test_openrouter_constructor_omits_temperature_only_for_anthropic(
     assert captured["max_retries"] == 0
     assert captured["extra_body"]["provider"]["max_price"]["prompt"] > 0
     assert captured["default_headers"]["X-OpenRouter-Metadata"] == "enabled"
+
+
+def test_global_gate_blocks_model_construction_even_with_provider_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm_router,
+        "get_settings",
+        lambda: SimpleNamespace(openrouter_api_key="configured", llm_enabled=False),
+    )
+    with pytest.raises(llm_router.LLMDisabledError, match="LLM_ENABLED is false"):
+        llm_router.get_llm(agent="summary_default")
+    with pytest.raises(llm_router.LLMDisabledError, match="LLM_ENABLED is false"):
+        llm_router.get_openrouter_llm("anthropic/claude-sonnet-5.5")
+
+
+def test_model_catalog_reports_global_gate_without_checking_meter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        llm_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            llm_enabled=False,
+            openrouter_api_key="configured",
+            supabase_url="url",
+            supabase_service_role_key="service",
+            llm_daily_spend_cap_usd_micros=1,
+            llm_monthly_spend_cap_usd_micros=1,
+        ),
+    )
+    assert _run_immediate(list_models()) == {
+        "available": False,
+        "default_model": None,
+        "models": [],
+        "availability_reason": "llm_disabled",
+    }

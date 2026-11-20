@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from mem0 import MemoryClient
 from config import get_settings
+from services.llm_router import llm_is_enabled, require_llm_enabled
 
 
 @lru_cache
@@ -27,12 +28,14 @@ MemoryRecord = dict[str, Any]
 
 
 def _get_user_profile_sync(user_id: str) -> list[MemoryRecord]:
+    require_llm_enabled()
     if not get_settings().mem0_provider_spend_limit_confirmed:
         raise RuntimeError("Mem0 model usage is disabled until its provider spend limit is confirmed")
     return cast(list[MemoryRecord], _get_client().get_all(user_id=user_id))
 
 
 def _add_memory_sync(user_id: str, messages: list[MemoryRecord]) -> None:
+    require_llm_enabled()
     if not get_settings().mem0_provider_spend_limit_confirmed:
         raise RuntimeError("Mem0 model usage is disabled until its provider spend limit is confirmed")
     _get_client().add(messages, user_id=user_id)
@@ -49,7 +52,12 @@ async def add_memory(user_id: str, messages: list[MemoryRecord]) -> None:
 def is_configured() -> bool:
     """Whether model-backed Mem0 usage has explicit provider-side spend control."""
     settings = get_settings()
-    return bool(settings.mem0_api_key and settings.mem0_provider_spend_limit_confirmed)
+    return bool(llm_is_enabled(settings) and settings.mem0_api_key and settings.mem0_provider_spend_limit_confirmed)
+
+
+def model_features_enabled() -> bool:
+    """Whether the global gate permits model-backed optional services."""
+    return llm_is_enabled()
 
 
 def has_credentials() -> bool:

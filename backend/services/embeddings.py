@@ -10,6 +10,7 @@ from services.spend_meter import (
     reserve_embedding_attempt,
     settle_embedding_attempt,
 )
+from services.llm_router import require_llm_enabled
 
 EMBED_MODEL = EMBEDDING_MODEL
 EMBED_DIM = 1536
@@ -27,6 +28,7 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def _embed(texts: List[str], context: BillingContext) -> List[List[float]]:
+    require_llm_enabled()
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not configured for embeddings")

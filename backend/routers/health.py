@@ -6,6 +6,7 @@ from typing import Protocol
 from fastapi import APIRouter, Response
 
 from config import get_settings
+from services.llm_router import llm_is_enabled
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 ready_router = APIRouter(prefix="/api", tags=["health"])
@@ -17,20 +18,27 @@ class RedisHealthClient(Protocol):
     async def aclose(self) -> None: ...
 
 
-async def _model_gateway_ready(settings: Any) -> bool:
-    """Require configured model routing, positive caps, and a working ledger RPC."""
+async def _model_gateway_status(settings: Any) -> str:
+    """Report optional model service as gated, ready, or misconfigured."""
+    if not llm_is_enabled(settings):
+        return "gated"
     if not (
         getattr(settings, "openrouter_api_key", "")
         and getattr(settings, "llm_daily_spend_cap_usd_micros", 0) > 0
         and getattr(settings, "llm_monthly_spend_cap_usd_micros", 0) > 0
     ):
-        return False
+        return "not_ready"
     try:
         from services.spend_meter import meter_ready
 
-        return bool(await asyncio.wait_for(meter_ready(), timeout=3.0))
+        return "ready" if await asyncio.wait_for(meter_ready(), timeout=3.0) else "not_ready"
     except Exception:
-        return False
+        return "not_ready"
+
+
+async def _model_gateway_ready(settings: Any) -> bool:
+    """Legacy boolean helper: gated is optional and therefore ready for app health."""
+    return await _model_gateway_status(settings) != "not_ready"
 
 
 @router.get("")
@@ -45,6 +53,7 @@ async def health_check() -> dict[str, object]:
             "supabase_configured": bool(settings.supabase_url),
             "redis_configured": bool(settings.redis_url),
             "openrouter_configured": bool(settings.openrouter_api_key),
+            "llm_enabled": llm_is_enabled(settings),
         },
     }
 
@@ -53,7 +62,7 @@ async def health_check() -> dict[str, object]:
 async def readiness(response: Response) -> dict[str, object]:
     """Check required runtime dependencies; never expose connection details."""
     settings = get_settings()
-    checks = {"supabase": False, "redis": False}
+    checks: dict[str, bool | str] = {"supabase": False, "redis": False}
 
     if settings.supabase_url and settings.supabase_service_role_key:
         try:
@@ -95,7 +104,9 @@ async def readiness(response: Response) -> dict[str, object]:
         checks["run_store"] = False
         checks["graph_checkpointer"] = False
         checks["account_deletion_jobs"] = False
-        checks["model_gateway"] = await _model_gateway_ready(settings)
+        model_gateway_status = await _model_gateway_status(settings)
+        checks["model_gateway"] = model_gateway_status != "not_ready"
+        checks["model_gateway_status"] = model_gateway_status
         try:
             from services.supabase_client import get_supabase
 
@@ -131,7 +142,11 @@ async def readiness(response: Response) -> dict[str, object]:
         except Exception:
             checks["graph_checkpointer"] = False
 
-    required = all(checks.values()) if settings.app_env == "production" else checks["supabase"]
+    required = (
+        all(value is True for key, value in checks.items() if key != "model_gateway_status")
+        if settings.app_env == "production"
+        else checks["supabase"] is True
+    )
     if not required:
         response.status_code = 503
         return {"status": "not_ready", "checks": checks}
