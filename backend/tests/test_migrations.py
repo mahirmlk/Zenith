@@ -436,3 +436,30 @@ def test_pdf_extraction_provenance_rollback_preserves_irreplaceable_values():
     assert "migration 0018 rollback is application-only" in runbook
     assert "leave the additive column and its values in the database" in runbook
     assert "original pdf bytes are discarded after extraction" in runbook
+
+
+def test_official_benchmark_monitoring_is_bounded_and_service_only():
+    migration = (ROOT / "supabase" / "migrations" / "0034_official_benchmark_monitoring.sql").read_text()
+    rollback = (ROOT / "supabase" / "rollbacks" / "0034_official_benchmark_monitoring.sql").read_text()
+    normalized = " ".join(migration.lower().split())
+    for expected in (
+        "target_type = 'benchmark'",
+        "query = target_id",
+        "create table if not exists public.benchmark_watch_snapshots",
+        "references public.watchlists(id) on delete cascade",
+        "jsonb_array_length(snapshot) <= 100",
+        "pg_column_size(snapshot) <= 262144",
+        "alter table public.benchmark_watch_snapshots enable row level security",
+        "revoke all on public.benchmark_watch_snapshots from public, anon, authenticated",
+        "grant all on public.benchmark_watch_snapshots to service_role",
+        "kind = 'benchmark'",
+        "benchmark_result_observed",
+        "preprint_version_updated",
+        "publication_status_update",
+    ):
+        assert expected in normalized
+    assert "source_url" in normalized
+    assert "notifications_source_url_check" in normalized
+    rollback_normalized = " ".join(rollback.lower().split())
+    assert "refuse to discard them" in rollback.lower()
+    assert "drop table public.benchmark_watch_snapshots" in rollback_normalized

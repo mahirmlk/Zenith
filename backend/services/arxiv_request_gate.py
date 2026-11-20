@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from config import get_settings
 
@@ -78,9 +78,10 @@ class ArxivApiSession:
 async def _get_redis_client(redis_url: str) -> Any:
     global _redis_client, _redis_url
     if _redis_client is None or _redis_url != redis_url:
-        from redis.asyncio import from_url
+        import redis.asyncio as redis_mod
 
-        _redis_client = from_url(redis_url, decode_responses=True)
+        _redis_from_url = cast(Any, redis_mod.from_url)
+        _redis_client = _redis_from_url(redis_url, decode_responses=True)
         _redis_url = redis_url
     return _redis_client
 

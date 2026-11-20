@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
 
 class WatchCreate(BaseModel):
     query: str = Field(default="", max_length=500)
-    target_type: Literal["topic", "author", "citation"] = "topic"
+    target_type: Literal["topic", "author", "citation", "benchmark"] = "topic"
     target_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
     project_id: Optional[str] = None
     cadence: str = Field(default="daily", pattern="^(daily|weekly)$")
@@ -43,6 +43,24 @@ async def create_watch(
             raise HTTPException(status_code=422, detail="Enter a topic to watch")
         if body.target_id:
             raise HTTPException(status_code=422, detail="Topic watchlists do not accept a target ID")
+    elif body.target_type == "benchmark":
+        if not body.target_id:
+            raise HTTPException(status_code=422, detail="Enter an HF namespace/dataset ID")
+        if body.query and body.query != body.target_id:
+            raise HTTPException(status_code=422, detail="Benchmark query must exactly match its target ID")
+        try:
+            from services.benchmark_monitor import BenchmarkProviderError, validate_hf_benchmark_dataset
+
+            target_label = await validate_hf_benchmark_dataset(body.target_id)
+        except BenchmarkProviderError as exc:
+            raise HTTPException(status_code=422, detail="Dataset must be a public, ungated official benchmark") from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise HTTPException(status_code=422, detail="Hugging Face dataset was not found") from exc
+            raise HTTPException(status_code=503, detail="Hugging Face could not validate this benchmark") from exc
+        except Exception as exc:
+            logger.warning("Hugging Face benchmark validation failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Hugging Face could not validate this benchmark") from exc
     else:
         if not body.target_id:
             raise HTTPException(status_code=422, detail="Enter a Semantic Scholar ID")
@@ -62,7 +80,7 @@ async def create_watch(
             members = await supabase.table("project_members").select("user_id").eq("project_id", body.project_id).eq("user_id", user["user_id"]).execute()
             if not (members.data or []):
                 raise HTTPException(status_code=404, detail="Project not found")
-    if body.target_type != "topic":
+    if body.target_type not in {"topic", "benchmark"}:
         try:
             target_label = await validate_watch_target(body.target_type, body.target_id or "")
         except httpx.HTTPStatusError as exc:

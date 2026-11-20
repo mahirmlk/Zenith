@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (2026-11-15)
+## Unreleased (2026-11-20)
 
 ### Research and discovery
 
@@ -13,7 +13,7 @@
 
 ### Monitoring and collaboration
 
-- Added topic, author, citation, and DOI-backed Crossref update watches with in-app notifications, deduplication, and optional project-relevance hints. Crossref coverage is incomplete; benchmark changes and calibrated alert quality remain open.
+- Added topic, author, citation, DOI-backed Crossref update, and official Hugging Face benchmark leaderboard watches with in-app notifications and optional project-relevance hints. Benchmark alerts compare Zenith snapshots, cover the top 100 Hugging Face-verified entries, and report observation time; they do not claim scientific validity. Live provider behavior and calibrated alert quality remain unverified.
 - Preserved Crossref's optional relation-level depositor source (`publisher` or `retraction-watch`) independently from the `crossref` registry label. Unknown values remain unknown in storage, API responses, UI, and notices.
 - Added opt-in, gated Resend email digests with consent, unsubscribe, suppression, and an idempotent outbox. Live delivery is not verified; keep email delivery disabled until staging checks pass.
 - Added project invitation inbox support for existing accounts, with verified-email acceptance and copyable pending invitation links. Membership still requires the atomic verified-email acceptance RPC.
@@ -24,7 +24,7 @@
 
 ### Security, reliability, and operations
 
-- Added migrations 0012–0033 for active-project RLS checks, project PDF pages, invitations, durable plan metadata, notification controls, spend metering, summary provenance, Crossref status/provenance, account-deletion lease renewal, watch relevance hints, legacy crawl-cache identity, project annotations, saved searches, and versioned project briefs.
+- Added migrations 0012–0034 for active-project RLS checks, project PDF pages, invitations, durable plan metadata, notification controls, spend metering, summary provenance, Crossref status/provenance, account-deletion lease renewal, watch relevance hints, legacy crawl-cache identity, project annotations, saved searches, versioned project briefs, and service-only benchmark snapshots.
 - Changed SSE authentication to short-lived bearer tokens in the Authorization header and cursor-based event replay; removed query-token authentication and added abortable fetch-stream cleanup.
 - Disabled hosted Firecrawl crawling and legacy cache reads/writes until redirect and egress controls can be enforced; removed the unused API-key setting.
 - Restricted selectable models to verified spend-price entries and reject future registry/catalog mismatches.

@@ -375,6 +375,17 @@ async def _poll_crossref_status(supabase: Any) -> int:
         return 0
 
 
+async def _poll_benchmark_watches(supabase: Any) -> int:
+    """Poll official benchmark watches after daily paper ingestion."""
+    try:
+        from services.benchmark_monitor import poll_benchmark_watches
+
+        return await poll_benchmark_watches(supabase)
+    except Exception:
+        logger.exception("Official benchmark monitoring failed")
+        return 0
+
+
 async def run_daily_fetch(
     max_results: int = 200,
     callback: Callable[[AgentStep], Awaitable[None]] | None = None,
@@ -441,12 +452,14 @@ async def run_daily_fetch(
             arxiv_updates_oldest_at=arxiv_updates_oldest_at,
         )
         crossref_alerts = await _poll_crossref_status(supabase)
+        benchmark_alerts = await _poll_benchmark_watches(supabase)
         return {
             "fetched": len(papers),
             "inserted": 0,
             "summarised": 0,
             "watchlists_notified": notified,
             "publication_status_alerts": crossref_alerts,
+            "benchmark_alerts": benchmark_alerts,
         }
 
     texts = [f"{p['title']}\n{p['abstract']}" for p in new_papers]
@@ -524,6 +537,7 @@ async def run_daily_fetch(
         arxiv_updates_oldest_at=arxiv_updates_oldest_at,
     )
     crossref_alerts = await _poll_crossref_status(supabase)
+    benchmark_alerts = await _poll_benchmark_watches(supabase)
 
     return {
         "fetched": len(papers),
@@ -531,4 +545,5 @@ async def run_daily_fetch(
         "summarised": summarised,
         "watchlists_notified": notified,
         "publication_status_alerts": crossref_alerts,
+        "benchmark_alerts": benchmark_alerts,
     }

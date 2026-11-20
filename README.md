@@ -37,7 +37,7 @@ Zenith brings paper discovery, evidence-backed reading, and research organizatio
 | Cross-paper research | Provides evidence maps, answers, and heuristic comparisons. Paper rows use abstracts; project PDFs appear as separately cited document evidence. Optional synthesis is provisional and disabled by default. |
 | Paper-to-code planning | Extracts facts from exact abstract spans, flags missing reproduction details, and exports a Markdown plan. Suggested repositories are unverified; arbitrary code execution is disabled. |
 | Research planning | Shows a bounded plan preview. A separate queued executor exists behind a disabled-by-default feature flag and still needs staging validation. |
-| Change monitoring | Supports topic, author, citation, and DOI-backed Crossref status watches, plus in-app notifications. Email digests are opt-in and gated. |
+| Change monitoring | Supports topic, author, citation, DOI-backed Crossref status watches, and observed changes in verified results on official Hugging Face benchmark leaderboards. Alerts are in-app; email digests are opt-in and gated. |
 | Cost and safety controls | Applies per-user daily budgets, provider spend metering, bounded model fan-out, rate limits, citation checks, disables uncontrolled user-URL fetching, and requires explicit approvals for higher-risk actions. |
 
 ### What sets Zenith apart
@@ -68,7 +68,7 @@ Project access is enforced in the backend. Owners manage membership; editors can
 
 ### Monitoring and research continuity
 
-Watchlists can track topics, authors, inbound citations, and DOI-backed update notices from Crossref on daily or weekly schedules. Topic ingestion can create in-app notifications; author and citation watches use Semantic Scholar where provider records are available. Crossref notice metadata can be incomplete, so an empty result is not proof that a paper has never changed. Email digests have separate consent, unsubscribe, suppression, and delivery controls and remain gated pending staging verification.
+Watchlists can track topics, authors, inbound citations, DOI-backed update notices from Crossref, and verified results on public official Hugging Face benchmark leaderboards. The first successful benchmark poll seeds a baseline; later alerts describe changes observed by Zenith and cover only the top 100 verified entries. Hugging Face does not supply a change timestamp in this response, and its verification label does not establish scientific validity. Topic ingestion can create in-app notifications; author and citation watches use Semantic Scholar where provider records are available. Crossref notice metadata can be incomplete, so an empty result is not proof that a paper has never changed. Email digests have separate consent, unsubscribe, suppression, and delivery controls and remain gated pending staging verification.
 
 Search runs and their events can be inspected and replayed after an SSE reconnect. An idempotency key prevents an accidental repeat submission from creating a duplicate run. In production, Redis carries jobs and worker leases; Postgres stores canonical run data and LangGraph checkpoints. Checkpoints allow a worker to resume pending graph work, though an external request made inside a graph node can be repeated if the process crashes before that node completes.
 
@@ -171,7 +171,7 @@ One author-provider outage fixture was marked incomplete and excluded from the r
 | Backend tests | 455 passed, 6 skipped | Full local suite, including async routes and migration, authorization, recovery, deployment-config, and project feature tests; provider credentials were cleared. |
 | Frontend tests | 97 tests across 14 files | Component, page, API normalization, invitations, project briefs, and streaming tests. |
 | Frontend lint and typecheck | Passed | Local ESLint and TypeScript checks. |
-| Backend Ruff and strict mypy | Passed | Repository-wide Ruff and strict mypy across 86 source files. |
+| Backend Ruff and strict mypy | Passed | Repository-wide Ruff and strict mypy across 87 source files. |
 | Production frontend build | Passed outside sandbox | Default build generated all 13 pages and standalone traces; `/`, `/feed`, `/projects`, and `/watchlists` returned HTTP 200. Supabase public Auth build values are empty locally, so deployed Auth still needs verification. |
 | Remote CI on current local head | Not verified | PR #3 check run #56 failed one backend migration-path test on the remote revision; the local test fix passes, but this worktree revision has no remote result. |
 | Current-head Docker build | Not verified | Docker daemon was unavailable in the recorded local validation. |
@@ -354,7 +354,7 @@ Zenith/
 │   ├── security/      authorization · policies · input/output validation
 │   ├── guardrails/    pipeline · action approvals
 │   └── tests/         pytest (security · guardrails · retrieval · research)
-├── supabase/migrations/  0001–0033 (RLS, runs, projects, PDFs, invitations, spend and collaboration)
+├── supabase/migrations/  0001–0034 (RLS, runs, projects, PDFs, invitations, spend, collaboration and benchmark monitoring)
 ├── evals/             versioned deterministic regression fixtures and runners
 └── docs/              API · architecture · security · runbooks · STATUS
 ```
@@ -395,8 +395,8 @@ GitHub Actions are configured for lint, typecheck, tests, evaluation smoke, and 
 
 | Area | Local implementation / evidence | Remaining release check |
 |---|---|---|
-| Backend and frontend | Backend: 455 tests passed, 6 skipped; Ruff and strict mypy pass. Frontend: 97 tests passed, lint and typecheck pass. The production build generated 13 static pages and 15 routes. | Obtain green CI on a reviewed remote revision and verify the backend image against configured production services. |
-| Database and tenant isolation | Migrations `0001–0033`, ownership checks, role checks, and static migration tests exist locally. | Apply and verify migrations in staging, exercise owner/member/editor/viewer/outsider/anonymous access, and verify rollback and backup restore. |
+| Backend and frontend | Backend: 478 tests passed, 6 skipped; Ruff and strict mypy pass. Frontend: 108 tests passed, lint and typecheck pass. The production build generated 13 static pages and 15 routes. | Obtain green CI on a reviewed remote revision and verify the backend image against configured production services. |
+| Database and tenant isolation | Migrations `0001–0034`, ownership checks, role checks, and static migration tests exist locally. | Apply and verify migrations in staging, exercise owner/member/editor/viewer/outsider/anonymous access, and verify rollback and backup restore. |
 | Providers and spend | Provider routing, retries, timeouts, spend reservation/settlement, and fallback paths are implemented locally. | Validate provider calls, invoice reconciliation, concurrent spend behavior, rate limits, and failure recovery against staging services. |
 | Queue and recovery | Redis queue/leases and Postgres run/checkpoint code are implemented. | Exercise restarts, lease loss, cancellation, replay, checkpoint resumption, and retention against shared deployed infrastructure. |
 | Synthesis and plan execution | Both are bounded and feature-gated; deterministic fixture tests pass. | Keep disabled until staging authorization/recovery tests, provider checks, and quality evaluation pass. |

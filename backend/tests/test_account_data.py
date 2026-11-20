@@ -145,7 +145,11 @@ def _export_tables() -> dict[str, list[dict[str, Any]]]:
             {"document_id": "other-doc", "page_number": 4, "text": "Unrelated project text."},
         ],
         "watchlists": [{"user_id": "u1", "query": "ml"}],
-        "notifications": [{"user_id": "u1", "title": "new paper"}],
+        "notifications": [{
+            "user_id": "u1",
+            "title": "new paper",
+            "source_url": "https://huggingface.co/datasets/zenith/benchmark",
+        }],
         "notification_email_preferences": [
             {
                 "user_id": "u1",
@@ -192,6 +196,7 @@ async def test_export_includes_caller_data_and_accessible_project_content(monkey
     result = await account.export_account(object(), {"user_id": "u1", "email": "u1@example.com"}, db)
 
     assert result["email"] == "u1@example.com"
+    assert result["notifications"][0]["source_url"] == "https://huggingface.co/datasets/zenith/benchmark"
     assert result["saved_papers"] == [{"user_id": "u1", "paper_id": "p1"}]
     assert {row["id"] for row in result["paper_metadata"]} == {"p1", "p2"}
     assert {row["id"] for row in result["projects"]} == {"owned", "shared"}

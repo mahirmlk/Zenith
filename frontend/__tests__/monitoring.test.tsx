@@ -71,6 +71,36 @@ describe('monitoring pages', () => {
     }));
   });
 
+  it('creates a Hugging Face benchmark watch with only its canonical dataset target id', async () => {
+    vi.mocked(fetchWatchlists).mockResolvedValue([]);
+    vi.mocked(fetchWatchedProjects).mockResolvedValue([]);
+    vi.mocked(createWatchlist).mockResolvedValue([]);
+
+    renderWithQuery(<WatchlistsPage />);
+    fireEvent.change(screen.getByLabelText('What to monitor'), { target: { value: 'benchmark' } });
+    fireEvent.change(screen.getByLabelText('Hugging Face dataset (namespace/dataset)'), { target: { value: 'org-name/benchmark-name' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create watchlist' }));
+
+    await waitFor(() => expect(createWatchlist).toHaveBeenCalledWith({
+      target_type: 'benchmark', target_id: 'org-name/benchmark-name', cadence: 'daily',
+    }));
+    expect(screen.getAllByText(/first successful poll seeds a baseline silently/i).length).toBeGreaterThan(0);
+  });
+
+  it('displays benchmark watch with a fixed Hugging Face dataset link', async () => {
+    vi.mocked(fetchWatchlists).mockResolvedValue([{
+      id: 'watch-benchmark', query: 'org-name/benchmark-name', target_type: 'benchmark', target_id: 'org-name/benchmark-name',
+      project_id: null, cadence: 'daily', enabled: true, last_checked_at: null,
+    }]);
+    vi.mocked(fetchWatchedProjects).mockResolvedValue([]);
+
+    renderWithQuery(<WatchlistsPage />);
+    const link = await screen.findByRole('link', { name: 'HF official leaderboard' });
+    expect(link).toHaveAttribute('href', 'https://huggingface.co/datasets/org-name/benchmark-name');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
   it('lets a user pause an active watchlist', async () => {
     vi.mocked(fetchWatchlists).mockResolvedValue([{
       id: 'watch-1', query: 'protein models', project_id: 'project-1',
@@ -153,7 +183,7 @@ describe('monitoring pages', () => {
       id: 'notification-1', title: 'New paper found', body: 'Matches your watchlist.',
       reason_code: 'topic_term_overlap', reason_text: 'Matched 2/2 topic-watch terms in the paper title and abstract: transformer, language.',
       project_relevance_code: 'project_term_overlap', project_relevance_text: 'The paper shares topic terms (transformer, language) with project source "Transformer language alignment". This is a text-match hint, not an assessment of scientific importance.',
-      paper_id: 'paper-1', project_id: 'project-1', created_at: '2026-11-11T00:00:00Z', read_at: null,
+      paper_id: 'paper-1', project_id: 'project-1', source_url: null, created_at: '2026-11-11T00:00:00Z', read_at: null,
     }]);
     vi.mocked(markNotificationsRead).mockResolvedValue({ status: 'ok' });
 
@@ -171,7 +201,7 @@ describe('monitoring pages', () => {
   it('marks one unread notification read without marking all', async () => {
     vi.mocked(fetchNotifications).mockResolvedValue([{
       id: 'notification-2', title: 'Another paper', body: null,
-      paper_id: 'paper-2', project_id: null, created_at: '2026-11-11T00:00:00Z', read_at: null,
+      paper_id: 'paper-2', project_id: null, source_url: null, created_at: '2026-11-11T00:00:00Z', read_at: null,
     }]);
     vi.mocked(markNotificationRead).mockResolvedValue({ status: 'ok' });
 
@@ -181,5 +211,36 @@ describe('monitoring pages', () => {
     await waitFor(() => expect(markNotificationRead).toHaveBeenCalledOnce());
     expect(vi.mocked(markNotificationRead).mock.calls[0]?.[0]).toBe('notification-2');
     expect(markNotificationsRead).not.toHaveBeenCalled();
+  });
+
+  it('shows benchmark result limitations and links only to Hugging Face sources', async () => {
+    vi.mocked(fetchNotifications).mockResolvedValue([{
+      id: 'notification-benchmark', title: 'Benchmark result observed', body: 'A verified result was observed.',
+      reason_code: 'benchmark_result_observed', paper_id: null, project_id: null,
+      source_url: 'https://huggingface.co/spaces/org/leaderboard?dataset=org%2Fbenchmark',
+      created_at: '2026-11-20T00:00:00Z', read_at: null,
+    }]);
+    renderWithQuery(<NotificationsPage />);
+
+    const link = await screen.findByRole('link', { name: 'View HF verified result' });
+    expect(link).toHaveAttribute('href', 'https://huggingface.co/spaces/org/leaderboard?dataset=org%2Fbenchmark');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByText(/first successful poll seeds a baseline silently/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not provide change timestamps/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not establish scientific validity/i)).toBeInTheDocument();
+
+  });
+
+  it('does not render non-Hugging Face notification sources as links', async () => {
+    vi.mocked(fetchNotifications).mockResolvedValue([{
+      id: 'notification-unsafe', title: 'Unsafe source', body: null,
+      reason_code: 'benchmark_result_observed', paper_id: null, project_id: null,
+      source_url: 'https://evil.example/spoof', created_at: '2026-11-20T00:00:00Z', read_at: null,
+    }]);
+    renderWithQuery(<NotificationsPage />);
+
+    await screen.findByText('Unsafe source');
+    expect(screen.queryByRole('link', { name: 'View HF verified result' })).not.toBeInTheDocument();
   });
 });

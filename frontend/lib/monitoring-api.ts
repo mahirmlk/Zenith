@@ -5,7 +5,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 export interface Watchlist {
   id: string;
   query: string;
-  target_type: 'topic' | 'author' | 'citation';
+  target_type: 'topic' | 'author' | 'citation' | 'benchmark';
   target_id: string | null;
   project_id: string | null;
   cadence: 'daily' | 'weekly';
@@ -22,12 +22,13 @@ export interface AppNotification {
   id: string;
   title: string;
   body: string | null;
-  reason_code?: 'topic_term_overlap' | 'author_relation' | 'citation_relation' | 'preprint_version_updated' | null;
+  reason_code?: 'topic_term_overlap' | 'author_relation' | 'citation_relation' | 'preprint_version_updated' | 'benchmark_result_observed' | null;
   reason_text?: string | null;
   project_relevance_code?: 'project_term_overlap' | null;
   project_relevance_text?: string | null;
   paper_id: string | null;
   project_id?: string | null;
+  source_url: string | null;
   created_at: string;
   read_at: string | null;
 }
@@ -78,7 +79,7 @@ export function fetchWatchlists(): Promise<Watchlist[]> {
 
 export function createWatchlist(input: {
   query?: string;
-  target_type: 'topic' | 'author' | 'citation';
+  target_type: 'topic' | 'author' | 'citation' | 'benchmark';
   target_id?: string;
   project_id?: string;
   cadence: 'daily' | 'weekly';

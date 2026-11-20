@@ -395,6 +395,48 @@ async def test_duplicate_provider_candidates_create_one_notification(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_daily_ingestion_awaits_benchmark_monitor_when_no_new_papers(monkeypatch):
+    import services.ingestion as ingestion
+
+    from services import arxiv, huggingface, supabase_client
+
+    db = FakeSupabase([])
+    calls = []
+
+    async def no_latest(**_kwargs):
+        return []
+
+    async def no_updates(**_kwargs):
+        return [], True
+
+    async def no_hf_papers():
+        return []
+
+    async def get_database():
+        return db
+
+    async def monitor(database):
+        calls.append(database)
+        return 2
+
+    monkeypatch.setattr(arxiv, "fetch_latest_papers", no_latest)
+    monkeypatch.setattr(arxiv, "fetch_recently_updated_papers", no_updates)
+    monkeypatch.setattr(huggingface, "fetch_hf_daily", no_hf_papers)
+    monkeypatch.setattr(supabase_client, "get_supabase", get_database)
+    monkeypatch.setattr(ingestion, "_poll_crossref_status", lambda _db: _return_zero())
+    monkeypatch.setattr(ingestion, "_poll_benchmark_watches", monitor)
+
+    result = await ingestion.run_daily_fetch()
+
+    assert result["benchmark_alerts"] == 2
+    assert calls == [db]
+
+
+async def _return_zero():
+    return 0
+
+
+@pytest.mark.asyncio
 async def test_preprint_update_uses_source_update_time_and_explains_version_change():
     now = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
     db = FakeSupabase([{

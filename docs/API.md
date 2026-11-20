@@ -315,7 +315,7 @@ API routes so source, quote, and actor checks run in the backend.
 | `GET /api/projects/{project_id}/briefs/{brief_id}` | Read brief metadata after project membership check |
 | `GET /api/projects/{project_id}/briefs/{brief_id}/versions?limit=&offset=` | List immutable versions with their validated source snapshots |
 | `POST /api/projects/{project_id}/briefs/{brief_id}/versions` | Append a new user-authored version; owner/editor only, 20/minute, requires `expected_current_version` (409 on conflict) |
-| `POST /api/watchlists` | Create a daily/weekly watchlist, optionally project-scoped |
+| `POST /api/watchlists` | Create a daily/weekly topic, Semantic Scholar author/citation, or official Hugging Face benchmark watch, optionally project-scoped |
 | `GET /api/watchlists` | List caller's watchlists |
 | `PATCH /api/watchlists/{watch_id}` | Update enabled state or cadence |
 | `DELETE /api/watchlists/{watch_id}` | Delete watchlist |
@@ -358,6 +358,21 @@ Crossref checks are separately opted in per paper and user, bounded to 100
 watches per ingestion run with five concurrent lookups. Repeated delivery of
 the same notice is idempotent per user; provider failures preserve the last
 verified status and retry after a backoff. Alerts are in-app only.
+Benchmark watches use `target_type: "benchmark"` and an exact public Hugging
+Face dataset ID in `target_id` (`namespace/dataset`). The dataset must be
+ungated and tagged `benchmark:official`. Zenith polls the fixed Hugging Face
+dataset and leaderboard endpoints during daily ingestion, checks no more than
+50 due benchmark watches per run with at most three concurrent requests, caps
+each response at 2 MiB and snapshots at the 100 highest-ranked verified
+entries. The first successful poll silently seeds the baseline. Later alerts
+report newly observed verified entries or score/rank changes, with the old and
+new values, leaderboard link, and Zenith observation time. Failed or malformed
+responses do not advance the snapshot or last-checked cursor. Hugging Face does
+not provide a change timestamp through this leaderboard response, and its
+`verified` flag does not establish scientific validity. The monitored API is
+documented in the [Hugging Face leaderboard guide](https://huggingface.co/docs/hub/leaderboard-data-guide).
+Migration 0034 adds service-only per-watch snapshots and a constrained
+`source_url` notification field; apply it before creating benchmark watches.
 For project-linked watchlists, `project_relevance_text` is an optional lexical
 hint based on shared title/abstract and project/source-title terms. It is
 returned only while the watch owner still has project access and is not a

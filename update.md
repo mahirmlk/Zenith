@@ -1522,3 +1522,14 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Keep production readiness blocked on current-head CI/review and staging/provider/recovery/quality evidence. The user requested that all commits remain local; no push was made.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the remaining external release gates.
+
+### §24.67 Official benchmark leaderboard monitoring (2026-11-20)
+
+- [x] Added a `benchmark` watch target for exact public Hugging Face `namespace/dataset` IDs. Creation validates that the dataset is public, ungated, and tagged `benchmark:official`; polling calls only fixed Hugging Face endpoints.
+- [x] Added migration 0034 with service-only, bounded per-watch snapshots, a constrained safe benchmark source URL on notifications, and rollback that refuses to discard existing benchmark watches/alerts. Initial successful polls seed silently; later polls report newly observed score/rank changes only for the top 100 Hugging Face-verified entries. Old/new values and ranks, the dataset link, and Zenith's observation time are shown; provider/schema failures do not advance snapshots or cursors.
+- [x] Bound polling to 50 due watches per ingestion, three concurrent requests, 8-second requests, 2 MiB responses, and at most 500 provider rows. Snapshot-based alerts are idempotent across retries and use the existing daily/weekly cadence. Benchmark API calls are awaited in both ingestion result paths.
+- [x] Added watchlist creation/display and notification-link UI with explicit disclosure that the first poll is silent, Hugging Face supplies no change timestamp, and its verification flag does not establish scientific validity. Export retains the source link.
+- [x] Verification: focused backend checks pass (15/15), including provider contract/eligibility, baseline and change alerts, malformed/provider failure handling, retry-safe persistence, API validation, migration shape, export, and ingestion scheduling. Frontend monitoring tests pass (13/13), lint and TypeScript typecheck pass. Repository whitespace check, Ruff, and Python compilation pass.
+- [ ] Apply migration 0034 in staging and validate live Hugging Face access, RLS/service-only snapshot behavior, user deletion cascades, cadence and outage retry, provider rate/size/schema changes, and notification delivery. Leaderboard entries are source-submitted results: even Hugging Face's `verified` indicator does not establish scientific validity; the endpoint supplies no event timestamp. Keep broader human-calibrated alert-quality evaluation open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md); no branch push or staging changes were made.
