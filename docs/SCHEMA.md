@@ -1,6 +1,8 @@
 # Database Schema Reference
 
-> The data model for the AI Paper Research Agent — Supabase (Postgres) tables, functions, and Pydantic representations.
+> This is a legacy schema reference for Supabase (Postgres) tables and Pydantic representations. It is not a complete current-schema specification.
+
+> **Current source of truth:** the ordered files in [`supabase/migrations/`](../supabase/migrations/) (currently 0001–0034) define the supported database schema. Read [`MIGRATIONS_RUNBOOK.md`](./MIGRATIONS_RUNBOOK.md) and apply the migration sequence to staging before production. `supabase/schema.sql` is an incomplete legacy baseline; do not use it to initialize or upgrade a production database.
 
 ---
 
@@ -27,14 +29,63 @@
 
 ## Overview
 
-The AI Paper Research Agent uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. The schema is defined in `supabase/schema.sql` and consists of five tables plus one stored function.
+Zenith uses **Supabase** (managed Postgres) with the **pgvector** extension enabled. This document's opening table descriptions are a legacy overview and omit objects added by later migrations. The supported schema is the cumulative result of migrations `0001`–`0034`.
 
 - **Database:** PostgreSQL (via Supabase)
 - **Vector extension:** `pgvector` — for 1536-dimensional paper embeddings
 - **Auth:** Supabase Auth — `auth.users` table managed by Supabase (not defined in our schema)
-- **Migration:** Run `supabase/schema.sql` once in the Supabase SQL Editor to initialise the schema
+- **Migration:** Apply the ordered files under `supabase/migrations/` using `docs/MIGRATIONS_RUNBOOK.md`; do not initialize production from `supabase/schema.sql`
 
 The `papers` table schema is defined in SQL; the Pydantic models in `backend/models/schemas.py` extend it with computed and runtime-only fields (e.g., `relevance_score`, `difficulty`).
+
+## Project annotations (migration 0031)
+
+`project_annotations` stores user-authored notes anchored to source text. Each
+row references either one attached `project_sources` row for a paper abstract,
+or one `project_documents` row and page number for extracted PDF text. Composite
+foreign keys include `project_id`, so a source in another project cannot be
+used as an anchor. PDF anchors also reference an existing page row. Direct
+authenticated table writes are revoked so quote validation must pass through
+the API. The quote uses zero-based, half-open Unicode character
+offsets and stores a server-generated SHA-256 fingerprint. Source, offsets,
+quote, fingerprint, and creator are immutable; only `content` can be edited.
+Authenticated project members can read annotations, while project owners and
+editors can write. Rows cascade when their project or attached source/document
+is deleted. The original PDF bytes are discarded after extraction, so an
+annotation refers to retained extracted page text only. Migration
+[`0031_project_annotations.sql`](../supabase/migrations/0031_project_annotations.sql)
+is the authoritative table definition; this legacy schema reference is not a
+complete installation snapshot.
+
+## Saved searches (migration 0032)
+
+`saved_searches` stores a normalized search name, query, optional model, and
+optional project scope. Personal rows are visible only to their creator.
+Project rows are visible to project members; owners/editors can create them,
+and current project members may run them. The creator, owner, or editor may
+update/delete a project row while still a member. Project scope and creator are immutable after creation.
+The table stores configuration only; each explicit run starts a new search
+through standard metered admission rather than replaying saved results.
+Watchlists are separate recurring subscriptions. Migration
+[`0032_saved_searches.sql`](../supabase/migrations/0032_saved_searches.sql)
+is authoritative; this legacy schema reference is incomplete.
+
+## Versioned project briefs (migration 0033)
+
+`project_briefs` stores project-scoped brief metadata and the latest version
+number. `project_brief_versions` stores immutable, manually authored revisions
+and structured snapshots of citations to attached paper abstracts or extracted
+PDF pages. Each snapshot includes stable source IDs, a zero-based half-open
+Unicode locator, exact quote, and source/quote fingerprints. Members can read;
+owners/editors append through service-only atomic RPCs that recheck the actor's
+role, lock the brief, verify every source quote against current project text,
+and reject stale expected version numbers. Direct authenticated table writes
+are revoked. Account export includes brief metadata for accessible projects
+and all versions in owned projects plus caller-authored versions in shared
+projects. Account deletion removes the caller's authored records and reconciles
+the shared brief head. Migration
+[`0033_versioned_project_briefs.sql`](../supabase/migrations/0033_versioned_project_briefs.sql)
+is authoritative.
 
 ---
 
@@ -55,6 +106,8 @@ erDiagram
         text url
         timestamptz published_at
         text summary_tldr
+        text summary_status "default unknown"
+        text summary_fallback_reason
         vector embedding "(1536-dim)"
         timestamptz created_at
         jsonb summary_contributions "ALTER TABLE added"
@@ -85,6 +138,7 @@ erDiagram
     crawled_content {
         text paper_id PK_FK
         text url
+        text parser_version
         text content
         timestamptz fetched_at
     }
@@ -150,7 +204,17 @@ CREATE TABLE IF NOT EXISTS papers (
 | `authors` | `JSONB` | — | `'[]'` | Array of author name strings. E.g., `["Jane Doe", "John Smith"]` |
 | `url` | `TEXT` | Yes | — | Link to the paper (ArXiv abstract page or PDF URL) |
 | `published_at` | `TIMESTAMPTZ` | Yes | — | Publication or submission date |
+| `doi` | `TEXT` | Yes | — | DOI returned by the source; Crossref update checks require a valid DOI |
+| `publication_update_type` | `TEXT` | Yes | — | Supported Crossref update type, when present in deposited metadata |
+| `publication_update_doi` | `TEXT` | Yes | — | DOI of the Crossmark update/retraction notice |
+| `publication_update_label` | `TEXT` | Yes | — | Provider label for the notice |
+| `publication_update_date` | `DATE` | Yes | — | Provider-reported notice date |
+| `publication_update_source` | `TEXT` | Yes | — | `crossref` when a supported relation is stored |
+| `publication_update_deposit_source` | `TEXT` | Yes | — | Crossref relation depositor/source: `publisher` or `retraction-watch`; null when absent or unknown |
+| `publication_update_checked_at` | `TIMESTAMPTZ` | Yes | — | Last successful Crossref metadata lookup, including empty metadata |
 | `summary_tldr` | `TEXT` | Yes | — | AI-generated one-line TL;DR (populated by Summary Agent) |
+| `summary_status` | `TEXT` | No | `unknown` | `generated` only after provider settlement and output validation; `abstract_preview` for visible abstract-derived fallback text; `unknown` for legacy rows |
+| `summary_fallback_reason` | `TEXT` | Yes | `NULL` | One of `per_run_cap`, `spend_limit`, `billing_unavailable`, `provider_unavailable`, or `invalid_output`; required when status is `abstract_preview` |
 | `embedding` | `VECTOR(1536)` | Yes | — | OpenAI `text-embedding-3-small` vector of title + abstract |
 | `created_at` | `TIMESTAMPTZ` | — | `NOW()` | Row creation timestamp |
 
@@ -159,8 +223,21 @@ CREATE TABLE IF NOT EXISTS papers (
 | Column | Type | Default | Description |
 |--------|------|---------|-------------|
 | `summary_contributions` | `JSONB` | `NULL` | AI-generated 3-bullet key contributions list (populated by Summary Agent) |
+| `summary_status` | `TEXT` | `'unknown'` | Provenance for the stored `summary_tldr`; migration 0024 adds a check constraint |
+| `summary_fallback_reason` | `TEXT` | `NULL` | Bounded reason code for an abstract-preview fallback; migration 0024 constrains allowed values and status pairing |
+| publication update fields | `TEXT`, `DATE`, `TIMESTAMPTZ` | `NULL` | Migration 0025 stores DOI-backed Crossref update provenance; empty metadata remains unknown |
 
-**> Note:** The columns `difficulty` and `papers_with_code` are used at runtime by the Summary Agent and Papers With Code service, but are added dynamically via upsert — they are not declared in the schema DDL. If running the schema on a fresh database, these columns will be created on first upsert.
+### `paper_status_watches` (migration 0025)
+
+Explicit per-user opt-in to Crossref update alerts. The composite primary key
+`(user_id, paper_id)` makes repeated opt-in idempotent. RLS permits each user
+to select, insert, and delete only their own preference; the backend scheduler
+uses its service-role client and still derives recipients from these scoped
+rows. `last_attempt_at` applies retry backoff and is not a provider-success
+cursor. Notifications use a per-user stable notice key so distinct later
+notices remain deliverable.
+
+**> Note:** The legacy `papers_with_code` response field remains for wire compatibility but is not populated by the current GitHub repository search path. Repository candidates are returned by the paper-code and implementation-plan endpoints.
 
 **Indexes:**
 
@@ -219,7 +296,7 @@ Stores per-user application preferences.
 ```sql
 CREATE TABLE IF NOT EXISTS user_prefs (
   user_id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  preferred_model  TEXT DEFAULT 'anthropic/claude-sonnet-4-5',
+  preferred_model  TEXT DEFAULT 'anthropic/claude-sonnet-5.5',
   interests        TEXT[] DEFAULT '{}',
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
@@ -230,7 +307,7 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `user_id` | `UUID` | No (PK, FK) | — | References `auth.users(id)`. Cascade delete — removing a user removes their prefs. |
-| `preferred_model` | `TEXT` | — | `'anthropic/claude-sonnet-4-5'` | The user's chosen LLM model (OpenRouter model ID). Set via ModelSelector UI. |
+| `preferred_model` | `TEXT` | — | `'anthropic/claude-sonnet-5.5'` | The user's chosen LLM model (OpenRouter model ID). Set via ModelSelector UI. |
 | `interests` | `TEXT[]` | — | `'{}'` | Array of research interest strings. E.g., `{"diffusion models", "graph neural networks"}`. |
 | `updated_at` | `TIMESTAMPTZ` | — | `NOW()` | Last update timestamp |
 
@@ -275,12 +352,13 @@ The router reads `citations` first and only calls S2 on a cache miss or when the
 
 ### `crawled_content`
 
-Caches Firecrawl full-text pulls keyed by paper ID. Popular papers get re-crawled across users, and each crawl is the most expensive external call per paper, so the markdown is stored once and served from cache thereafter.
+Retains legacy derived full-text content by paper ID. The current application does not access this table. If a controlled fetcher is enabled later, cache reuse must require the exact source URL and parser version; hosted crawling remains disabled because redirect destinations and worker egress cannot currently be constrained.
 
 ```sql
 CREATE TABLE IF NOT EXISTS crawled_content (
   paper_id   TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
   url        TEXT,
+  parser_version TEXT,
   content    TEXT,
   fetched_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -292,10 +370,11 @@ CREATE TABLE IF NOT EXISTS crawled_content (
 |--------|------|----------|---------|-------------|
 | `paper_id` | `TEXT` | No (PK, FK) | — | Paper ID the content belongs to. |
 | `url` | `TEXT` | Yes | — | The URL that was crawled. |
-| `content` | `TEXT` | Yes | — | Clean markdown produced by Firecrawl. |
+| `parser_version` | `TEXT` | Yes | — | Version recorded by prior extraction implementations; not read by the disabled crawler. |
+| `content` | `TEXT` | Yes | — | Legacy derived markdown. New hosted crawls are disabled. |
 | `fetched_at` | `TIMESTAMPTZ` | — | `NOW()` | When the crawl was stored. |
 
-Accessed via `crawl_paper_cached(paper_id, url)` in `backend/services/firecrawl.py`.
+The disabled crawler does not read or write this legacy table. The table remains for existing deployments and is deleted with its paper row.
 
 ---
 
@@ -379,11 +458,21 @@ class Paper(BaseModel):
     authors: list[str]                               # Python list from JSONB
     url: str                                         # matches papers.url
     published_at: datetime                           # matches papers.published_at
+    doi: Optional[str] = None
+    publication_update_type: Optional[Literal["retraction", "partial_retraction", "withdrawal", "removal", "expression_of_concern"]] = None
+    publication_update_doi: Optional[str] = None
+    publication_update_label: Optional[str] = None
+    publication_update_date: Optional[date] = None
+    publication_update_source: Optional[Literal["crossref"]] = None
+    publication_update_deposit_source: Optional[Literal["publisher", "retraction-watch"]] = None
+    publication_update_checked_at: Optional[datetime] = None
     summary_tldr: Optional[str] = None               # matches papers.summary_tldr
     summary_contributions: Optional[list[str]] = None  # runtime field (ALTER TABLE)
+    summary_status: Literal["generated", "abstract_preview", "unknown"] = "unknown"
+    summary_fallback_reason: Optional[Literal["per_run_cap", "spend_limit", "billing_unavailable", "provider_unavailable", "invalid_output"]] = None
     relevance_score: Optional[float] = None          # COMPUTED — not in DB
     difficulty: Optional[Literal["introductory", "intermediate", "expert"]] = None  # runtime field
-    papers_with_code: Optional[dict] = None          # runtime field (Papers With Code)
+    papers_with_code: Optional[dict] = None          # legacy response compatibility field
 ```
 
 | Field | Source | Notes |
@@ -391,9 +480,11 @@ class Paper(BaseModel):
 | `id` through `summary_tldr` | `papers` table | Direct column mapping |
 | `authors` | `papers.authors` (JSONB) | Deserialised from JSON array to Python `list[str]` |
 | `summary_contributions` | Runtime upsert | Added by `ALTER TABLE` in schema.sql; populated by Summary Agent |
+| `summary_status` | `papers` table / summary runtime | `generated` requires metered settlement and validated output; legacy rows remain `unknown` |
+| `summary_fallback_reason` | `papers` table / summary runtime | Set only for `abstract_preview` fallback results |
 | `relevance_score` | **Computed** | Assigned by Memory Agent at query time. Not stored in the database. |
 | `difficulty` | Runtime upsert | Populated by Summary Agent during paper ingestion or on-demand summarisation |
-| `papers_with_code` | Runtime upsert | Populated by Papers With Code service; contains `{"repos": [{"url": "...", "stars": 123}]}` |
+| `papers_with_code` | Legacy response field | Not currently populated; repository candidates come from the paper-code lookup endpoint |
 
 ### `PaperSearchResult`
 
@@ -419,7 +510,7 @@ Validates the search query length. `model` allows users to override the default 
 
 ```python
 class UserPrefs(BaseModel):
-    preferred_model: str = "anthropic/claude-sonnet-4-5"
+    preferred_model: str = "anthropic/claude-sonnet-5.5"
     interests: list[str] = Field(default_factory=list)
 ```
 
@@ -528,4 +619,4 @@ The `match_papers()` PostgreSQL function enables direct database-side similarity
 > - [ARCHITECTURE.md](../ARCHITECTURE.md) Section 5 — Data model in the architecture overview
 > - [MEMORY.md](../MEMORY.md) — Memory system (Mem0 + pgvector) that uses this schema
 > - [docs/API.md](./API.md) — API endpoints that expose these models
-> - [supabase/schema.sql](../supabase/schema.sql) — The canonical DDL source file
+> - [supabase/schema.sql](../supabase/schema.sql) — Incomplete legacy schema baseline; not the production migration source

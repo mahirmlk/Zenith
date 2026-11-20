@@ -1,8 +1,7 @@
-from fastapi.testclient import TestClient
-
 from main import app
+from tests.asgi_client import ASGITestClient
 
-client = TestClient(app)
+client = ASGITestClient(app)
 
 
 def test_ingest_requires_admin_key_when_unconfigured(monkeypatch):
@@ -25,13 +24,15 @@ def test_ingest_rejects_bad_key(monkeypatch):
 
 def test_ingest_accepts_valid_key(monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "top-secret")
+    calls = []
 
-    async def fake_run():
-        return {"fetched": 0, "inserted": 0, "summarised": 0}
+    async def fake_run(source):
+        calls.append(source)
 
     import routers.internal
 
-    monkeypatch.setattr(routers.internal, "run_daily_fetch", fake_run)
+    monkeypatch.setattr(routers.internal, "run_daily_fetch_with_lease", fake_run)
     response = client.post("/api/internal/ingest", headers={"X-Admin-Key": "top-secret"})
     assert response.status_code == 200
     assert response.json() == {"status": "started"}
+    assert calls == ["admin"]

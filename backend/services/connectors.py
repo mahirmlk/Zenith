@@ -10,7 +10,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Connector:
     name: str
-    scopes: tuple
+    scopes: tuple[str, ...]
     enabled: bool = False  # disabled until OAuth consent flow lands
 
 

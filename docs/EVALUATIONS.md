@@ -1,4 +1,64 @@
-# Evaluations (update.md §10)
+# AI Evaluation Status (`update.md` §10)
 
-Harness: `evals/runners/run_evals.py` (deterministic, no LLM judge) over `evals/datasets/grounded_qa_v1.jsonl`. Gates: fabricated citation IDs = 0 (must-pass), abstention on no-evidence cases, cross-tenant access = 0 (backend security tests). Baseline (2026-11-05): smoke suite 3/3 PASS; backend suite 51 passed / 5 env-dependent failures (need OPENAI_API_KEY + live Supabase). Full golden suite (retrieval recall@k, grounded QA, comparison, red-team) is the `quality/ai-evals-and-ci` PR.
-Run: `python evals/runners/run_evals.py`
+## Deterministic retrieval and evidence gate
+
+`evals/runners/run_evals.py` calls the production hybrid ranker, extractive answer selector, PDF evidence selector, and citation validator. It runs `grounded_qa_v3` (18 abstract-grounded cases) and `pdf_evidence_v1` (6 PDF page-evidence cases). The PDF suite covers exact citation order and snippets, page-local span integrity, injection-only abstention, entity mismatch, and multiple matching pages. A separate negative control verifies that a fabricated citation is rejected.
+
+Run from the repository root:
+
+```bash
+python evals/runners/run_evals.py
+```
+
+The gate prints case-level checks and aggregate metrics, and exits nonzero when any case or metric threshold fails.
+
+| Metric | Minimum threshold |
+|---|---:|
+| Abstention accuracy | 100% |
+| Citation validity (IDs exist in retrieved set) | 100% |
+| Exact sentence support for emitted claims | 100% |
+| Answerable-case claim coverage | 90% |
+| Recall@5 for labeled relevant sources | 90% |
+| MRR@5 for labeled relevant sources | 90% |
+| PDF citation accuracy, exact page spans, abstention, and forbidden-text safety | 100% each |
+
+### Current measured baseline
+
+Historical 2026-11-08 baseline (`grounded_qa_v2`):
+
+| Result | Measured |
+|---|---:|
+| Cases | 12 |
+| Passing cases | 12 / 12 |
+| Abstention accuracy | 100% |
+| Citation validity | 100% |
+| Exact sentence support | 100% |
+| Answerable-case claim coverage | 100% |
+| Recall@5 | 100% |
+| MRR@5 | 100% |
+| Fabricated-citation negative control | Pass |
+| Gate | **Pass** |
+
+Current local baseline on 2026-11-15:
+
+| Dataset / metric | Measured |
+|---|---:|
+| `grounded_qa_v3` | 18 / 18 pass |
+| Paper abstention, citation, exact support, coverage, Recall@5, MRR@5 | 1.000 each |
+| `pdf_evidence_v1` | 6 / 6 pass |
+| PDF citation accuracy, exact span rate, abstention, forbidden-text safety | 1.000 each |
+| `cross_paper_synthesis_v2` mocked-provider contract cases | 6 / 6 pass |
+| `research_plan_v1` deterministic plan-preview cases | 5 / 5 pass |
+| Fabricated-citation negative control | Pass |
+
+The gate passes after BM25 ignores common question terms, claim selection requires substantive overlap and relevant query entities, and instruction-like abstract sentences are excluded. Do not weaken these cases. The corpus remains small and hand-authored, so passing it is a regression check rather than a broad research-quality result.
+
+## What this suite does not prove
+
+`cross_paper_synthesis_v2` currently has six mocked-provider contract fixtures: opposing evidence remains conflicting, one-source support is downgraded to uncertain, fabricated generation anchors and verifier evidence IDs are rejected, incomplete assessments fail closed, and an unsupported verifier result is downgraded to uncertain. These fixtures exercise deterministic service validation, not live model behavior or scientific correctness.
+
+`research_plan_v1` verifies deterministic route selection, static task steps, fixed bounds, and preview-only metadata. The production-gated executor is implemented separately through the bounded LangGraph run lifecycle, but this fixture does not evaluate execution, recovery, cancellation, authorization under changing project membership, provider behavior, or end-to-end quality. Those checks require service-backed staging validation and remain open; keep execution disabled until they pass.
+
+This is a deterministic regression gate, not a broad research-quality benchmark. The corpora are small and hand-authored; the suite does not measure scientific correctness, calibrated confidence, statistical significance, provider/model behavior, project-comparison quality, project authorization, deployed-service behavior, latency, or cost. Exact-sentence matching is appropriate for the extractive selectors. Synthesis needs independently labeled claim-level evidence-span evaluation, blinded domain-expert review, and staging/provider validation before production use. Add larger datasets and separate staging/human-review gates before using these results as a production quality claim.
+
+See [STATUS.md](STATUS.md) for remaining release blockers and current local validation.

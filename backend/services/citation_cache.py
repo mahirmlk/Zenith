@@ -7,10 +7,12 @@ edges until they go stale (7 days).
 """
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 CACHE_TTL = timedelta(days=7)
+CitationRow = dict[str, Any]
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -25,7 +27,7 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
-async def get_cached_citations(paper_id: str) -> list[dict] | None:
+async def get_cached_citations(paper_id: str) -> list[CitationRow] | None:
     """Return cached citation rows for ``paper_id``, or None if missing/stale."""
     try:
         from services.supabase_client import get_supabase
@@ -37,7 +39,12 @@ async def get_cached_citations(paper_id: str) -> list[dict] | None:
         if not rows:
             return None
 
-        newest = max((_parse_timestamp(r.get("fetched_at")) for r in rows if r.get("fetched_at")), default=None)
+        timestamps = [
+            timestamp
+            for row in rows
+            if (timestamp := _parse_timestamp(row.get("fetched_at"))) is not None
+        ]
+        newest = max(timestamps, default=None)
         if newest is None or datetime.now(timezone.utc) - newest > CACHE_TTL:
             return None
         return rows
@@ -46,7 +53,9 @@ async def get_cached_citations(paper_id: str) -> list[dict] | None:
         return None
 
 
-async def store_citations(paper_id: str, root_title: str, references: list[dict]) -> None:
+async def store_citations(
+    paper_id: str, root_title: str, references: list[CitationRow]
+) -> None:
     """Upsert a paper's citation edges into the cache table."""
     try:
         from services.supabase_client import get_supabase

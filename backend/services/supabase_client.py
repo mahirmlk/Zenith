@@ -6,12 +6,14 @@ Service-role bypasses RLS — every query must still enforce tenant
 ownership in code (see backend/security/authorization.py).
 """
 
+from typing import Any
+
 from config import get_settings
 
 _client = None
 
 
-async def get_supabase():
+async def get_supabase() -> Any:
     """Async dependency returning a cached AsyncClient."""
     global _client
     if _client is None:

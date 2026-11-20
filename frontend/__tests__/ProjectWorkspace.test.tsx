@@ -1,0 +1,672 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import ProjectWorkspacePage from '@/app/projects/[id]/page';
+import { fetchProjectSources } from '@/lib/project-api';
+import { buildProjectExport } from '@/lib/project-export';
+
+vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'project-1' }) }));
+vi.mock('@/lib/auth', () => ({ getJWT: async () => 'x.eyJzdWIiOiJ1c2VyLTEifQ.x' }));
+
+describe('ProjectWorkspacePage', () => {
+  let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
+  let notes: { id: string; content: string; created_at: string }[];
+  let annotations: Record<string, unknown>[];
+  let savedSearches: Record<string, unknown>[];
+  let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
+  let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string }[];
+  let documents: { id: string; filename: string; page_count: number }[];
+  let pageExtractionMethods: ('native' | 'ocr' | 'empty' | 'ocr_limit')[];
+  let currentRole: 'owner' | 'editor' | 'viewer';
+  let synthesisEnabled: boolean;
+  let planExecutionAvailable: boolean;
+  let request: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    sources = [];
+    notes = [];
+    annotations = [];
+    savedSearches = [];
+    members = [];
+    invitations = [];
+    documents = [];
+    pageExtractionMethods = ['native'];
+    currentRole = 'owner';
+    synthesisEnabled = true;
+    planExecutionAvailable = false;
+    request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      let body: unknown = {};
+
+      if (url.pathname === '/api/research/capabilities' && method === 'GET') {
+        body = { research_synthesis_enabled: synthesisEnabled };
+      } else if (url.pathname === '/api/research/execute' && method === 'POST') {
+        body = { run_id: 'plan-run-1' };
+      } else if (url.pathname === '/api/projects/project-1' && method === 'GET') {
+        body = { id: 'project-1', owner_id: 'user-1', title: 'Alpha Project', description: 'A research workspace', current_role: currentRole };
+      } else if (url.pathname === '/api/projects/project-1/notes' && method === 'GET') {
+        body = notes;
+      } else if (url.pathname === '/api/projects/project-1/notes' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { content: string };
+        notes = [{ id: 'note-1', content: payload.content, created_at: '2026-11-11T12:00:00Z' }];
+        body = notes;
+      } else if (url.pathname === '/api/projects/project-1/annotations' && method === 'GET') {
+        body = annotations;
+      } else if (url.pathname === '/api/projects/project-1/briefs' && method === 'GET') {
+        body = [];
+      } else if (url.pathname.startsWith('/api/projects/project-1/briefs/') && url.pathname.endsWith('/versions') && method === 'GET') {
+        body = [];
+      } else if (url.pathname === '/api/saved-searches' && method === 'GET') {
+        body = savedSearches;
+      } else if (url.pathname === '/api/saved-searches' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const savedSearch = { ...payload, id: `saved-search-${savedSearches.length + 1}`, model: null, created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' };
+        savedSearches = [...savedSearches, savedSearch];
+        body = savedSearch;
+      } else if (url.pathname.startsWith('/api/saved-searches/') && url.pathname.endsWith('/run') && method === 'POST') {
+        body = { run_id: 'run-saved-search' };
+      } else if (url.pathname.startsWith('/api/saved-searches/') && method === 'PATCH') {
+        const id = url.pathname.split('/').at(-1);
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        savedSearches = savedSearches.map((savedSearch) => savedSearch.id === id ? { ...savedSearch, ...payload } : savedSearch);
+        body = savedSearches.find((savedSearch) => savedSearch.id === id) ?? {};
+      } else if (url.pathname.startsWith('/api/saved-searches/') && method === 'DELETE') {
+        const id = url.pathname.split('/').at(-1);
+        savedSearches = savedSearches.filter((savedSearch) => savedSearch.id !== id);
+        body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/annotations' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const annotation = {
+          id: `annotation-${annotations.length + 1}`,
+          project_id: 'project-1',
+          source_type: payload.source_type,
+          paper_source_id: payload.paper_source_id ?? null,
+          document_id: payload.document_id ?? null,
+          page_number: payload.page_number ?? null,
+          start_offset: payload.start_offset,
+          end_offset: payload.end_offset,
+          quote: payload.quote,
+          quote_sha256: 'abc123',
+          content: payload.content,
+          created_by: 'user-1',
+          created_at: '2026-11-15T10:00:00Z',
+          updated_at: '2026-11-15T10:00:00Z',
+          is_stale: false,
+          source_label: payload.source_type === 'pdf_page' ? 'methods.pdf' : 'Reliable Retrieval',
+        };
+        annotations = [...annotations, annotation];
+        body = annotation;
+      } else if (url.pathname.startsWith('/api/projects/project-1/annotations/') && method === 'PATCH') {
+        const id = url.pathname.split('/').at(-1);
+        const payload = JSON.parse(String(init?.body)) as { content: string };
+        annotations = annotations.map((annotation) => annotation.id === id ? { ...annotation, ...payload } : annotation);
+        body = annotations.find((annotation) => annotation.id === id) ?? {};
+      } else if (url.pathname.startsWith('/api/projects/project-1/annotations/') && method === 'DELETE') {
+        const id = url.pathname.split('/').at(-1);
+        annotations = annotations.filter((annotation) => annotation.id !== id);
+        body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/members' && method === 'GET') {
+        body = members;
+      } else if (url.pathname === '/api/projects/project-1/members' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { user_id: string; role: 'viewer' | 'editor' };
+        members = [{ project_id: 'project-1', ...payload }];
+        body = members;
+      } else if (url.pathname === '/api/projects/project-1/invitations' && method === 'GET') {
+        body = invitations;
+      } else if (url.pathname === '/api/projects/project-1/invitations' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { email: string; role: 'viewer' | 'editor' };
+        invitations = [{ id: 'invite-1', project_id: 'project-1', ...payload, status: 'pending', created_at: '2026-11-12T10:00:00Z', expires_at: '2026-11-19T10:00:00Z' }];
+        body = invitations[0];
+      } else if (url.pathname === '/api/projects/project-1/invitations/invite-1/resend' && method === 'POST') {
+        body = invitations[0];
+      } else if (url.pathname === '/api/projects/project-1/invitations/invite-1' && method === 'DELETE') {
+        invitations = invitations.map((invitation) => ({ ...invitation, status: 'revoked' }));
+        body = { status: 'revoked' };
+      } else if (url.pathname.startsWith('/api/projects/project-1/members/') && method === 'DELETE') {
+        const userId = decodeURIComponent(url.pathname.split('/').at(-1) ?? '');
+        members = members.filter((member) => member.user_id !== userId);
+        body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/sources' && method === 'GET') {
+        body = sources;
+      } else if (url.pathname === '/api/projects/project-1/sources' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as { paper_id: string };
+        sources = [{
+          id: 'source-1',
+          paper_id: payload.paper_id,
+          paper: { id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'], url: 'https://example.org/paper' },
+        }];
+        body = sources;
+      } else if (url.pathname === '/api/projects/project-1/sources/source-1' && method === 'DELETE') {
+        sources = [];
+        body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/documents' && method === 'GET') {
+        body = documents;
+      } else if (url.pathname === '/api/projects/project-1/documents' && method === 'POST') {
+        const formData = init?.body as FormData;
+        const file = formData.get('file') as File;
+        documents = [{ id: 'document-1', filename: file.name, page_count: pageExtractionMethods.length }];
+        body = documents[0];
+      } else if (url.pathname === '/api/projects/project-1/documents/document-1/pages' && method === 'GET') {
+        body = {
+          id: 'document-1',
+          filename: 'methods.pdf',
+          page_count: pageExtractionMethods.length,
+          pages: pageExtractionMethods.map((extraction_method, index) => ({
+            page_number: index + 1,
+            text: extraction_method === 'native' ? 'The experiment used a held-out benchmark.'
+              : extraction_method === 'ocr' ? 'OCR recovered the method details.' : '',
+            citation_id: `document-1:page:${index + 1}`,
+            extraction_method,
+          })),
+        };
+      } else if (url.pathname === '/api/papers' && method === 'GET') {
+        body = [{ id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'] }];
+      } else if (url.pathname === '/api/papers/paper-1' && method === 'GET') {
+        body = { id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'] };
+      } else if (url.pathname === '/api/research/evidence-map' && method === 'POST') {
+        body = {
+          evidence: [{ paper_id: 'paper-1', title: 'Reliable Retrieval', sentence: 'Retrieval quality improved on the benchmark.', start_offset: 5, end_offset: 48 }],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the same benchmark.', start_offset: 0, end_offset: 35 }],
+          abstained: false,
+          explanation: 'Exact abstract evidence from attached papers.',
+        };
+      } else if (url.pathname === '/api/retrieval/search' && method === 'POST') {
+        body = { results: [
+          { id: 'paper-1', source_type: 'paper', title: 'Reliable Retrieval', abstract: 'A useful project paper.', score: 0.9 },
+          { id: 'document-1:page:4', source_type: 'pdf_page', title: 'methods.pdf', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', snippet: 'The PDF reports retrieval quality.', start_offset: 5, end_offset: 39, score: 0.8 },
+        ] };
+      } else if (url.pathname === '/api/research/compare' && method === 'POST') {
+        body = {
+          rows: [{ paper_id: 'paper-1', problem: 'A useful project paper.', methods: null, datasets: null, metrics: null, limitations: null, code_status: 'unverified' }],
+          pdf_comparisons: [{
+            document_id: 'document-1',
+            filename: 'methods.pdf',
+            methods: { sentence: 'The PDF reports the comparison benchmark.', citation_id: 'document-1:page:4', page_number: 4, start_offset: 10, end_offset: 50 },
+          }],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the comparison benchmark.', start_offset: 10, end_offset: 50 }],
+        };
+      } else if (url.pathname === '/api/research/plan' && method === 'POST') {
+        body = {
+          query: 'compare retrieval methods',
+          task_type: 'compare',
+          max_tool_calls: 4,
+          max_sources: 10,
+          source_scope: 'project',
+          steps: [
+            { step_id: 'retrieve_sources', title: 'Find comparison sources', description: 'Rank matching paper metadata within the selected scope.', execution_state: 'proposed' },
+            { step_id: 'compare_sources', title: 'Extract comparison fields', description: 'Match available abstract sentences to comparison dimensions.', execution_state: 'proposed' },
+          ],
+          max_depth: 1,
+          max_wall_clock_seconds: 45,
+          max_model_calls: 0,
+          max_output_tokens: 0,
+          synthesis_available: false,
+          estimated_cost_usd: null,
+          cost_tracking_available: false,
+          execution_available: planExecutionAvailable,
+          limits_are_preview_only: !planExecutionAvailable,
+        };
+      } else if (url.pathname === '/api/research/synthesize' && method === 'POST') {
+        body = {
+          query: 'diffusion recall',
+          claims: [{
+            text: 'The studies report different recall outcomes.',
+            status: 'conflicting',
+            supporting_evidence_ids: ['E1'],
+            contradicting_evidence_ids: ['E2'],
+            cited_evidence_ids: ['E1', 'E2'],
+            explanation: 'The cited abstracts report opposite directions.',
+          }],
+          evidence: [
+            { evidence_id: 'E1', paper_id: 'paper-1', title: 'Study A', sentence: 'Study A reports increased recall.', start_offset: 0, end_offset: 35 },
+            { evidence_id: 'E2', paper_id: 'paper-2', title: 'Study B', sentence: 'Study B reports decreased recall.', start_offset: 0, end_offset: 35 },
+          ],
+          abstained: false,
+          explanation: 'Model reviewed public abstract evidence; not independently verified.',
+        };
+      } else if (url.pathname === '/api/research/answer' && method === 'POST') {
+        body = {
+          summary: 'Extractive evidence from a project PDF.',
+          claims: ['Retrieval quality improved on the benchmark. [document-1:page:4]'],
+          citation_ids: ['document-1:page:4'],
+          pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'Retrieval quality improved on the benchmark.', start_offset: 12, end_offset: 57 }],
+          abstained: false,
+          confidence_explanation: 'Extractive evidence only.',
+        };
+      }
+
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', request);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('hides synthesis when the backend feature flag is disabled', async () => {
+    synthesisEnabled = false;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
+    await waitFor(() => expect(request.mock.calls.some(([input]) => String(input).endsWith('/api/research/capabilities'))).toBe(true));
+    expect(screen.queryByRole('button', { name: 'Synthesize' })).not.toBeInTheDocument();
+  });
+
+  it('previews a bounded plan without executing research', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval methods' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Preview only. This plan has not run');
+    expect(screen.getByRole('list', { name: 'Proposed research steps' })).toBeInTheDocument();
+    expect(screen.getByText('Not measured')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Execute plan' })).not.toBeInTheDocument();
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/api/research/plan') && init?.method === 'POST',
+    )).toBe(true));
+    expect(request.mock.calls.some(([input, init]) =>
+      init?.method === 'POST' && ['/api/research/synthesize', '/api/research/answer', '/api/research/compare'].includes(new URL(String(input)).pathname),
+    )).toBe(false);
+  });
+
+  it('offers execution only when the preview enables it and starts the selected project query', async () => {
+    planExecutionAvailable = true;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Plan' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval methods' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+    const executeButton = await screen.findByRole('button', { name: 'Execute plan' });
+    expect(screen.getByRole('status')).toHaveTextContent('Preview only. This plan has not run');
+    fireEvent.click(executeButton);
+
+    expect(await screen.findByRole('heading', { name: 'Plan execution' })).toBeInTheDocument();
+    await waitFor(() => {
+      const executeRequest = request.mock.calls.find(([input, init]) =>
+        new URL(String(input)).pathname === '/api/research/execute' && init?.method === 'POST',
+      );
+      expect(executeRequest).toBeDefined();
+      expect(JSON.parse(String(executeRequest?.[1]?.body))).toEqual({ query: 'compare retrieval methods', project_id: 'project-1' });
+      expect(executeRequest?.[1]?.headers).toEqual(expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
+    });
+    expect(request.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname === '/api/research/execute' && init?.method === 'POST',
+    )).toBe(true);
+  });
+
+  it('attaches a paper, saves a note, and shows project-scoped abstract evidence', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
+
+    await screen.findByLabelText('Find a paper by title');
+    fireEvent.change(screen.getByLabelText('Choose a paper to add'), { target: { value: 'paper-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add paper' }));
+    expect(await screen.findByRole('button', { name: 'Remove Reliable Retrieval from project' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Add a note'), { target: { value: 'Check the benchmark protocol.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    expect(await screen.findByText('Check the benchmark protocol.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    await waitFor(() => expect(request.mock.calls.some(([input]) => String(input).endsWith('/api/research/evidence-map'))).toBe(true));
+    expect(await screen.findByText('“Retrieval quality improved on the benchmark.”')).toBeInTheDocument();
+    expect(await screen.findByText('“The PDF reports the same benchmark.”')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:4] · page offsets 0–35')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const researchRequest = request.mock.calls.find(([input, init]) =>
+        String(input).endsWith('/api/research/evidence-map') && init?.method === 'POST',
+      );
+      expect(researchRequest).toBeDefined();
+      expect(JSON.parse(String(researchRequest?.[1]?.body))).toEqual({
+        query: 'retrieval quality benchmark',
+        project_id: 'project-1',
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search in project' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('A useful project paper.')).toBeInTheDocument();
+    expect(await screen.findByText('“The PDF reports retrieval quality.”')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:4] · page offsets 5–39')).toBeInTheDocument();
+    await waitFor(() => {
+      const searchRequest = request.mock.calls.find(([input, init]) =>
+        String(input).endsWith('/api/retrieval/search') && init?.method === 'POST',
+      );
+      expect(searchRequest).toBeDefined();
+      expect(JSON.parse(String(searchRequest?.[1]?.body))).toEqual({ query: 'retrieval', project_id: 'project-1', limit: 10 });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('[document-1:page:4] · page offsets 12–57')).toBeInTheDocument();
+    expect(screen.getByText('“Retrieval quality improved on the benchmark.”')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect((await screen.findAllByText('“The PDF reports the comparison benchmark.”')).length).toBe(2);
+    expect(screen.getAllByText('[document-1:page:4] · page offsets 10–50')).toHaveLength(2);
+    expect(screen.getByText('PDF source evidence · extractive, not synthesized')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Project PDF comparison fields · separate source documents' })).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded PDFs are shown as their own sources and are not attributed to a paper\./)).toBeInTheDocument();
+    expect(screen.getByText('Methods · page 4')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Synthesize' }));
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'diffusion recall' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    expect(await screen.findByText('The studies report different recall outcomes.')).toBeInTheDocument();
+    expect(screen.getByText('Conflicting source findings')).toBeInTheDocument();
+    expect(screen.getByText('Study A · paper-1 · abstract offsets 0–35')).toBeInTheDocument();
+    expect(screen.getByText('Provider assessments are provisional and are not independent scientific verification.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Reliable Retrieval from project' }));
+    expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();
+  });
+
+  it('creates source-linked annotations from abstract and PDF evidence and supports edit/delete', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    await screen.findByRole('heading', { name: 'Alpha Project' });
+    fireEvent.change(await screen.findByLabelText('Choose a paper to add'), { target: { value: 'paper-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add paper' }));
+    await screen.findByRole('button', { name: 'Remove Reliable Retrieval from project' });
+
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    await screen.findByText('“The PDF reports the same benchmark.”');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate evidence from Reliable Retrieval' }));
+    expect(screen.getByText('Reliable Retrieval · abstract')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Your annotation'), { target: { value: 'Abstract note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save annotation' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/annotations') && init?.method === 'POST')).toBe(true));
+    expect(await screen.findByText('Abstract note')).toBeInTheDocument();
+
+    const abstractPost = request.mock.calls.find(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(abstractPost?.[1]?.body))).toEqual({
+      source_type: 'paper_abstract', paper_source_id: 'source-1', start_offset: 5, end_offset: 48,
+      quote: 'Retrieval quality improved on the benchmark.', content: 'Abstract note',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate quote from methods.pdf page 4' }));
+    fireEvent.change(screen.getByLabelText('Your annotation'), { target: { value: 'PDF note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save annotation' }));
+    await waitFor(() => expect(request.mock.calls.filter(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    )).toHaveLength(2));
+    const pdfPost = request.mock.calls.filter(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    )[1];
+    expect(JSON.parse(String(pdfPost?.[1]?.body))).toEqual({
+      source_type: 'pdf_page', document_id: 'document-1', page_number: 4, start_offset: 0, end_offset: 35,
+      quote: 'The PDF reports the same benchmark.', content: 'PDF note',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit annotation for Reliable Retrieval' }));
+    fireEvent.change(screen.getByLabelText('Edit annotation'), { target: { value: 'Updated abstract note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/annotations/annotation-1') && init?.method === 'PATCH' &&
+      JSON.stringify(JSON.parse(String(init.body))) === JSON.stringify({ content: 'Updated abstract note' }),
+    )).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete annotation for methods.pdf' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/annotations/annotation-2') && init?.method === 'DELETE',
+    )).toBe(true));
+  });
+
+  it('shows annotations read-only to viewers', async () => {
+    currentRole = 'viewer';
+    annotations = [{
+      id: 'annotation-existing', project_id: 'project-1', source_type: 'pdf_page', paper_source_id: null,
+      document_id: 'document-1', page_number: 4, start_offset: 0, end_offset: 5, quote: 'Exact quote',
+      quote_sha256: 'abc', content: 'Viewer note', created_by: 'user-2', created_at: '2026-11-15T10:00:00Z',
+      updated_at: '2026-11-15T10:00:00Z', is_stale: true, source_label: 'methods.pdf',
+    }];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText('Viewer note')).toBeInTheDocument();
+    expect(screen.getByText('Source changed · quote may be stale')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Annotate / })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit annotation for methods.pdf' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete annotation for methods.pdf' })).not.toBeInTheDocument();
+  });
+
+  it('creates, lists, edits, deletes, and runs a project saved search', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'Saved searches' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search name'), { target: { value: 'Retrieval quality scan' } });
+    fireEvent.change(screen.getByLabelText('Query'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save search' }));
+
+    expect(await screen.findByText('Retrieval quality scan')).toBeInTheDocument();
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/api/saved-searches') && init?.method === 'POST');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+        name: 'Retrieval quality scan', query: 'retrieval quality benchmark', project_id: 'project-1',
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run search' }));
+    expect(await screen.findByText('run-saved-search')).toBeInTheDocument();
+    expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1/run') && init?.method === 'POST')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit saved search name'), { target: { value: 'Updated scan' } });
+    fireEvent.change(screen.getByLabelText('Edit saved search query'), { target: { value: 'retrieval robustness' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Updated scan')).toBeInTheDocument();
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1') && init?.method === 'PATCH');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ name: 'Updated scan', query: 'retrieval robustness', model: null });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1') && init?.method === 'DELETE')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Updated scan')).not.toBeInTheDocument());
+  });
+
+  it('lets project viewers run saved searches but hides create/edit/delete controls', async () => {
+    currentRole = 'viewer';
+    savedSearches = [
+      { id: 'saved-search-existing', name: 'Shared scan', query: 'retrieval', model: null, project_id: 'project-1', created_by: 'owner-2', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+      { id: 'saved-search-mine', name: 'My contribution', query: 'retrieval ablation', model: null, project_id: 'project-1', created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+      { id: 'saved-search-personal', name: 'Private scan', query: 'my private query', model: null, project_id: null, created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+    ];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText('Shared scan')).toBeInTheDocument();
+    expect(await screen.findByText('My contribution')).toBeInTheDocument();
+    expect(screen.queryByText('Private scan')).not.toBeInTheDocument();
+    expect(screen.queryByText('my private query')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Search name')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Run search' })).toHaveLength(2);
+  });
+
+  it('lets owners create, list, resend, and revoke email invitations', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const email = await screen.findByLabelText('Email address');
+    fireEvent.change(email, { target: { value: 'researcher@example.org' } });
+    fireEvent.change(screen.getByLabelText('Invitation role'), { target: { value: 'editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+    expect(await screen.findByText('researcher@example.org')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open invitation link for researcher@example.org' }))
+      .toHaveAttribute('href', '/projects/invitations/accept?invitation_id=invite-1');
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/invitations') && init?.method === 'POST');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'researcher@example.org', role: 'editor' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy invitation link for researcher@example.org' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}/projects/invitations/accept?invitation_id=invite-1`,
+    ));
+    expect(screen.getByRole('button', { name: 'Copy invitation link for researcher@example.org' })).toHaveTextContent('Copied');
+    fireEvent.click(screen.getByRole('button', { name: 'Resend invitation to researcher@example.org' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke invitation to researcher@example.org' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/invitations/invite-1/resend') && init?.method === 'POST')).toBe(true));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/invitations/invite-1') && init?.method === 'DELETE')).toBe(true));
+  });
+
+  it('hides member and invitation controls from non-owners', async () => {
+    currentRole = 'editor';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+    expect(await screen.findByRole('heading', { name: 'Alpha Project' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project members' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument();
+    expect(request.mock.calls.some(([input]) => String(input).endsWith('/invitations'))).toBe(false);
+  });
+
+  it('shows project content but hides mutation controls for viewer members', async () => {
+    currentRole = 'viewer';
+    sources = [{
+      id: 'source-1',
+      paper_id: 'paper-1',
+      paper: { id: 'paper-1', title: 'Reliable Retrieval', authors: ['A. Researcher'], url: 'https://example.org/paper' },
+    }];
+    notes = [{ id: 'note-1', content: 'Shared reading note', created_at: '2026-11-11T12:00:00Z' }];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText(/read-only access to this project/i)).toBeInTheDocument();
+    expect(await screen.findByText('Reliable Retrieval')).toBeInTheDocument();
+    expect(await screen.findByText('Shared reading note')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Find a paper by title')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Add a note')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove reliable retrieval/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add paper' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save note' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project members' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Upload a PDF you have permission to use')).not.toBeInTheDocument();
+  });
+
+  it('uploads a PDF, reloads its metadata, and renders page text with a citation ID', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const file = new File(['pdf bytes'], 'methods.pdf', { type: 'application/pdf' });
+    fireEvent.change(await screen.findByLabelText('Upload a PDF you have permission to use'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload and extract pages' }));
+
+    expect(await screen.findByText('The experiment used a held-out benchmark.')).toBeInTheDocument();
+    expect(screen.getByText('[document-1:page:1]')).toBeInTheDocument();
+    expect(screen.getByText('methods.pdf')).toBeInTheDocument();
+    expect(screen.getByText('1 page')).toBeInTheDocument();
+    expect(screen.getByLabelText('Upload a PDF you have permission to use')).toHaveValue('');
+
+    const uploadRequest = request.mock.calls.find(([input, init]) =>
+      String(input).endsWith('/api/projects/project-1/documents') && init?.method === 'POST',
+    );
+    expect(uploadRequest).toBeDefined();
+    expect(uploadRequest?.[1]?.body).toBeInstanceOf(FormData);
+    expect(new Headers(uploadRequest?.[1]?.headers).has('Content-Type')).toBe(false);
+    expect(request.mock.calls.some(([input]) => String(input).endsWith('/documents/document-1/pages'))).toBe(true);
+  });
+
+  it('labels native, OCR, empty, and page-limit extraction results', async () => {
+    pageExtractionMethods = ['native', 'ocr', 'empty', 'ocr_limit'];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    const file = new File(['pdf bytes'], 'mixed.pdf', { type: 'application/pdf' });
+    fireEvent.change(await screen.findByLabelText('Upload a PDF you have permission to use'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload and extract pages' }));
+
+    expect(await screen.findByText('Native text')).toBeInTheDocument();
+    expect(screen.getByText('OCR text')).toBeInTheDocument();
+    expect(screen.getByText('No text found')).toBeInTheDocument();
+    expect(screen.getByText('OCR page limit reached')).toBeInTheDocument();
+    expect(screen.getByText('OCR recovered the method details.')).toBeInTheDocument();
+    expect(screen.getByText('This scanned page was not processed because the OCR page limit was reached.')).toBeInTheDocument();
+  });
+
+  it('lets the project owner add and remove an existing member', async () => {
+    const memberId = '00000000-0000-4000-8000-000000000001';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    fireEvent.change(await screen.findByLabelText('Existing account user ID'), { target: { value: memberId } });
+    fireEvent.change(screen.getByLabelText('Project role'), { target: { value: 'editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add or update member' }));
+    expect(await screen.findByText(memberId)).toBeInTheDocument();
+    expect(screen.getByText('editor')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: `Remove member ${memberId}` }));
+    expect(await screen.findByText('No members have been added yet.')).toBeInTheDocument();
+  });
+});
+
+describe('buildProjectExport', () => {
+  const project = { id: 'project-1', owner_id: 'user-1', title: 'A Project' };
+  const sources = [{ id: 'source-1', paper_id: 'paper-1', paper: { id: 'paper-1', title: 'A Paper', authors: ['A. Author'], url: 'https://example.org/paper' } }];
+  const notes = [{ id: 'note-1', content: 'Keep the quote: "result"', created_at: '2026-11-11T12:00:00Z' }];
+
+  it('exports project sources and notes as Markdown, CSV, and BibTeX', () => {
+    expect(buildProjectExport('md', project, sources, notes)).toContain('[A Paper](<https://example.org/paper>)');
+    expect(buildProjectExport('md', project, sources, notes)).toContain('Keep the quote: "result"');
+    expect(buildProjectExport('csv', project, sources, notes)).toContain('"Keep the quote: ""result"""');
+    expect(buildProjectExport('bib', project, sources, notes)).toContain('@misc{zenith_paper-1');
+    expect(buildProjectExport('bib', project, sources, notes)).toContain('author = {A. Author}');
+  });
+
+  it('neutralizes formula-like CSV cells and omits unsafe Markdown link schemes', () => {
+    const unsafeSources = [{
+      id: 'source-1',
+      paper_id: 'paper-1',
+      paper: { id: 'paper-1', title: '[Dangerous](title)', authors: [], url: 'javascript:alert(1)' },
+    }];
+    const formulaNotes = [{ id: 'note-1', content: ' \t=HYPERLINK("https://bad.example")', created_at: '2026-11-11T12:00:00Z' }];
+
+    expect(buildProjectExport('md', project, unsafeSources, [])).toContain('\\[Dangerous\\](title)');
+    expect(buildProjectExport('md', project, unsafeSources, [])).not.toContain('javascript:');
+    expect(buildProjectExport('csv', project, [], formulaNotes)).toContain('"\' \t=HYPERLINK(""https://bad.example"")"');
+  });
+});
+
+describe('fetchProjectSources', () => {
+  it('paginates through the full project source collection', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({ id: `source-${index}`, paper_id: `paper-${index}`, paper: null }));
+    const lastPage = [{ id: 'source-200', paper_id: 'paper-200', paper: null }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const offset = new URL(String(input)).searchParams.get('offset');
+      const body = offset === '0' ? firstPage : lastPage;
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const allSources = await fetchProjectSources('project-1');
+
+    expect(allSources).toHaveLength(201);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('limit=200&offset=0');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('limit=200&offset=200');
+    vi.unstubAllGlobals();
+  });
+});

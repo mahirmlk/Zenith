@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from jwt.exceptions import InvalidTokenError
 from services.jwt_validator import decode_supabase_token
@@ -27,7 +27,7 @@ async def verify_supabase_token(token: str) -> dict:  # type: ignore[type-arg]
 
 
 @router.post("/token", response_model=TokenResponse)
-async def validate_token(req: TokenRequest) -> TokenResponse:
+async def validate_token(request: Request, req: TokenRequest) -> TokenResponse:
     try:
         payload = await verify_supabase_token(req.token)
         user_id = payload.get("sub")

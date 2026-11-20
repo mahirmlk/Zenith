@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Paper } from '@/types';
 import Link from 'next/link';
+import { SummaryProvenance } from './SummaryProvenance';
 
 interface PaperCardProps {
   paper: Paper;
@@ -157,10 +158,11 @@ export function PaperCard({ paper, onSave, onDismiss, onShare, showUnsave }: Pap
       </div>
 
       {/* Abstract / TLDR */}
-      {paper.summaryTldr && (
-        <p className="mb-4 text-[13px] leading-[1.65] text-zenith-body">
-          {paper.summaryTldr}
-        </p>
+      {(paper.summaryTldr || paper.summaryFallbackReason || paper.summaryStatus !== undefined) && (
+        <div className="mb-4">
+          <SummaryProvenance status={paper.summaryStatus} fallbackReason={paper.summaryFallbackReason} />
+          {paper.summaryTldr && <p className="text-[13px] leading-[1.65] text-zenith-body">{paper.summaryTldr}</p>}
+        </div>
       )}
 
       {paper.summaryContributions && paper.summaryContributions.length > 0 && (

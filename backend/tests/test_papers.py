@@ -1,10 +1,29 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
 from main import app
+from tests.asgi_client import ASGITestClient
+from models.schemas import Paper
 
-client = TestClient(app)
+client = ASGITestClient(app)
+
+
+def test_paper_schema_exposes_optional_arxiv_metadata_for_supported_evidence_sources():
+    base = {
+        "id": "2401.12345v2",
+        "title": "Graph retrieval",
+        "abstract": "Abstract text",
+        "authors": ["A. Researcher"],
+        "url": "https://arxiv.org/pdf/2401.12345v2.pdf",
+        "published_at": "2024-01-01T00:00:00Z",
+    }
+    current = Paper.model_validate({**base, "preprint_id": "2401.12345", "source_version": 2})
+    legacy = Paper.model_validate({**base, "id": "legacy-id"})
+
+    assert current.preprint_id == "2401.12345"
+    assert current.source_version == 2
+    assert legacy.preprint_id is None
+    assert legacy.source_version is None
 
 needs_supabase = pytest.mark.skipif(
     not os.environ.get("SUPABASE_URL"), reason="needs live Supabase"

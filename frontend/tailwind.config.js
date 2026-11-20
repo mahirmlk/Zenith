@@ -36,12 +36,12 @@ module.exports = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-geist)', 'Geist', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        serif: ['var(--font-instrument)', 'Instrument Serif', 'Georgia', 'serif'],
-        mono: ['var(--font-geist-mono)', 'Geist Mono', 'JetBrains Mono', 'monospace'],
-        jakarta: ['"Plus Jakarta Sans"', 'var(--font-geist)', 'sans-serif'],
-        space: ['"Space Grotesk"', 'var(--font-geist)', 'sans-serif'],
-        outfit: ['"Outfit"', 'var(--font-geist)', 'sans-serif'],
+        sans: ['var(--font-geist)'],
+        serif: ['var(--font-instrument)'],
+        mono: ['var(--font-geist-mono)'],
+        jakarta: ['var(--font-plus-jakarta)'],
+        space: ['var(--font-geist)'],
+        outfit: ['var(--font-geist)'],
       },
       boxShadow: {
         'soft': '0 4px 20px -4px rgba(10, 22, 51, 0.08), 0 1px 3px -1px rgba(10, 22, 51, 0.04)',

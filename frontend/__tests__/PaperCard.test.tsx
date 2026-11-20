@@ -28,6 +28,34 @@ describe('PaperCard', () => {
     expect(screen.getByText('This is a TL;DR.')).toBeInTheDocument();
   });
 
+  it('labels generated summaries as AI-generated', () => {
+    render(<PaperCard paper={{ ...mockPaper, summaryStatus: 'generated' }} />);
+    expect(screen.getByText('AI-generated summary')).toBeInTheDocument();
+  });
+
+  it('labels abstract previews and explains the fallback reason', () => {
+    render(<PaperCard paper={{ ...mockPaper, summaryStatus: 'abstract_preview', summaryFallbackReason: 'spend_limit' }} />);
+    expect(screen.getByText('Abstract preview')).toBeInTheDocument();
+    expect(screen.getByText('The spend limit prevented a generated summary.')).toBeInTheDocument();
+  });
+
+  it('never labels unknown summary provenance as AI-generated', () => {
+    render(<PaperCard paper={{ ...mockPaper, summaryStatus: 'unknown' }} />);
+    expect(screen.getByText('Summary source unknown')).toBeInTheDocument();
+    expect(screen.queryByText('AI-generated summary')).not.toBeInTheDocument();
+  });
+
+  it('does not render provenance for a paper without summary content or status', () => {
+    const { container } = render(<PaperCard paper={{ ...mockPaper, summaryTldr: undefined }} />);
+    expect(screen.queryByText('Summary source unknown')).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain('Summary source unknown');
+  });
+
+  it('renders provenance when the backend explicitly reports unknown status', () => {
+    render(<PaperCard paper={{ ...mockPaper, summaryTldr: undefined, summaryStatus: 'unknown' }} />);
+    expect(screen.getByText('Summary source unknown')).toBeInTheDocument();
+  });
+
   it('renders author names', () => {
     render(<PaperCard paper={mockPaper} />);
     expect(screen.getByText('Author One, Author Two')).toBeInTheDocument();

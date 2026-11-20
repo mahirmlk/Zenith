@@ -6,8 +6,15 @@ dist/
 build/
 .venv/
 venv/
+.uv-cache-temp/
+.git/
 .env
 .env.local
+.env.*.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

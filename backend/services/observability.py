@@ -54,15 +54,11 @@ def get_langfuse_handler() -> Any | None:
                 mask=mask_sensitive,
             )
         except TypeError:
-            # Older langfuse without mask support: trace without secrets
-            # by keeping prompts out of metadata (handler still redacts
-            # nothing — documented limitation, upgrade langfuse).
-            logger.warning("Langfuse mask unsupported by installed version")
-            return CallbackHandler(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host,
-            )
+            # Never send traces when redaction is unavailable. A dependency
+            # upgrade or an unexpected callback API must not silently turn
+            # on unmasked prompt/document capture.
+            logger.warning("Langfuse mask unsupported; tracing disabled")
+            return None
     except Exception as exc:
         logger.warning("Langfuse initialisation failed, tracing disabled: %s", exc)
         return None

@@ -11,7 +11,7 @@ const features = [
   },
   {
     title: 'Projects you can keep',
-    body: 'Group papers into projects, write notes next to them, and invite collaborators with owner, editor, and viewer roles.',
+    body: 'Create research projects to organize your work and keep project notes.',
   },
 ];
 
@@ -24,12 +24,12 @@ const steps = [
   {
     n: '2',
     title: 'Read',
-    body: 'Watch the agents work step by step. If you close the tab, the run keeps going and replays when you return.',
+    body: 'Follow agent progress and view the completed results in your feed.',
   },
   {
     n: '3',
     title: 'Keep',
-    body: 'Save what matters. Export your data or delete your account at any time.',
+    body: 'Save the papers that matter and organize your reading into projects.',
   },
 ];
 

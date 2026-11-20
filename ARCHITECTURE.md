@@ -1,46 +1,58 @@
-# AI Paper Research Agent — Architecture
+# Zenith — Current Runtime Architecture
 
-> Four-layer architecture: Next.js frontend → FastAPI backend → LangGraph orchestration → External services
+> Reviewed against the checked-in code on 2026-11-13. This describes the implemented runtime; the product plan and deployment state remain separate. Production readiness gaps are tracked in `docs/STATUS.md`.
 
 ---
 
 ## 1. System Context
 
-The AI Paper Research Agent continuously discovers, ingests, summarises, and personalises academic papers from ArXiv and HuggingFace Daily Papers. Users interact via a rich Next.js UI featuring a paper feed and a 3-D citation graph. A LangGraph multi-agent system orchestrates three specialised agents, uses Firecrawl to pull full paper text, stores user memory in Mem0/Supabase, and routes LLM calls through OpenRouter.
+Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings and account privacy controls, citation graph, project workspaces, topic watchlists, notifications, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search and plan execution requests enter the same Redis Streams worker queue; the worker dispatches either the LangGraph Research → Summary → Memory search pipeline or the bounded LangGraph plan graph. Both use the existing Postgres run/event store, worker leases, and checkpoint lifecycle. The pipelines use ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive evidence maps, answers, and comparisons. A Redis-leased scheduler triggers watchlist ingestion and creates caller-scoped in-app notifications. A separate opt-in Resend path can deliver generic daily or weekly watchlist digests; it uses a service-only preferences/consent, recipient suppression, and deduplicated outbox schema and never includes private project or watch text.
 
-**Core value proposition:** Zero effort from "paper exists" to "here's why it matters to you."
+**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. The separate `/api/research/synthesize` endpoint is disabled by default through `RESEARCH_SYNTHESIS_ENABLED`; when enabled, it drafts up to five provisional claims from at most six exact abstract sentences, then asks a second provider call to review evidence relations. An authenticated `/api/research/capabilities` response controls whether the UI exposes that mode, while the API independently enforces the flag. It returns server-validated citations and model-reviewed status labels, not independently verified scientific conclusions; private PDFs are excluded. Non-project answers and general retrieval remain abstract/metadata based. Project comparisons keep paper rows abstract-derived and surface uploaded PDF dimensions as separate cited document sources, without asserting a PDF-to-paper relation. See `docs/STATUS.md` for release blockers.
+
+An opt-in authenticated `GET /api/papers/{paper_id}/public-evidence` can return up to five exact page sentences from a public arXiv PDF. `PUBLIC_PAPER_EVIDENCE_ENABLED` defaults to `false`. The service checks current `arXivRaw` OAI metadata and requires the stored DB version to match the latest OAI version; only exact CC BY 4.0 and CC0 1.0 license URLs are accepted. It fetches from fixed arXiv hosts without redirects, uses native PDF text extraction only, and does not persist the PDF or excerpts. A Redis-backed shared gate spaces arXiv API requests at least three seconds apart in production; development uses a process-local gate when Redis is absent.
+
+`POST /api/research/plan` remains a provider-free, deterministic preview. It classifies intent, returns a fixed task template and bounded limits, and authorizes project scope before responding. When `RESEARCH_PLAN_EXECUTION_ENABLED=false` (the default), it does not execute a plan. When enabled, authenticated `POST /api/research/execute` accepts the preview's query/scope, creates a normal durable research run plus service-only plan metadata, and enqueues it on the existing Redis Streams queue; no second queue is introduced. The worker uses the LangGraph Postgres checkpointer and existing run leases, event replay, cancellation, retention, and account-deletion cleanup (run deletion cascades plan metadata). Project membership and active-project state are rechecked before each project data read. The graph enforces a 10-source ceiling, classifier-specific tool-call ceilings (2/3/4/6), and wall-clock ceilings (20/30/45/90 seconds for feed/explain/compare/deep research), with cancellation checks between steps. A Redis-backed budget allows 10 executions per user/day and the API rate limit is 5 requests/IP/minute. Synthesis remains separately gated and is capped at two calls/1,800 output tokens. A crash inside a provider operation can cause at-least-once repetition before the next checkpoint. Chat and OpenAI embedding attempts reserve and settle against the service-only Postgres spend ledger; unknown outcomes retain reservations. OpenRouter credit-purchase fees are outside per-request inference cost and require invoice reconciliation. Keep model-backed feature flags off until migration 0023, staging recovery, authorization, budget concurrency, and invoice reconciliation are verified.
 
 ---
 
 ## 2. High-Level Architecture
 
+```mermaid
+flowchart TB
+  Browser[User browser]
+  Frontend[Next.js App Router<br/>feed · projects · watchlists · notifications · settings · graph]
+  Auth[Supabase Auth<br/>JWT issued to browser]
+  API[FastAPI<br/>JWT verification · authorization · REST · SSE replay]
+  DB[(Supabase Postgres<br/>papers · projects · project documents/pages<br/>private user data · canonical run/event records)]
+  Redis[(Redis<br/>Streams queue · budgets · leases)]
+  Worker[LangGraph worker<br/>Research → Summary → Memory]
+  Checkpoints[(Postgres LangGraph checkpoints<br/>AsyncPostgresSaver)]
+  Scheduler[Watchlist scheduler<br/>daily UTC + shared lease]
+  Providers[External providers<br/>ArXiv · Hugging Face · LLMs<br/>Semantic Scholar · GitHub search · Firecrawl]
+  Memory[Optional Mem0 preferences]
+
+  Browser --> Frontend
+  Frontend <--> Auth
+  Frontend -->|HTTP / SSE| API
+  API <-->|authorized CRUD, paper and PDF page evidence| DB
+  API --> Redis
+  API -->|enqueue search| Redis
+  Redis -->|consumer group| Worker
+  Worker --> Providers
+  Worker --> DB
+  Worker --> Checkpoints
+  Worker --> Memory
+  Scheduler --> Redis
+  Scheduler --> Providers
+  Scheduler --> DB
 ```
-┌──────────────────────────────────────────────┐
-│          Next.js Frontend                     │
-│  Paper feed · Three.js graph · Auth UI        │
-└─────────────────┬────────────────────────────┘
-                  │ HTTP / SSE
-┌─────────────────▼────────────────────────────┐
-│          FastAPI Backend                      │
-│  API gateway · SSE streaming · Auth (JWT)     │
-│  Rate limiting · Response timing              │
-└─────────────────┬────────────────────────────┘
-                  │
-┌─────────────────▼────────────────────────────┐
-│        LangGraph Orchestration Layer          │
-│  ┌────────────┐  ┌────────────┐  ┌─────────┐ │
-│  │ Research   │  │ Summary    │  │ Memory  │ │
-│  │ Agent      │  │ Agent      │  │ Agent   │ │
-│  │ (discover) │  │ (simplify) │  │(person.)│ │
-│  └─────┬──────┘  └─────┬──────┘  └────┬────┘ │
-└────────┼───────────────┼──────────────┼──────┘
-         │               │              │
-┌────────▼───────────────▼──────────────▼──────┐
-│             External Services                 │
-│  Firecrawl │ ArXiv+HF │ OpenRouter │ S2+PWC   │
-│  Mem0+Supabase │ Redis (run state)            │
-└──────────────────────────────────────────────┘
-```
+
+Production run metadata, results, ordered events, and LangGraph graph state are stored in Postgres. The run store uses Supabase service-role RPCs; the graph checkpointer uses `AsyncPostgresSaver` with `DATABASE_URL`. Redis carries queued work and short-lived worker leases. Development may omit `DATABASE_URL` and use process memory; production startup fails closed if Postgres graph checkpointing is unavailable. On worker recovery, the graph resumes from its last completed node checkpoint; a failure inside a node may repeat that node's external calls.
+
+Account deletion requests are stored in the service-only `account_deletion_jobs` table (migration 0016), which deliberately has no Auth foreign key so a job survives Auth deletion. Workers claim jobs with `FOR UPDATE SKIP LOCKED`, persist each completed cross-service cleanup step, defer while a research worker lease is active, and retry expired leases. Migration 0017 serializes deletion intent with run creation through a shared per-user transaction lock, so runs are either included in the deletion snapshot or rejected. Auth deletion is last; completed markers remain for 30 days to reject already-issued JWTs before pruning.
+
+Project PDF uploads are parsed in FastAPI with bounded pypdf extraction. The original bytes are discarded; extracted page text and its `extraction_method` (`native`, `ocr`, `empty`, or `ocr_limit`) are stored in project-scoped `project_documents` and `project_document_pages` tables under RLS (migrations 0013 and 0018). Owners/editors can upload; accessible project members can list and read pages. Project evidence-map and answer routes consider up to 10 uploaded documents/500 page rows alongside attached paper abstracts and return at most five exact spans with page-local offsets and stable `document_id:page:N` citation IDs. General search and comparison do not search PDF pages. When `OCR_ENABLED=true`, local Tesseract OCR is limited to five scanned pages per upload, 8 million rendered pixels per page, 6 seconds per page, and 20 seconds total; native extraction remains the default and OCR is disabled unless explicitly enabled. PDF content is rasterized and processed locally; it is not sent to an OCR provider.
 
 ---
 
@@ -62,30 +74,23 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
 - `/feed` — Personalised paper feed with search, SSE progress, model selector, save/dismiss
 - `/graph` — 3-D citation network (force-directed graph)
 - `/paper/[id]` — Paper detail with AI summary, contributions, difficulty, code repos
-- `/login` · `/signup` — Supabase Auth UI
-- `/settings` — User preferences (model selection, research interests)
+- `/login` — Supabase Auth UI
+- `/projects` and `/projects/[id]` — Project list and role-aware project workspace
+- `/watchlists` and `/notifications` — Topic, Semantic Scholar author/citing-paper watch configuration and in-app notification management
+- `/settings` — User preferences, authenticated account export, and typed-confirmation deletion
 
 **Key Components:**
-- `PaperCard` — Title, authors, AI TL;DR, relevance score, save/dismiss/share actions
+- `PaperCard` — Title, authors, AI TL;DR, relevance score, save/dismiss actions
 - `CitationGraph` — Force-directed Three.js graph; nodes=papers, edges=citations; click to navigate
-- `StreamingResponse` — SSE consumer for live agent progress (research → summary → memory)
-- `ModelSelector` — Dropdown for 9 LLM models (Claude, GPT-4o, Gemini, Mistral, Llama, DeepSeek, etc.)
+- `StreamingResponse` — SSE consumer with replay event deduplication and cancel control
+- `ModelSelector` — Model list loaded from `/api/models`
 - `SkeletonCard` — Loading placeholder with shimmer animation
 - `Navbar` / `Footer` — Shared layout components
 - `EmptyState` — Empty state placeholder for no-results states
 - `ErrorBoundary` — React error boundary for graceful failure handling
 - `QueryProvider` — TanStack Query provider wrapping the app
 
-**Supported LLM Models (ModelSelector):**
-- `anthropic/claude-opus-4`
-- `anthropic/claude-sonnet-4-5`
-- `openai/gpt-4o`
-- `openai/gpt-4o-mini`
-- `google/gemini-2.5-pro`
-- `google/gemini-2.0-flash`
-- `mistralai/mistral-large`
-- `meta-llama/llama-3.3-70b-instruct`
-- `deepseek/deepseek-r1`
+The supported model IDs are served by the backend registry; inspect `backend/services/llm_router.py` and `GET /api/models` for the current list.
 
 ---
 
@@ -97,29 +102,42 @@ The AI Paper Research Agent continuously discovers, ingests, summarises, and per
 | Runtime | Python 3.12, Uvicorn |
 | Streaming | Server-Sent Events (sse-starlette) |
 | Auth | Supabase JWT validation (ES256 JWKS, HS256 legacy fallback) |
-| Rate Limiting | slowapi, Redis-backed (per-endpoint limits) |
-| CORS | `allow_origins=["http://localhost:3000"]` |
+| Rate Limiting | slowapi with Redis storage; production requires Redis and disables in-memory fallback |
+| CORS | Explicit configured origins, methods, and headers |
 | Logging | Structured logging with timestamps and module names |
 | Observability | Langfuse tracing (LangGraph) + Sentry error tracking |
 
-**Registered Routers (8 total):**
+**Current route groups (see FastAPI OpenAPI for full request schemas):**
 ```
-GET    /api/health                         # Health check (health.router)
-POST   /api/auth/token                     # Validate Supabase JWT (auth.router)
-GET    /api/papers                         # List papers with optional ?q= filter (papers.router)
-GET    /api/papers/{paper_id}              # Single paper detail (papers.router)
-POST   /api/papers/{paper_id}/save         # Save/dismiss paper + Mem0 memory (papers.router)
-DELETE /api/papers/{paper_id}/save         # Unsave paper (papers.router)
-POST   /api/search                         # Trigger research pipeline (search.router)
-GET    /api/stream/{run_id}                # SSE stream of agent progress (stream.router)
-GET    /api/graph/{paper_id}               # Citation graph data (S2, cached in Supabase) (graph.router)
-GET    /api/prefs                          # Get user preferences (prefs.router)
-POST   /api/prefs                          # Update user preferences (prefs.router)
-GET    /api/papers/{paper_id}/code         # Papers With Code repos (pwc.router)
-POST   /api/internal/ingest                # Trigger daily ingestion (internal.router, admin key)
+GET    /api/health                         # Liveness
+GET    /api/ready                          # Dependency reachability (Supabase + Redis)
+POST   /api/auth/token                     # Validate Supabase JWT
+GET    /api/papers, /api/papers/saved      # Feed and saved papers
+GET    /api/papers/{id}, /api/papers/{id}/code
+POST   /api/papers/{id}/save                # Save/dismiss
+DELETE /api/papers/{id}/save
+POST   /api/search                          # Authenticated, idempotent run creation
+POST   /api/stream/session                  # Exchange bearer JWT for short-lived SSE token
+GET    /api/stream/{run_id}?token=...       # Read-only SSE replay/subscription
+GET    /api/runs/{id}, /events              # Status and replayable events
+POST   /api/runs/{id}/cancel
+POST   /api/retrieval/search                # Hybrid search; optional project scope
+POST   /api/research/plan|execute|compare|answer # Preview/execute plan, cited comparison, extractive answer
+POST   /api/research/evidence-map           # Project abstracts + extracted PDF page spans
+GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, email invitations, notes, papers and PDF documents/pages
+GET/POST/PATCH/DELETE /api/watchlists/...   # Watchlists
+GET    /api/notifications                   # In-app notifications
+POST   /api/notifications/read              # Mark all caller notifications read
+POST   /api/notifications/{id}/read         # Mark one caller notification read
+GET    /api/models                          # Supported model registry
+GET    /api/graph/{paper_id}                # Authenticated citation graph
+GET    /api/implementations/{paper_id}/plan|export
+POST   /api/implementations/{paper_id}/run # Currently returns not-attempted
+GET    /api/account/export; DELETE /api/account
+POST   /api/internal/ingest                 # Admin-key protected ingestion trigger
 ```
 
-**Rate Limits** (enforced by slowapi, backed by Redis when `REDIS_URL` is set so limits are global across instances):
+**Rate Limits** (slowapi global limits use Redis in production; `/api/search` also has a per-user daily budget):
 | Endpoint | Limit |
 |----------|-------|
 | `/api/search` | 10 req / minute |
@@ -128,8 +146,8 @@ POST   /api/internal/ingest                # Trigger daily ingestion (internal.r
 | All other endpoints | 60 req / minute (default) |
 
 **Middleware Stack:**
-1. `CORSMiddleware` — Allows frontend origin
-2. `SlowAPIMiddleware` — Rate limiting via slowapi (Redis-backed when `REDIS_URL` set)
+1. `CORSMiddleware` — Allows configured frontend origins and explicit methods/headers
+2. `SlowAPIMiddleware` — Rate limiting via slowapi (Redis required in production)
 3. `TimingMiddleware` — Adds `X-Response-Time` header
 4. Auth middleware — Decodes and validates Supabase JWT (ES256 via JWKS, HS256 legacy fallback), attaches `request.state.user`
 5. Rate limit exception handler — Returns 429 JSON response
@@ -137,7 +155,9 @@ POST   /api/internal/ingest                # Trigger daily ingestion (internal.r
 **SSE Events:**
 - `agent_step` — Live progress from each agent (research, summary, memory, orchestrator)
 - `result` — Final ranked paper list with `PaperSearchResult` schema
-- `error` — Pipeline failure or 30-second inactivity timeout
+- `error` — Pipeline failure
+- `cancelled` — Run was cancelled; late provider results are suppressed
+- Every stored event has a monotonically increasing per-run sequence used for replay deduplication.
 
 ---
 
@@ -176,26 +196,40 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 
 | Service | Role | Integration | Auth | Retry |
 |---------|------|-------------|------|-------|
-| **ArXiv API** | Paper discovery | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
+| **ArXiv API** | Paper discovery and DOI metadata | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
+| **Crossref REST API** | Opt-in publication update notices for DOI papers | Bounded async `httpx` lookups from backend ingestion | No | Six-hour per-watch retry backoff; five concurrent lookups |
 | **HuggingFace Daily Papers** | Curated highlights | REST API (`httpx`) | No | Yes (3 retries) |
-| **OpenRouter** | Primary LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
-| **Anthropic (direct)** | Claude fallback | `langchain-anthropic` | API key | Yes (transient errors at call site) |
-| **OpenAI (direct)** | GPT fallback + embeddings | `langchain-openai` + direct `httpx` for embeddings | API key | Yes (transient errors at call site) |
-| **Google Gemini (direct)** | Gemini fallback | `langchain-google-genai` | API key | Yes (transient errors at call site) |
-| **Mistral (direct)** | Mistral fallback | `langchain-mistralai` | API key | Yes (transient errors at call site) |
+| **OpenRouter** | Only chat LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
+| **OpenAI (direct)** | Metered embeddings only | Direct `httpx` embeddings endpoint | API key | Yes (transient errors at call site) |
 | **Firecrawl** | Full paper crawl | `firecrawl-py` SDK | API key | No (cached in Supabase, keyed by paper ID) |
 | **Mem0** | User memory | `mem0` Python client | API key | No |
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
 | **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries), edges cached in Supabase |
-| **Papers With Code** | GitHub repos for papers | PWC REST API (`httpx`) | No | No (silent degradation) |
-| **Redis** | Agent run state + global rate limiting | `redis.asyncio` (optional) | No (optional `REDIS_URL`) | No |
+| **GitHub repository search** | Public repository candidates by DOI/arXiv ID or title | GitHub REST `search/repositories` (`httpx`) | Optional `GITHUB_TOKEN` | Bounded timeout and result count; candidates remain unverified |
+| **Redis** | Streams queue, worker leases, global rate limits, per-user budgets, scheduler leases | `redis.asyncio` (required for production) | `REDIS_URL` | Pending-entry reclaim; bounded readiness check |
 
-Retry is kept separate from the provider fallback chain: `async_retry` handles
-same-provider transient failures (connect/read timeouts, 5xx, rate limits on
-any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
+Retry is kept separate from provider selection: `async_retry` handles
+same-provider transient failures (connect/read timeouts, 5xx, and rate limits);
+`llm_router` enforces the global model gate and routes chat through OpenRouter.
+
+Author and inbound-citation watchlists use Semantic Scholar stable IDs. The
+author endpoint returns papers by that author; the citation endpoint returns
+papers that cite the seed paper. Polling is limited to five pages per watch and
+advances a watch cursor only after a successful poll. Provider-discovered rows
+are inserted without replacing existing paper rows or embeddings. The existing
+`SEMANTIC_SCHOLAR_API_KEY` is optional but recommended for the provider's rate
+limits; no additional environment variable is required.
 `services/retry.py` matches transient errors by exception class (builtin +
 `httpx` errors, plus vendor SDK names such as `APIConnectionError`,
 `RateLimitError`, `InternalServerError`).
+
+Crossref status watches require explicit user opt-in per paper. Only Crossmark
+relations for retraction, partial retraction, withdrawal, removal, and
+expression of concern are surfaced. Stored fields retain Crossref provenance
+and the linked notice DOI. Crossref metadata reflects publisher/member
+deposits; an empty result is not evidence that no update exists. Checks are
+bounded to 100 watches per ingestion run and do not call Crossref from the
+frontend. No new environment variable is required.
 
 ---
 
@@ -203,17 +237,14 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 
 ### Paper Ingestion Flow
 ```
-1. Daily scheduler triggers the pipeline:
-   - Fly.io scheduled machine running `python -m scripts.daily_fetch`
-     (see backend/fly.toml) — the primary scheduler, or
-   - a manual GitHub Actions dispatch (.github/workflows/daily_fetch.yml)
-     calling POST /api/internal/ingest with the X-Admin-Key header
-     (the cron schedule is disabled to control Actions costs).
+1. The backend scheduler polls for the daily 02:00 UTC ingestion window when
+   Supabase and Redis are configured. Fly cron and admin manual triggers call
+   the same leased runner; only one ingestion job may hold the shared lease.
 2. Research fetches ArXiv + HF APIs (with async retry)
 3. New papers are deduplicated by paper ID (cross-source)
 4. Summary Agent generates TL;DR, key contributions, and difficulty via LLM
    (capped at MAX_SUMMARIES_PER_RUN per run)
-5. Embedding pipeline chunks abstract and stores vector in Supabase (text-embedding-3-small, 1536-dim)
+5. Embedding pipeline stores vectors in Supabase (text-embedding-3-small, 1536-dim)
 6. Memory Agent scores papers against user profile (embedding similarity or keyword fallback)
 7. Orchestrator merges and ranks; results stream to frontend via SSE
 ```
@@ -224,29 +255,32 @@ any of the LLM/embedding SDKs), while `llm_router` handles provider swapping.
 2. Frontend requests GET /api/papers (JWT attached via Authorization header)
 3. Backend fetches ranked papers from Supabase user_papers + Mem0 profile
 4. User enters a search query and clicks "Search"
-5. Frontend POSTs to /api/search, receives run_id
-6. Frontend opens EventSource to GET /api/stream/{run_id}
-7. Orchestrator runs Research → Summary → Memory pipeline
-8. Live steps stream to frontend; StreamingResponse component renders progress
-9. Final result renders as PaperCards in the feed
+5. Frontend POSTs to `/api/search` with bearer JWT and optional `Idempotency-Key`;
+   backend writes run state and enqueues work
+6. A worker consumes the Redis Stream entry under a consumer group and lease
+7. Frontend exchanges its JWT at `/api/stream/session` and subscribes to
+   `/api/stream/{run_id}?token=...`; SSE only replays/subscribes and never starts work
+8. Frontend deduplicates replayed event IDs, can cancel via `/api/runs/{id}/cancel`,
+   and renders the final result
 ```
 
 ### Agent Pipeline Flow (with retry)
 ```
-POST /api/search
-  ├─► Creates RunState in RunStore (Redis or in-memory)
-  ├─► Returns run_id to frontend
-  │
-GET /api/stream/{run_id}
-  ├─► Validates run_id in RunStore
-  ├─► Opens SSE connection
-  ├─► Launches orchestrator_graph.ainvoke()
-  │     ├─► research_node → ArXiv (retry 3x) + HF (retry 3x) → deduplicate
-  │     ├─► summary_node  → LLM (retry 3x per paper, async_retry with exp backoff)
-  │     └─► memory_node   → Mem0 profile → embedding similarity → rank
-  ├─► Streams all steps via callback
-  ├─► Emits result event with PaperSearchResult
-  └─► Updates RunStore status to "complete"
+POST /api/search (JWT, optional Idempotency-Key)
+  ├─► Creates canonical run record in PostgresRunStore in production (Redis or memory in development)
+  ├─► Appends run_id to Redis Stream and returns run_id
+  ├─► Worker consumer-group claims entry; per-run lease prevents double execution
+  ├─► research_node → ArXiv + HF → deduplicate
+  ├─► summary_node  → LLM through llm_router (bounded fan-out)
+  ├─► memory_node   → Mem0 profile/ranking
+  ├─► Persists sequenced events to the run store for replay
+  └─► Acknowledges job after terminal completion; idle pending jobs can be reclaimed
+
+GET /api/stream/session (JWT exchange) → short-lived stateless signed token
+GET /api/stream/{run_id}?token=...
+  ├─► Verifies token and run ownership
+  ├─► Replays stored events, then subscribes to new events (read-only)
+  └─► Cancellation suppresses late result publication
 ```
 
 ---
@@ -332,24 +366,32 @@ Memories are auto-consolidated and deduplicated by Mem0 over time.
 
 ## 6. LLM Routing Strategy
 
-All LLM calls flow through `services/llm_router.py`.
+All chat model construction flows through `services/llm_router.py`; embedding
+and model-backed Mem0 provider boundaries use its central feature gate.
+
+`LLM_ENABLED` is the global model-feature switch and defaults to `false`.
+Chat creation, embeddings, and model-backed Mem0 reads/writes check this gate;
+when it is disabled, model calls fail closed and `/api/models` reports an
+unavailable catalog. Production readiness reports `model_gateway_status=gated`
+without treating this optional state as a dependency failure. Setting the gate
+to `true` does not enable synthesis or durable plan execution; their separate
+feature flags remain independently controlled. Metered chat still requires an
+OpenRouter key, positive daily/monthly caps, and a working spend-ledger RPC.
 
 **Primary path:** OpenRouter (single API key, unified OpenAI-compatible interface). Identified by the presence of `/` in the model name (e.g. `anthropic/claude-sonnet-4-5`).
 
-**Fallback chain:** When OpenRouter is unavailable (API key missing or runtime error):
-1. `claude-*` models → Anthropic direct SDK
-2. `gpt-*` models → OpenAI direct SDK
-3. `gemini-*` models → Google Gemini direct SDK
-4. `mistral-*` models → Mistral direct SDK
-5. Everything else → OpenAI direct (as final fallback)
+**Provider behavior:** Chat uses OpenRouter only. Direct provider fallback is
+disabled so an unavailable or unmetered route cannot silently bypass model
+allowlists and spend reservations. Embeddings use the separately metered
+OpenAI embeddings endpoint.
 
 **Agent model map:**
 | Agent | Default Model | Reason |
 |-------|--------------|--------|
-| Orchestrator | `anthropic/claude-opus-4` | Best reasoning |
+| Orchestrator | `anthropic/claude-opus-5.5` | Best reasoning |
 | Research | `openai/gpt-4o-mini` | Fast tool calls |
-| Summary (default) | `anthropic/claude-sonnet-4-5` | Long context + quality |
-| Summary (fast) | `google/gemini-2.0-flash` | Batch summarisation |
+| Summary (default) | `anthropic/claude-sonnet-5.5` | Long context + quality |
+| Summary (fast) | `google/gemini-3.6-flash` | Batch summarisation |
 | Memory | `openai/gpt-4o-mini` | Lightweight scoring |
 
 **Cost guardrails:**
@@ -395,21 +437,9 @@ Raw paper text (title + abstract)
 
 ## 8. Run State Management
 
-Agent run states are managed by `services/run_store.py`, which provides two implementations:
+`services/run_store.py` offers a process-local `RunStore` for development, `RedisRunStore` when Redis is configured outside production, and `PostgresRunStore` in production. Production requires reachable Supabase and Redis and fails closed if the `research_runs` / `run_events` schema or RPCs are missing. Postgres stores canonical run state/events; Redis provides Streams delivery and tokenized leases. Event sequence allocation and status changes are atomic Postgres RPCs; terminal cancellation cannot be overwritten by late completion.
 
-### In-Memory Store (`RunStore`)
-- Used when `REDIS_URL` is not set
-- Python dict with asyncio locks for thread safety
-- Entries expire after 3600 seconds (1 hour TTL)
-- States are lost on backend restart
-
-### Redis Store (`RedisRunStore`)
-- Used when `REDIS_URL` is configured
-- Persists run state in Redis with automatic key expiry
-- **Required for multi-instance deployments** (otherwise SSE streams may fail)
-- Falls back to in-memory store silently if Redis is unreachable
-
-The `run_store` module exports a `RunStore` instance and a `RedisRunStore` instance. At startup, the backend tries Redis first, falling back to in-memory with a warning log.
+**Durability boundary:** queue delivery is recoverable through Redis pending-entry reclaim, while graph state is checkpointed in Postgres after each node. The worker checks the thread state and resumes pending nodes; a crash during a node can repeat that node, so external calls must remain retry-safe. Production requires `DATABASE_URL` and the `langgraph-checkpoint-postgres` package. App startup runs the checkpointer's additive, idempotent schema setup and fails closed on errors. Checkpoint decoding uses strict msgpack deserialization. Development uses `MemorySaver` only when `DATABASE_URL` is omitted. Staging must verify restart recovery, replay, cancellation, retention, and migration/restore behavior before production.
 
 ---
 
@@ -421,7 +451,7 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 - `services/arxiv.py` — ArXiv API calls (3 retries)
 - `services/huggingface.py` — HuggingFace Daily Papers API (3 retries)
 - `services/semantic_scholar.py` — Semantic Scholar API (3 retries)
-- `agents/summary_agent.py` — LLM calls per paper (3 retries, on any OpenRouter or direct-provider SDK)
+- `agents/summary_agent.py` — metered OpenRouter LLM calls per paper (3 retries)
 - `services/embeddings.py` — OpenAI embedding calls (3 retries)
 - `services/ingestion.py` — Supabase upserts during daily fetch (3 retries)
 
@@ -431,9 +461,9 @@ The `services/retry.py` module provides `async_retry(func, max_retries=3, base_d
 any `httpx.HTTPError` (connect/read timeouts, 5xx), and vendor LLM SDK errors
 matched by class name (`APIConnectionError`, `RateLimitError`,
 `InternalServerError`, `ServiceUnavailable`, `Unavailable`, etc.). Non-transient
-errors (validation, JSON parse) are re-raised immediately. Retry is orthogonal
-to the provider fallback chain in `llm_router.py` — retry handles the same
-provider's transient failure, fallback handles provider unavailability.
+errors (validation, JSON parse, disabled model gate) are re-raised immediately.
+Chat uses OpenRouter only; retry handles transient failures for the configured
+provider without switching to an unmetered direct-provider fallback.
 
 ---
 
@@ -458,127 +488,33 @@ provider's transient failure, fallback handles provider unavailability.
 - `GET /api/health`: exempt
 - Default: 60 req/min for all other endpoints
 - slowapi's limiter is backed by Redis (`storage_uri` = `REDIS_URL`) so limits
-  are **global** across multiple backend instances; it falls back to in-memory
-  when Redis is unavailable or unconfigured
+  are global across backend instances. Production requires Redis and disables
+  in-memory fallback; development may use memory.
 
 **CORS:**
-- Allowed origins: `http://localhost:3000` (configurable per deployment)
-- Credentials enabled
-- All methods and headers allowed
+- Allowed origins come from the backend-only comma-separated `CORS_ORIGINS`; when unset, the single `APP_URL` origin is used.
+- `APP_URL` remains one canonical URL and is also sent as OpenRouter's `HTTP-Referer`.
+- Credentials enabled; methods and headers use explicit allowlists in `main.py`.
 
 ---
 
 ## 11. Folder Structure
 
 ```
-ai-paper-research-agent/
-├── frontend/                        # Next.js 15 application
-│   ├── app/                         # App Router pages
-│   │   ├── (auth)/                  # Login / signup pages
-│   │   ├── feed/                    # Paper feed page (+ loading.tsx)
-│   │   ├── graph/                   # 3-D citation graph (+ layout.tsx)
-│   │   ├── paper/[id]/             # Single paper detail (+ loading.tsx)
-│   │   ├── settings/               # User preferences (+ loading.tsx)
-│   │   ├── api/                     # API routes (if any)
-│   │   ├── page.tsx                 # Landing page
-│   │   ├── layout.tsx               # Root layout
-│   │   └── globals.css              # Global styles
-│   ├── components/
-│   │   ├── PaperCard.tsx
-│   │   ├── CitationGraph.tsx (or in graph/page.tsx)
-│   │   ├── StreamingResponse.tsx    # SSE consumer component
-│   │   ├── ModelSelector.tsx        # LLM model picker
-│   │   ├── SkeletonCard.tsx
-│   │   ├── Navbar.tsx
-│   │   ├── Footer.tsx
-│   │   ├── EmptyState.tsx
-│   │   ├── ErrorBoundary.tsx
-│   │   └── QueryProvider.tsx
-│   ├── lib/
-│   │   ├── api.ts                   # API client (fetch wrappers)
-│   │   ├── auth.ts                  # Supabase auth helpers
-│   │   ├── hooks.ts                 # Custom React hooks
-│   │   └── supabase.ts              # Supabase client singleton
-│   ├── store/
-│   │   └── useAppStore.ts           # Zustand store (model, prefs, loading)
-│   ├── types/
-│   │   └── index.ts                 # TypeScript interfaces
-│   ├── package.json
-│   └── Dockerfile
-│
-├── backend/                         # FastAPI application
-│   ├── main.py                      # App entry, middleware, routers
-│   ├── config.py                    # Pydantic settings (env vars)
-│   ├── dependencies.py              # Auth dependency injection
-│   ├── logging_config.py            # Structured logging setup
-│   ├── routers/                     # 9 API routers
-│   │   ├── __init__.py
-│   │   ├── health.py
-│   │   ├── auth.py
-│   │   ├── papers.py
-│   │   ├── search.py
-│   │   ├── stream.py
-│   │   ├── graph.py
-│   │   ├── prefs.py
-│   │   ├── pwc.py
-│   │   └── internal.py              # POST /api/internal/ingest (admin key)
-│   ├── agents/                      # LangGraph agent layer
-│   │   ├── __init__.py
-│   │   ├── orchestrator.py          # StateGraph: research → summary → memory
-│   │   ├── research_agent.py
-│   │   ├── summary_agent.py
-│   │   ├── memory_agent.py
-│   │   └── prompts/
-│   │       └── summary_prompt.txt
-│   ├── services/                    # 17 external service integrations
-│   │   ├── __init__.py
-│   │   ├── arxiv.py
-│   │   ├── huggingface.py
-│   │   ├── firecrawl.py             # crawl_paper + crawl_paper_cached (Supabase cache)
-│   │   ├── papers_with_code.py
-│   │   ├── semantic_scholar.py
-│   │   ├── citation_cache.py        # Supabase-backed citation edge cache
-│   │   ├── jwt_validator.py         # ES256 JWKS + HS256 legacy JWT validation
-│   │   ├── mem0_client.py
-│   │   ├── supabase_client.py
-│   │   ├── llm_router.py
-│   │   ├── embeddings.py
-│   │   ├── ingestion.py             # run_daily_fetch() pipeline
-│   │   ├── observability.py         # Langfuse + Sentry initialisation
-│   │   ├── run_store.py             # Redis + in-memory run state
-│   │   └── retry.py                 # Async retry with exp backoff
-│   ├── middleware/
-│   │   ├── __init__.py
-│   │   ├── rate_limit.py
-│   │   └── timing.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py
-│   ├── scripts/
-│   │   ├── __init__.py
-│   │   ├── seed_dev.py
-│   │   └── daily_fetch.py
-│   ├── pyproject.toml
-│   └── Dockerfile
-│
-├── supabase/
-│   └── schema.sql                   # Database migration
-│
-├── docs/                            # Documentation
-│   ├── API.md                       # Full API reference
-│   ├── DEVELOPER_GUIDE.md           # Developer onboarding
-│   └── DEPLOYMENT.md                # Production deployment guide
-│
-├── .github/workflows/
-│   ├── ci.yml                       # GitHub Actions CI (manual dispatch)
-│   └── daily_fetch.yml              # Daily ingestion trigger (manual dispatch)
-│
-├── docker-compose.yml               # Local dev stack
-├── docker-compose.prod.yml          # Production Docker stack
-├── .env.example                     # Environment variable template
-├── PLAN.md                          # Master project plan
-├── ARCHITECTURE.md                  # This file
-└── README.md                        # Project overview
+Zenith/
+├── frontend/                 # Next.js App Router, components, API client, tests
+├── backend/
+│   ├── routers/               # HTTP routes and request handling
+│   ├── services/              # Supabase, Redis, providers, retrieval, budgets
+│   ├── agents/                # LangGraph nodes and separate prompt files
+│   ├── security/              # Authorization and validation
+│   ├── guardrails/            # Tool and action policy
+│   ├── scripts/               # Daily ingestion and maintenance commands
+│   └── tests/                 # API, security, service, and graph tests
+├── supabase/migrations/       # Ordered schema changes; schema.sql is a snapshot
+├── evals/                     # Versioned local cases and smoke runner
+├── docs/                      # API, security, operations, status, audit records
+└── .github/workflows/         # Push/PR CI and manual ingestion trigger
 ```
 
 ---
@@ -590,9 +526,9 @@ ai-paper-research-agent/
 | Frontend | Vercel | Docker, any Node.js host |
 | Backend | Fly.io | Railway, Docker on cloud VM |
 | Database | Supabase (managed Postgres) | Self-hosted Postgres |
-| Redis | Fly Upstash / local Redis | In-memory (single instance only) |
-| Daily ingestion scheduler | Fly scheduled machine | Manual GitHub Actions dispatch → `/api/internal/ingest` |
-| CI/CD | GitHub Actions (manual dispatch) | Run lint/test/build locally |
+| Redis | Managed Redis required in production / local Redis for development | In-memory is development-only |
+| Daily ingestion scheduler | Backend 02:00 UTC poller, coordinated by a shared Redis lease | Fly cron/manual admin triggers use the same guarded runner |
+| CI/CD | GitHub Actions on push, pull request, and manual dispatch | Run lint/test/build locally |
 
 Docker Compose files are available for both local development (`docker-compose.yml`) and single-server production deployment (`docker-compose.prod.yml`).
 
@@ -603,10 +539,19 @@ See **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** for step-by-step deployment i
 ## 13. Environment Variables
 
 See `.env.example` for the full list. Key categories:
-- **LLM Providers:** `OPENROUTER_API_KEY` (required), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`
+- **LLM Providers:** `OPENROUTER_API_KEY` is required for metered chat; `OPENAI_API_KEY` is required for metered embeddings. Direct chat-provider keys do not enable unmetered fallback.
+- **Model feature gate:** `LLM_ENABLED` defaults to `false`; enable only after staging validates the OpenRouter configuration, positive spend caps, and spend-ledger RPC. Synthesis and research-plan execution have separate opt-in flags.
+- **Repository discovery:** optional `GITHUB_TOKEN` raises the GitHub public repository search quota. Queries include `is:public`; returned matches are unverified candidates, not claims of official authorship.
 - **Data Sources:** `FIRECRAWL_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`
 - **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (HS256 legacy fallback only)
+- **PDF processing:** `OCR_ENABLED` (defaults to `false`; enables bounded local Tesseract OCR for scanned project PDF pages; production container provides English language data)
+- **Public paper evidence:** `PUBLIC_PAPER_EVIDENCE_ENABLED` (defaults to `false`; opts into exact-version arXiv page evidence only when OAI reports the exact CC BY 4.0 or CC0 1.0 license; production uses the shared Redis arXiv request gate)
+- **Provider spend guardrails:** `LLM_DAILY_SPEND_CAP_USD_MICROS` and `LLM_MONTHLY_SPEND_CAP_USD_MICROS` are per billing-subject UTC caps, in integer USD micros; both default to zero and model calls fail closed until set. They apply to `/api/search` summaries, both synthesis calls, plan synthesis, and embeddings. Scheduled ingestion/backfill/seed operations use the separately shared `system` billing subject. Chat uses OpenRouter only, with maximum provider prices from a versioned catalog snapshot; models without a verified price are unavailable. Every chat and embedding attempt reserves against service-only Postgres RPCs and records actual usage. OpenRouter credit-purchase fees are outside per-request inference usage and require invoice reconciliation. `MEM0_PROVIDER_SPEND_LIMIT_CONFIRMED` defaults to `false`; Mem0 model-backed reads/writes remain disabled until its provider-side spend limit is confirmed, and account exports report that memory data is withheld.
+- **Research workflow:** `RESEARCH_PLAN_EXECUTION_ENABLED` (defaults to `false`; gates durable plan execution on the existing run queue and Postgres checkpoint lifecycle; allows 10 executions/user/day and 5 API requests/IP/minute; model calls remain subject to the spend ledger)
+- **Email notifications:** `NOTIFICATIONS_EMAIL_ENABLED` (defaults to `false`; requires `RESEND_API_KEY`, `NOTIFICATIONS_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET`, and `NOTIFICATIONS_UNSUBSCRIBE_SECRET`; optionally accepts comma-separated prior HMAC keys in `NOTIFICATIONS_UNSUBSCRIBE_SECRET_PREVIOUS` during rotation. Migration 0020 adds service-only preferences/consent audit, normalized recipient suppression, unsubscribe tokens, and a per-user/digest-window unique outbox. Delivery requires a confirmed Auth email and explicit opt-in, rechecks consent and suppression immediately before sending, and supports daily/weekly IANA-timezone digests at 08:00 and one-click unsubscribe. Bounce and complaint events permanently suppress the HMAC-only normalized recipient, including across account deletion. The worker polls every 30 seconds and sends at most five digests per tick; retries use Resend idempotency and are capped at five total attempts (initial send plus four exponential-backoff retries at 30/60/120/240 seconds, capped at one hour). Webhook events are deduplicated by Svix event and recipient. No private project/watch text is included. Unsubscribe tokens use a one-way SHA-256 hash at rest and remain valid across HMAC-key rotation; keep prior recipient-HMAC keys configured to preserve matching for existing consent and permanent suppressions. Production Uvicorn commands disable access logs because unsubscribe tokens are passed as query parameters.)
+- **Notification request limits:** email-preference API requests are capped at 10/minute/IP, unsubscribe requests at 20/minute/IP, and Resend webhook requests at 120/minute/IP; webhook signatures and timestamp freshness are also verified.
+- **Email spend:** Zenith does not meter Resend delivery costs; monitor provider usage and billing limits in Resend.
 - **Scheduler:** `ADMIN_API_KEY` (authenticates `/api/internal/ingest`)
 - **Cost guardrails:** `MAX_SUMMARIES_PER_RUN`
 - **Observability:** `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE`, `APP_ENV`
-- **App:** `APP_URL`, `NEXT_PUBLIC_API_URL`, `REDIS_URL` (run state + global rate limiting)
+- **App:** `APP_URL` (canonical frontend URL / LLM referer), `CORS_ORIGINS` (comma-separated exact frontend origins), `NEXT_PUBLIC_API_URL`, `REDIS_URL` (queue, budgets, and leases); `DATABASE_URL` (required in production for durable graph checkpoints)

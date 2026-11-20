@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from models.schemas import UserPrefs
 from services.supabase_client import get_supabase
 from dependencies import get_user_id
@@ -22,6 +22,7 @@ async def get_prefs(  # type: ignore[no-untyped-def]
 
 @router.post("", response_model=UserPrefs)
 async def update_prefs(  # type: ignore[no-untyped-def]
+    request: Request,
     prefs: UserPrefs,
     supabase=Depends(get_supabase),
     user_id: str = Depends(get_user_id),

@@ -12,7 +12,7 @@ from services.ssrf import validate_public_url
 @pytest.mark.asyncio
 async def test_alg_none_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "secret")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-long-enough-for-hs256-signing")
     # alg=none token crafted manually
     token = jwt.encode({"sub": "u1"}, key="", algorithm="none")
     with pytest.raises(InvalidTokenError):
@@ -22,8 +22,12 @@ async def test_alg_none_rejected(monkeypatch):
 @pytest.mark.asyncio
 async def test_wrong_audience_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret")
-    token = jwt.encode({"sub": "u1", "aud": "some-other-app"}, "legacy-secret", algorithm="HS256")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret-long-enough-for-hs256-signing")
+    token = jwt.encode(
+        {"sub": "u1", "aud": "some-other-app"},
+        "legacy-secret-long-enough-for-hs256-signing",
+        algorithm="HS256",
+    )
     with pytest.raises(InvalidTokenError):
         await jwt_validator.decode_supabase_token(token)
 
@@ -31,10 +35,10 @@ async def test_wrong_audience_rejected(monkeypatch):
 @pytest.mark.asyncio
 async def test_wrong_issuer_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "legacy-secret-long-enough-for-hs256-signing")
     token = jwt.encode(
         {"sub": "u1", "iss": "https://evil.supabase.co/auth/v1"},
-        "legacy-secret",
+        "legacy-secret-long-enough-for-hs256-signing",
         algorithm="HS256",
     )
     with pytest.raises(InvalidTokenError):
@@ -62,6 +66,12 @@ def test_ssrf_public_ip_allowed():
     assert validate_public_url("https://8.8.8.8/paper", resolve=False)
 
 
+def test_ssrf_fails_closed_for_malformed_dns_address(monkeypatch):
+    monkeypatch.setattr("services.ssrf.socket.getaddrinfo", lambda *_args: [(2, 1, 6, "", (42, 0))])
+    with pytest.raises(ValueError, match="Cannot validate DNS result"):
+        validate_public_url("https://papers.example", resolve=True)
+
+
 def test_model_registry_rejects_unknown():
     with pytest.raises(ValueError):
         validate_model("evil/expensive-model", "summary_default")
@@ -69,7 +79,7 @@ def test_model_registry_rejects_unknown():
 
 def test_model_registry_rejects_wrong_agent():
     with pytest.raises(ValueError):
-        validate_model("deepseek/deepseek-r1", "memory")
+        validate_model("anthropic/claude-sonnet-5.5", "memory")
 
 
 def test_model_registry_allows_known():

@@ -1,13 +1,13 @@
 import pytest
-from fastapi.testclient import TestClient
 from main import app
+from tests.asgi_client import ASGITestClient
 
 pytest_plugins = ("pytest_asyncio",)
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client() -> ASGITestClient:
+    return ASGITestClient(app)
 
 
 @pytest.fixture(scope="session")

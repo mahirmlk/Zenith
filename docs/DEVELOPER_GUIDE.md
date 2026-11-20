@@ -38,7 +38,6 @@
 - `OPENAI_API_KEY` — GPT fallback + embeddings
 - `GOOGLE_API_KEY` — Gemini fallback
 - `MISTRAL_API_KEY` — Mistral fallback
-- `FIRECRAWL_API_KEY` — full paper text extraction
 - `SEMANTIC_SCHOLAR_API_KEY` — citation graph (higher rate limits)
 - `MEM0_API_KEY` — user memory personalisation
 
@@ -72,11 +71,7 @@ SUPABASE_JWT_SECRET=your-jwt-secret-from-supabase-dashboard
 ### 3. Set Up Supabase
 
 1. Create a [Supabase](https://supabase.com) project (free tier works).
-2. Go to the SQL Editor and run the migration from `supabase/schema.sql`. This creates:
-   - `papers` table with pgvector embedding support
-   - `user_papers` table for saved/dismissed papers
-   - `user_prefs` table for user preferences
-   - `match_papers()` function for vector similarity search
+2. Apply the ordered migrations in `supabase/migrations/` using [MIGRATIONS_RUNBOOK.md](MIGRATIONS_RUNBOOK.md). `supabase/schema.sql` is a reference snapshot, not an install or migration script. Apply and verify migrations in a disposable development project first.
 3. Get your `SUPABASE_JWT_SECRET` from **Project Settings > API > JWT Secret**.
 4. Enable Google/GitHub OAuth in **Authentication > Providers** if desired.
 
@@ -117,7 +112,6 @@ All environment variables are defined in `.env.example`. Here is what each does:
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `FIRECRAWL_API_KEY` | No | Full paper text extraction |
 | `SEMANTIC_SCHOLAR_API_KEY` | No | Citation graph data (higher rate limits) |
 
 ### Memory & Storage
@@ -134,9 +128,10 @@ All environment variables are defined in `.env.example`. Here is what each does:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `APP_URL` | `http://localhost:3000` | Sent as HTTP-Referer to OpenRouter |
+| `APP_URL` | `http://localhost:3000` | One canonical frontend URL; sent as HTTP-Referer to OpenRouter and used as the CORS default |
+| `CORS_ORIGINS` | empty (defaults to `APP_URL`) | Comma-separated exact `http(s)` browser origins; do not include paths or trailing application routes |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL for frontend API calls |
-| `REDIS_URL` | (empty) | Redis connection URL; falls back to in-memory store if not set |
+| `REDIS_URL` | (empty) | Redis connection URL; optional for local development, required by production run queue, leases, rate limits, and budgets |
 | `ADMIN_API_KEY` | (empty) | Gate for `POST /api/internal/ingest` (scheduled ingestion) |
 | `MAX_SUMMARIES_PER_RUN` | `20` | Per-run summary fan-out cap |
 
@@ -189,22 +184,20 @@ If you prefer running without Docker:
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Start Redis separately (Docker or native)
 docker run -d -p 6379:6379 redis:7-alpine
 
 # Start the API
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run --locked uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### Frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -263,7 +256,7 @@ ai-paper-research-agent/
 │   │   ├── stream.py                 # GET /api/stream/{run_id} (SSE)
 │   │   ├── graph.py                  # GET /api/graph/{paper_id}
 │   │   ├── prefs.py                  # GET/POST /api/prefs
-│   │   ├── pwc.py                    # GET /api/papers/{paper_id}/code
+│   │   ├── paper_code.py             # GET /api/papers/{paper_id}/code
 │   │   └── internal.py               # POST /api/internal/ingest (admin-key)
 │   ├── agents/                       # LangGraph multi-agent layer
 │   │   ├── orchestrator.py           # StateGraph: research → summary → memory
@@ -276,8 +269,8 @@ ai-paper-research-agent/
 │   │   ├── llm_router.py             # OpenRouter primary, direct provider fallbacks
 │   │   ├── arxiv.py                  # ArXiv API wrapper
 │   │   ├── huggingface.py            # HuggingFace Daily Papers API
-│   │   ├── firecrawl.py              # Firecrawl full-text extraction (cached)
-│   │   ├── papers_with_code.py       # Papers With Code API (GitHub repos)
+│   │   ├── firecrawl.py              # Disabled hosted crawl/cache entry points
+│   │   ├── github_repositories.py    # Public GitHub repository candidates
 │   │   ├── semantic_scholar.py       # Semantic Scholar citation data
 │   │   ├── mem0_client.py            # Mem0 user memory client
 │   │   ├── supabase_client.py        # Supabase async client singleton
@@ -299,10 +292,11 @@ ai-paper-research-agent/
 │   └── Dockerfile
 │
 ├── supabase/
-│   └── schema.sql                    # Database migration (tables, indexes, functions)
+│   ├── migrations/                   # Ordered, versioned schema history
+│   └── schema.sql                    # Reference snapshot (not migration history)
 │
 ├── .github/workflows/
-│   ├── ci.yml                        # GitHub Actions CI pipeline (manual dispatch)
+│   ├── ci.yml                        # GitHub Actions CI on push, pull request, and manual dispatch
 │   └── daily_fetch.yml               # Daily ingestion trigger (manual dispatch)
 │
 ├── docker-compose.yml                # Local development stack
@@ -335,16 +329,13 @@ The project enforces a strict four-layer architecture:
 
 ## Database Setup
 
-### Apply the Migration
+### Apply Migrations
 
-The Supabase schema is defined in `supabase/schema.sql`. Run it in the Supabase SQL Editor:
+The versioned database history is in `supabase/migrations/`. Apply every migration in numerical order with the Supabase CLI or the procedure in [MIGRATIONS_RUNBOOK.md](MIGRATIONS_RUNBOOK.md). Do not apply `schema.sql` as a substitute: it is a reference snapshot and does not encode the installed migration history.
 
-1. Open your Supabase project dashboard
-2. Go to **SQL Editor**
-3. Paste the contents of `supabase/schema.sql`
-4. Click **Run**
+Apply to a disposable development project first. For staging or production, follow the runbook's backup, verification, rollback, and RLS checks; the local migration files do not prove that a remote database has been updated.
 
-This creates the following tables:
+The schema snapshot documents these core tables (the ordered migrations are authoritative for upgrades):
 
 | Table | Purpose |
 |-------|---------|
@@ -352,9 +343,9 @@ This creates the following tables:
 | `user_papers` | Junction table for saved/dismissed papers |
 | `user_prefs` | Per-user LLM model preference and research interests |
 | `citations` | Cached Semantic Scholar citation edges (feed + graph) |
-| `crawled_content` | Cached Firecrawl full-text extractions |
+| `crawled_content` | Legacy derived full-text cache; new hosted crawls are disabled |
 
-It also creates:
+The snapshot also documents:
 - `match_papers()` — PostgreSQL function for vector similarity search
 - `idx_papers_embedding` — IVFFlat index on the embedding column
 - `idx_papers_published_at` — B-tree index for chronological sorting
@@ -381,8 +372,8 @@ This inserts 5 sample papers (covering transformer surveys, diffusion models, RL
 
 ```bash
 cd backend
-pip install -e ".[dev]"  # if not already installed
-pytest
+uv sync --locked --extra dev
+uv run --locked pytest
 ```
 
 ### Frontend (vitest)
@@ -394,7 +385,7 @@ npm test
 
 ### CI Pipeline
 
-The full CI pipeline is defined in `.github/workflows/ci.yml`. Automatic push/PR runs are disabled to control GitHub Actions costs; run it on demand from the Actions tab (Actions → CI → Run workflow):
+The CI pipeline is defined in `.github/workflows/ci.yml` and runs on pushes, pull requests, and manual dispatch:
 - **Backend job:** `ruff check`, `mypy`, `pytest`
 - **Frontend job:** `npm run lint` (ESLint), `npm run typecheck` (tsc), `npm run build`
 - **Docker job:** `docker compose build`
@@ -409,13 +400,13 @@ The full CI pipeline is defined in `.github/workflows/ci.yml`. Automatic push/PR
 cd backend
 
 # Lint (Ruff)
-ruff check .
+uv run --locked ruff check .
 
 # Type check (mypy, strict mode)
-mypy .
+uv run --locked mypy .
 
 # Auto-fix lint issues
-ruff check . --fix
+uv run --locked ruff check . --fix
 ```
 
 Configuration: `pyproject.toml` sections `[tool.ruff]` and `[tool.mypy]`.
@@ -469,7 +460,7 @@ For example, adding a new API endpoint:
 docker compose up --build
 
 # Run backend checks
-cd backend && ruff check . && mypy . && pytest
+cd backend && uv run --locked ruff check . && uv run --locked mypy . && uv run --locked pytest
 
 # Run frontend checks
 cd frontend && npm run lint && npm run typecheck && npm test
@@ -512,7 +503,7 @@ Check that `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are correct. Verify yo
 
 ### "Redis unavailable, falling back to in-memory store"
 
-This is logged when Redis is not reachable. The backend will use an in-memory `RunStore` instead. Run states will be lost when the backend restarts. To fix, ensure the Redis container is running:
+In development, missing Redis can select the in-memory `RunStore`; run states are lost on restart. Production fails closed when required Redis or Postgres dependencies are unavailable. Start the local Redis container for multi-process development:
 
 ```bash
 docker compose up redis
@@ -540,11 +531,11 @@ If you see `ModuleNotFoundError` after pulling changes:
 ```bash
 # Backend
 cd backend
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Frontend
 cd frontend
-npm install
+npm ci
 ```
 
 ### Docker build fails on Windows
@@ -560,9 +551,9 @@ If you have pre-commit hooks set up and they fail, run the checks manually to se
 
 ```bash
 cd backend
-ruff check .
-mypy .
-pytest
+uv run --locked ruff check .
+uv run --locked mypy .
+uv run --locked pytest
 
 cd ../frontend
 npm run lint

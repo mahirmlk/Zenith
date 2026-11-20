@@ -41,19 +41,18 @@ The platform approach is recommended for production. The Docker Compose approach
 Before deploying, ensure you have:
 
 ### Accounts & API Keys
-- [Supabase](https://supabase.com) project with `schema.sql` applied
+- [Supabase](https://supabase.com) project with the reviewed migrations applied and tenant policies verified
 - [OpenRouter](https://openrouter.ai) API key (`OPENROUTER_API_KEY`)
 - [OpenAI](https://platform.openai.com) API key (`OPENAI_API_KEY`) — required for embeddings
 - [Fly.io](https://fly.io) account (if using Fly.io for backend)
 - [Vercel](https://vercel.com) account (if using Vercel for frontend)
 
 ### Optional API Keys (features degrade gracefully)
-- [Anthropic](https://console.anthropic.com) API key — direct Claude fallback
-- [Google AI](https://aistudio.google.com) API key — Gemini fallback
-- [Mistral](https://console.mistral.ai) API key — Mistral fallback
-- [Firecrawl](https://firecrawl.dev) API key — full paper text extraction
+- Direct Anthropic, Google, and Mistral keys do not enable chat fallback; metered chat uses OpenRouter and fails closed when its configuration or spend meter is unavailable.
+- Firecrawl crawling is disabled until redirect and egress controls are enforced. `FIRECRAWL_API_KEY` is not needed or used.
 - [Semantic Scholar](https://api.semanticscholar.org) API key — citation graph (higher rate limits)
 - [Mem0](https://mem0.ai) API key — user memory personalisation
+- GitHub token (optional, `GITHUB_TOKEN`) — higher quota for public repository candidate search; only public repositories are queried
 
 ### CLI Tools
 ```bash
@@ -130,9 +129,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 The production compose file:
-- Exposes the frontend on port 3000, backend on port 8000
+- Publishes the frontend on `127.0.0.1:3000` and backend on `127.0.0.1:8000` for the host nginx reverse proxy; direct public access to the app containers is blocked
+- Fails configuration if required build-time API/Auth settings, `APP_URL`, server Supabase credentials, Redis, or Postgres are blank
 - Passes all environment variables explicitly (not just via `env_file`)
-- Includes health checks for the backend
+- Includes backend readiness and frontend HTTP health checks; the frontend starts only after the backend is healthy
 - Sets memory limits on the backend container (2 GB)
 
 ### 4. Set Up Reverse Proxy (nginx)
@@ -190,13 +190,13 @@ Fly.io runs Docker containers close to your users on their global edge network. 
 
 ```bash
 cd backend
-fly launch --name paper-agent-api --region iad
+fly launch --name ai-paper-agent-backend --region iad
 ```
 
 When prompted:
 - Choose to deploy now? **No** (we need to set secrets first)
 - Choose a Postgres? **No** (we use Supabase)
-- Choose Redis? If you want managed Redis, yes; otherwise the backend can use in-memory run store.
+- Configure managed Redis. Production requires `REDIS_URL` for shared rate limits, per-user budgets, queue recovery, scheduler leases, and worker leases. Supabase Postgres stores canonical run records/events; `DATABASE_URL` enables durable LangGraph checkpoints. Production startup fails if graph checkpointing is not configured. In-memory stores are development-only.
 
 #### 2. Set Secrets
 
@@ -208,23 +208,24 @@ fly secrets set \
   SUPABASE_SERVICE_ROLE_KEY="eyJ..." \
   SUPABASE_JWT_SECRET="your-jwt-secret" \
   APP_URL="https://your-frontend-domain.vercel.app" \
-  REDIS_URL="redis://your-redis:6379"
+  CORS_ORIGINS="https://your-frontend-domain.vercel.app" \
+  REDIS_URL="redis://your-redis:6379" \
+  DATABASE_URL="postgresql://zenith_app:***@your-db-host:5432/postgres?sslmode=require"
 
 # Optional
 fly secrets set \
   ANTHROPIC_API_KEY="sk-ant-..." \
   GOOGLE_API_KEY="..." \
   MISTRAL_API_KEY="..." \
-  FIRECRAWL_API_KEY="fc-..." \
   MEM0_API_KEY="..."
 ```
 
 #### 3. Configure fly.toml
 
-Fly.io generates a `fly.toml` during `fly launch`. Ensure these settings are correct:
+Use the checked-in `backend/fly.toml`; it sets `APP_ENV=production` and uses `/api/ready` for dependency checks. Configure Redis and Supabase secrets before deployment.
 
 ```toml
-app = "paper-agent-api"
+app = "ai-paper-agent-backend"
 primary_region = "iad"
 
 [build]
@@ -239,7 +240,7 @@ primary_region = "iad"
 
   [[http_service.checks]]
     method = "GET"
-    path = "/api/health"
+    path = "/api/ready"
     interval = "15s"
     timeout = "5s"
     grace_period = "10s"
@@ -289,7 +290,7 @@ In the Vercel dashboard (or via CLI):
 
 ```bash
 vercel env add NEXT_PUBLIC_API_URL production
-# Enter: https://paper-agent-api.fly.dev
+# Enter: https://ai-paper-agent-backend.fly.dev
 
 vercel env add NEXT_PUBLIC_SUPABASE_URL production
 # Enter: https://yourproject.supabase.co
@@ -333,7 +334,7 @@ Create a separate Supabase project for production (do not use your dev project).
 
 ### 2. Apply Schema
 
-Run the full `supabase/schema.sql` in the SQL Editor.
+Apply the ordered `supabase/migrations/` against staging first, then production, using the migration runbook. Treat `schema.sql` as a schema reference snapshot.
 
 ### 3. Configure Auth
 
@@ -355,32 +356,9 @@ From **Project Settings > API**:
 From **Project Settings > API > JWT Settings**:
 - JWT Secret → `SUPABASE_JWT_SECRET`
 
-### 5. Set RLS Policies
+### 5. Apply and Verify Migrations
 
-Enable Row Level Security on the `user_papers` and `user_prefs` tables with appropriate policies:
-
-```sql
--- user_papers: only insert/update/delete own rows
-ALTER TABLE user_papers ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can manage own papers"
-  ON user_papers
-  FOR ALL
-  USING (auth.uid() = user_id);
-
--- user_prefs: only read/update own row
-ALTER TABLE user_prefs ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can read own prefs"
-  ON user_prefs
-  FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own prefs"
-  ON user_prefs
-  FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
-```
+Apply the reviewed migration sequence from `supabase/migrations/` in staging first, then production. Do not rely on `schema.sql` alone. Verify owner/member/outsider/anonymous behavior with `docs/security/SECURITY_TEST_PLAN.md` before serving users. Migration files do not prove the database has been updated.
 
 ---
 
@@ -400,15 +378,25 @@ SUPABASE_JWT_SECRET=<jwt secret>
 # Required for embeddings
 OPENAI_API_KEY=<your key>
 
+# Required to enable metered model calls (integer USD micros per UTC billing subject)
+LLM_DAILY_SPEND_CAP_USD_MICROS=<positive integer>
+LLM_MONTHLY_SPEND_CAP_USD_MICROS=<positive integer>
+# Set true only after a provider-side Mem0 spend cap is configured and verified
+MEM0_PROVIDER_SPEND_LIMIT_CONFIRMED=false
+
 # App
 APP_URL=https://your-frontend-domain.com
+CORS_ORIGINS=https://your-frontend-domain.com
 
-# Redis (optional, uses in-memory store if not set)
+# Redis (required in production)
 REDIS_URL=redis://your-redis:6379
 
-# Optional but recommended
+# Optional; leave disabled until reviewed. Only latest-version arXiv PDFs
+# whose OAI arXivRaw record reports exact CC BY 4.0 or CC0 1.0 are eligible.
+PUBLIC_PAPER_EVIDENCE_ENABLED=false
+
+# Optional; direct chat-provider keys do not enable chat fallback while spend metering is enforced
 ANTHROPIC_API_KEY=<your key>
-FIRECRAWL_API_KEY=<your key>
 MEM0_API_KEY=<your key>
 
 # Optional
@@ -425,22 +413,28 @@ NEXT_PUBLIC_SUPABASE_URL=https://yourproject.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 ```
 
+`APP_URL` must be one canonical URL because it is also sent as OpenRouter's
+`HTTP-Referer`. Configure additional browser origins only in the backend's
+comma-separated `CORS_ORIGINS`; each entry must be an exact `http(s)` origin
+without a path. If an older deployment put multiple values in `APP_URL`, move
+them to `CORS_ORIGINS` and keep one canonical value in `APP_URL`.
+
 ---
 
 ## Health Checks & Monitoring
 
 ### Backend Health
 
-The backend exposes `GET /api/health` which returns checks for Supabase connectivity and OpenRouter API key presence.
+`GET /api/health` is a liveness endpoint. `GET /api/ready` performs bounded reachability checks against Supabase, Redis, the canonical Postgres run store, and the live LangGraph checkpoint connection; it returns 503 when any required production dependency is unavailable.
 
 ```bash
-curl https://api.yourdomain.com/api/health
-# {"status":"ok","service":"ai-paper-agent-backend","checks":{"supabase":true,"openrouter":true}}
+curl https://api.yourdomain.com/api/ready
+# {"status":"ready","checks":{"supabase":true,"redis":true,"run_store":true,"graph_checkpointer":true}}
 ```
 
 **Monitoring recommendations:**
-- Set up an uptime monitor (UptimeRobot, Better Uptime, or Fly.io built-in checks) hitting `/api/health` every 1 minute
-- Alert if status is `"degraded"` or response takes > 5 seconds
+- Set up an uptime monitor hitting `/api/ready` every minute
+- Alert when readiness is not `ready` or response takes > 5 seconds
 - Monitor `X-Response-Time` header from the `TimingMiddleware` for latency trends
 
 ### Docker Health Check
@@ -448,7 +442,7 @@ curl https://api.yourdomain.com/api/health
 The production Docker Compose includes a health check:
 ```yaml
 healthcheck:
-  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/ready')"]
   interval: 30s
   timeout: 10s
   retries: 3
@@ -543,17 +537,18 @@ The backend is primarily I/O-bound (waiting on OpenRouter, ArXiv, Supabase). Sca
 |----------|-------------|
 | More instances (horizontal) | High concurrent user count |
 | Larger VM (vertical) | Single long-running agent runs (LLM calls) |
-| Redis for run state | Multi-instance deployments (shared state) |
+| Postgres for run metadata/events | Durable run history across restarts and replicas |
+| Redis for queue and leases | Shared work delivery, rate limits, budgets, and scheduler/worker leases |
 
 **Fly.io scaling:**
 ```bash
 # Run 2-4 instances behind load balancer
 fly scale count 4
 
-# Ensure REDIS_URL is set for shared run state across instances
+# Ensure REDIS_URL is set for shared queues, limits, budgets, and leases
 ```
 
-If running multiple backend instances, set `REDIS_URL` to ensure agent run states are shared across instances. Without Redis, each instance has its own in-memory `RunStore`, and SSE streams will fail if the request lands on a different instance.
+Production requires reachable Supabase Postgres, direct Postgres `DATABASE_URL`, and Redis, even with one backend instance. Supabase Postgres is canonical for run metadata, results, and events; the direct Postgres connection stores LangGraph checkpoints. Redis Streams carry jobs, while Redis leases coordinate workers and scheduled ingestion. Startup initializes the LangGraph checkpoint schema and fails closed if unavailable. The API fails readiness if required dependencies are unreachable or run-store migration RPCs are missing. The backend enforces `LANGGRAPH_STRICT_MSGPACK=true` before importing LangGraph to restrict checkpoint deserialization.
 
 ### Frontend (Next.js)
 
@@ -579,24 +574,19 @@ Production rate limits are applied by `slowapi`:
 | Endpoint | Limit |
 |----------|-------|
 | `/api/search` | 10 req / minute |
+| `/api/papers/{paper_id}/public-evidence` | 3 req / minute |
 | `/api/stream/*` | 20 req / minute |
 | All others | 60 req / minute |
 
 These limits are **per IP address** by default (using `get_remote_address`). Behind a reverse proxy, ensure `X-Forwarded-For` is being forwarded correctly, or adjust the key function in `backend/middleware/rate_limit.py`.
 
+`PUBLIC_PAPER_EVIDENCE_ENABLED` defaults to `false`. When enabled, the authenticated endpoint serves at most five exact, relevant native-text sentences for a paper only after its stored version matches the latest `arXivRaw` OAI version and the OAI record reports the exact CC BY 4.0 or CC0 1.0 license URI. Unknown/other licenses and ambiguous version/license metadata fail closed. PDFs and excerpts are not persisted; requests have 15-second HTTP timeouts, 20 MiB PDF and 256 KiB OAI response caps, and redirects are rejected. Production uses a Redis-backed global three-second request gate shared with the existing arXiv API search path. Keep the feature disabled until staging confirms OAI metadata parsing, exact-version resolution, PDF extraction, rate limiting, and logs do not capture excerpt text.
+
 ### LLM Cost Management
 
-LLM API calls are the primary cost driver. Mitigation strategies already implemented:
+Chat attempts use the dated OpenRouter price registry and service-only spend ledger. Configure positive `LLM_DAILY_SPEND_CAP_USD_MICROS` and `LLM_MONTHLY_SPEND_CAP_USD_MICROS` values; the API reports model availability only when the provider, database RPCs, and meter are ready. OpenAI embedding attempts are metered from returned token usage. Missing or ambiguous provider usage retains a reservation for reconciliation. These controls are implemented locally but still require staging concurrency, failure-recovery, and invoice-reconciliation checks before enabling synthesis or plan execution.
 
-1. **Caching** — Paper summaries and embeddings are cached in Supabase
-2. **Tiered models** — Fast/cheap models for pre-filtering (GPT-4o-mini), expensive models only for final summaries (Claude Sonnet)
-3. **Token limits** — `max_tokens=4096` on all LLM calls
-4. **Model selection** — Users can choose cheaper models via the ModelSelector
-
-Additional production safeguards to consider:
-- Set spending limits on your OpenRouter account
-- Monitor per-user API usage and set caps
-- Batch summary generation in off-peak hours (already supported via `daily_fetch.py`)
+Configure provider-side billing alerts and hard limits as a separate safeguard. Mem0 calls are not covered by the ledger and must remain unavailable unless a provider-side spend limit is confirmed. OpenRouter platform/credit fees and Resend email delivery are also outside model inference metering and need separate provider-side monitoring.
 
 ---
 

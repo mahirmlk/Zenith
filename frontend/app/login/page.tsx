@@ -1,9 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function invitationDestination(): string | null {
+  const invitationId = new URLSearchParams(window.location.search).get('invite');
+  return invitationId && UUID_PATTERN.test(invitationId)
+    ? `/projects/invitations/accept?invitation_id=${encodeURIComponent(invitationId)}`
+    : null;
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -13,6 +22,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('accountDeletionAccepted') === '1') {
+      setSuccess('Your account deletion request was accepted. Cleanup will continue automatically.');
+    }
+  }, []);
 
   const validatePassword = (value: string): string | null => {
     if (value.length < 6) return 'Password must be at least 6 characters.';
@@ -47,7 +62,7 @@ export default function LoginPage() {
         }
       } else {
         await signInWithEmail(email, password);
-        window.location.href = '/feed';
+        window.location.href = invitationDestination() ?? '/feed';
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Authentication failed';
@@ -71,9 +86,10 @@ export default function LoginPage() {
 
   const handleOAuth = async (provider: 'google' | 'github') => {
     try {
+      const destination = invitationDestination() ?? '/feed';
       await supabase.auth.signInWithOAuth({
         provider,
-        options: { redirectTo: `${window.location.origin}/feed` },
+        options: { redirectTo: `${window.location.origin}${destination}` },
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'OAuth sign in failed');

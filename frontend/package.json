@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint app components lib store types __tests__ next.config.js tailwind.config.js postcss.config.js vitest.config.ts vitest.setup.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

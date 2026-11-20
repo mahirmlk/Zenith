@@ -10,8 +10,11 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "httpx>=0.28.0",
     "PyJWT[crypto]>=2.8.0",
-    "supabase>=2.10.0",
-    "langgraph>=0.2.60",
+    "supabase>=2.29.0,<3.0.0",
+    "email-validator>=2.2.0",
+    "langgraph>=1.0.10,<2.0.0",
+    "langgraph-checkpoint-postgres>=3.0.0,<4.0.0",
+    "psycopg[binary]>=3.2.0",
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
     "langchain-anthropic>=0.3.0",
@@ -21,7 +24,6 @@ dependencies = [
     "anthropic>=0.40.0",
     "google-generativeai>=0.8.0",
     "mem0ai>=0.1.0",
-    "firecrawl-py>=1.8.0",
     "arxiv>=2.1.0",
     "numpy>=2.1.0",
     "sse-starlette>=2.1.0",
@@ -29,6 +31,12 @@ dependencies = [
     "redis>=5.0.0",
     "langfuse>=2.51.0",
     "sentry-sdk[fastapi]>=2.20.0",
+    "python-multipart>=0.0.20",
+    "firecrawl-py>=1.8.0",
+    "pypdf>=5.0.0",
+    "PyMuPDF>=1.24.0,<2.0.0",
+    "pytesseract>=0.3.13,<1.0.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +52,9 @@ dev = [
 [tool.setuptools]
 py-modules = ["main"]
 
+[tool.uv]
+required-version = "==0.12.7"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -53,6 +64,11 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+exclude = '(^|/)(tests|scripts)/'
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [[tool.mypy.overrides]]
 module = [
@@ -61,39 +77,10 @@ module = [
     "supabase.*",
     "mem0.*",
     "firecrawl.*",
-    "langchain_mistralai.*",
+    "fitz.*",
+    "pytesseract.*",
+    "langfuse.callback",
     "arxiv.*",
     "sse_starlette.*",
-    "langfuse.*",
-    "sentry_sdk.*",
-    "backend.config",
-    "backend.services.embeddings",
-    "backend.services.arxiv",
-    "backend.services.huggingface",
-    "backend.agents.summary_agent",
-    "backend.models.schemas",
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "tests.*",
-    "scripts.*",
-    "services.run_store",
-    "services.mem0_client",
-    "services.arxiv",
-    "services.huggingface",
-    "services.semantic_scholar",
-    "services.papers_with_code",
-    "services.firecrawl",
-    "services.retry",
-    "services.jwt_validator",
-    "services.citation_cache",
-    "services.ingestion",
-    "services.observability",
-    "services.llm_router",
-    "agents.*",
-    "models.schemas",
-    "dependencies",
-]
-ignore_errors = true
