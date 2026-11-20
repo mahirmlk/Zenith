@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend test lint format
+.PHONY: dev backend frontend test lint lint-backend lint-frontend format format-backend install
 
 # Start both frontend and backend in development mode
 dev:
@@ -6,7 +6,7 @@ dev:
 
 # Backend only
 backend:
-	cd backend && uvicorn main:app --reload --port 8000
+	cd backend && uv run --locked uvicorn main:app --reload --port 8000
 
 # Frontend only
 frontend:
@@ -14,22 +14,28 @@ frontend:
 
 # Run all tests
 test:
-	cd backend && pytest
+	cd backend && uv run --locked pytest
 	cd frontend && npm test
+
+# Run backend and frontend lint/type checks
+lint: lint-backend lint-frontend
 
 # Lint backend
 lint-backend:
-	cd backend && ruff check . && mypy .
+	cd backend && uv run --locked ruff check . && uv run --locked mypy .
 
 # Lint frontend
 lint-frontend:
-	cd frontend && npm run lint
+	cd frontend && npm run lint && npm run typecheck
 
 # Format backend
 format-backend:
-	cd backend && ruff check . --fix
+	cd backend && uv run --locked ruff check . --fix && uv run --locked ruff format .
+
+# Format Python backend files
+format: format-backend
 
 # Install dependencies
 install:
-	cd backend && pip install -e ".[dev]"
-	cd frontend && npm install
+	cd backend && uv sync --locked --extra dev
+	cd frontend && npm ci

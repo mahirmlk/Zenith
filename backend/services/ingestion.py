@@ -7,10 +7,12 @@ runs on Fly machines or GitHub Actions).
 import asyncio
 import logging
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from models.schemas import AgentStep
+from services.spend_meter import BillingContext
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,13 @@ MAX_EMBED_BATCH = 100
 MAX_ARXIV_VERSION_POLL = 200
 SUMMARY_BATCH_SIZE = 5
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_PROJECT_STOPWORDS = frozenset({
+    "about", "after", "against", "also", "among", "because", "been", "being", "between",
+    "could", "does", "each", "from", "have", "into", "more", "most", "other", "over",
+    "same", "some", "such", "than", "that", "their", "them", "then", "there", "these",
+    "they", "this", "those", "through", "under", "using", "very", "were", "what", "when",
+    "where", "which", "while", "with", "within", "would", "paper", "study", "research",
+})
 
 
 def _as_utc(value: Any) -> datetime | None:
@@ -82,6 +91,79 @@ def _watchlist_reason(target_type: str, query: str, paper: dict[str, Any]) -> tu
     source_text = " and ".join(sources)
     reason = f"Matched {len(matched)}/{len(terms)} topic-watch terms in the paper {source_text}: {shown_terms}."
     return "topic_term_overlap", reason[:500]
+
+
+def _project_relevance(project_title: str, source_titles: list[str], paper: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return a conservative lexical project relation, never a scientific claim."""
+    candidate_text = f"{paper.get('title') or ''} {paper.get('abstract') or ''}"
+    candidate_terms = {
+        token for token in _TOKEN_RE.findall(candidate_text.casefold())
+        if len(token) >= 4 and token not in _PROJECT_STOPWORDS
+    }
+    if not candidate_terms:
+        return None, None
+
+    best: tuple[int, str] | None = None
+    for reference in [project_title, *source_titles]:
+        reference_terms = {
+            token for token in _TOKEN_RE.findall(reference.casefold())
+            if len(token) >= 4 and token not in _PROJECT_STOPWORDS
+        }
+        overlap = candidate_terms.intersection(reference_terms)
+        if len(overlap) >= 2 and (best is None or len(overlap) > best[0]):
+            best = (len(overlap), reference)
+    if best is None:
+        return None, None
+
+    shared = sorted(candidate_terms.intersection({
+        token for token in _TOKEN_RE.findall(best[1].casefold())
+        if len(token) >= 4 and token not in _PROJECT_STOPWORDS
+    }))[:5]
+    label = best[1].strip()
+    if len(label) > 100:
+        label = f"{label[:97].rstrip()}..."
+    terms = ", ".join(shared)
+    return "project_term_overlap", (
+        f'The paper shares topic terms ({terms}) with project title/source "{label}". '
+        "This is a text-match hint, not an assessment of scientific importance."
+    )[:500]
+
+
+async def _load_project_references(supabase: Any, watch: dict[str, Any]) -> tuple[str, list[str]] | None:
+    """Load bounded project text only while the watch owner still has access."""
+    project_id = watch.get("project_id")
+    user_id = watch.get("user_id")
+    if not project_id or not user_id:
+        return None
+    project_response = await (
+        supabase.table("projects").select("id,owner_id,title")
+        .eq("id", project_id).is_("deleted_at", "null").maybe_single().execute()
+    )
+    project = project_response.data
+    if not project:
+        return None
+    if project.get("owner_id") != user_id:
+        membership = await (
+            supabase.table("project_members").select("user_id")
+            .eq("project_id", project_id).eq("user_id", user_id).maybe_single().execute()
+        )
+        if not membership.data:
+            return None
+    sources = await (
+        supabase.table("project_sources").select("paper_id")
+        .eq("project_id", project_id).range(0, 19).execute()
+    )
+    paper_ids = list(dict.fromkeys(
+        str(row["paper_id"]) for row in (sources.data or []) if row.get("paper_id")
+    ))
+    source_titles: list[str] = []
+    if paper_ids:
+        papers = await (
+            supabase.table("papers").select("id,title")
+            .in_("id", paper_ids).execute()
+        )
+        source_titles = [str(row.get("title") or "")[:300] for row in (papers.data or []) if row.get("title")]
+    return str(project.get("title") or "")[:300], source_titles
 
 
 async def _load_existing_paper_rows(supabase: Any, papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -217,9 +299,21 @@ async def _notify_watchlists(
 
         try:
             if matches:
+                project_reference: tuple[str, list[str]] | None = None
+                if watch.get("project_id"):
+                    try:
+                        project_reference = await _load_project_references(supabase, watch)
+                    except Exception:
+                        # Project context is optional; its read failure must not
+                        # suppress the independently valid watch notification.
+                        logger.exception("Could not load project context for watchlist %s", watch.get("id"))
                 rows = []
                 for paper in matches:
                     reason_code, reason_text = _watchlist_reason(target_type, query, paper)
+                    project_relevance_code, project_relevance_text = (
+                        _project_relevance(*project_reference, paper)
+                        if project_reference else (None, None)
+                    )
                     rows.append({
                         "user_id": watch["user_id"],
                         "watchlist_id": watch["id"],
@@ -232,6 +326,8 @@ async def _notify_watchlists(
                         "body": str(paper.get("title") or "")[:200],
                         "reason_code": reason_code,
                         "reason_text": reason_text,
+                        "project_relevance_code": project_relevance_code,
+                        "project_relevance_text": project_relevance_text,
                         "paper_id": paper["id"],
                     })
                 await (
@@ -269,6 +365,17 @@ async def _noop_callback(step: AgentStep) -> None:
     pass
 
 
+async def _poll_crossref_status(supabase: Any) -> int:
+    """Check opt-in publication-status watches without failing paper ingest."""
+    try:
+        from services.crossref_monitor import poll_crossref_status_watches
+
+        return await poll_crossref_status_watches(supabase)
+    except Exception:
+        logger.exception("Crossref publication-status polling failed")
+        return 0
+
+
 async def run_daily_fetch(
     max_results: int = 200,
     callback: Callable[[AgentStep], Awaitable[None]] | None = None,
@@ -282,6 +389,7 @@ async def run_daily_fetch(
     from agents.summary_agent import summary_agent
 
     cb = callback or _noop_callback
+    billing = BillingContext("system", str(uuid.uuid4()), "daily_ingestion")
     supabase = await get_supabase()
 
     logger.info("Fetching ArXiv papers...")
@@ -333,17 +441,19 @@ async def run_daily_fetch(
             arxiv_updates_complete=arxiv_updates_complete,
             arxiv_updates_oldest_at=arxiv_updates_oldest_at,
         )
+        crossref_alerts = await _poll_crossref_status(supabase)
         return {
             "fetched": len(papers),
             "inserted": 0,
             "summarised": 0,
             "watchlists_notified": notified,
+            "publication_status_alerts": crossref_alerts,
         }
 
     texts = [f"{p['title']}\n{p['abstract']}" for p in new_papers]
     embeddings: list[list[float] | None] = []
     try:
-        embeddings.extend(await embed_texts(texts))
+        embeddings.extend(await embed_texts(texts, context=billing))
     except Exception as exc:
         logger.warning("Embedding failed: %s", exc)
         embeddings = [None] * len(new_papers)
@@ -357,6 +467,7 @@ async def run_daily_fetch(
             "authors": p.get("authors", []),
             "url": p.get("url", ""),
             "published_at": p.get("published_at"),
+            "doi": p.get("doi"),
             "preprint_id": p.get("preprint_id"),
             "source_version": p.get("source_version"),
             "source_updated_at": p.get("source_updated_at"),
@@ -380,7 +491,13 @@ async def run_daily_fetch(
                 {"id": p["id"], "title": p["title"], "abstract": p["abstract"]}
                 for p in batch
             ]
-            enriched = await summary_agent(paper_dicts, cb)
+            enriched = await summary_agent(
+                paper_dicts,
+                cb,
+                user_id="system",
+                run_id=billing.run_id,
+                operation="daily_ingestion_summary",
+            )
             for paper in enriched:
                 if paper.get("summary_tldr"):
                     summarised += 1
@@ -388,6 +505,9 @@ async def run_daily_fetch(
                     return await supabase.table("papers").update({
                         "summary_tldr": p.get("summary_tldr"),
                         "difficulty": p.get("difficulty", "intermediate"),
+                        "summary_contributions": p.get("summary_contributions"),
+                        "summary_status": p.get("summary_status", "unknown"),
+                        "summary_fallback_reason": p.get("summary_fallback_reason"),
                     }).eq("id", p["id"]).execute()
 
                 await async_retry(_update, max_retries=3, base_delay=1.0)
@@ -404,10 +524,12 @@ async def run_daily_fetch(
         arxiv_updates_complete=arxiv_updates_complete,
         arxiv_updates_oldest_at=arxiv_updates_oldest_at,
     )
+    crossref_alerts = await _poll_crossref_status(supabase)
 
     return {
         "fetched": len(papers),
         "inserted": len(new_papers),
         "summarised": summarised,
         "watchlists_notified": notified,
+        "publication_status_alerts": crossref_alerts,
     }

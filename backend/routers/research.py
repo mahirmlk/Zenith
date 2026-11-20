@@ -24,6 +24,7 @@ from agents.research_types import (
     SynthesisEvidenceItem,
     ResearchAnswer,
     build_comparison,
+    build_pdf_comparison,
 )
 from dependencies import get_current_user
 from config import get_settings
@@ -53,6 +54,7 @@ async def research_capabilities(
     return ResearchCapabilities(
         research_synthesis_enabled=get_settings().research_synthesis_enabled,
         research_plan_execution_enabled=get_settings().research_plan_execution_enabled,
+        public_paper_evidence_enabled=get_settings().public_paper_evidence_enabled,
     )
 
 
@@ -650,6 +652,9 @@ async def research_compare(
         return ResearchComparisonResponse(
             rows=build_comparison(ranked),
             pdf_evidence=pdf_evidence,
+            pdf_comparisons=build_pdf_comparison(
+                [item.model_dump() for item in pdf_evidence]
+            ),
         )
     except HTTPException:
         raise
@@ -802,7 +807,12 @@ async def research_synthesize(
         if not within_budget:
             raise HTTPException(status_code=429, detail="Daily synthesis limit reached")
 
-        claims = await synthesize_claims(body.query, evidence)
+        claims = await synthesize_claims(
+            body.query,
+            evidence,
+            user_id=user["user_id"],
+            operation_id=str(uuid.uuid4()),
+        )
         return ResearchSynthesisResponse(
             query=body.query,
             claims=claims,

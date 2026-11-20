@@ -48,12 +48,11 @@ Before deploying, ensure you have:
 - [Vercel](https://vercel.com) account (if using Vercel for frontend)
 
 ### Optional API Keys (features degrade gracefully)
-- [Anthropic](https://console.anthropic.com) API key — direct Claude fallback
-- [Google AI](https://aistudio.google.com) API key — Gemini fallback
-- [Mistral](https://console.mistral.ai) API key — Mistral fallback
-- [Firecrawl](https://firecrawl.dev) API key — full paper text extraction
+- Direct Anthropic, Google, and Mistral keys do not enable chat fallback; metered chat uses OpenRouter and fails closed when its configuration or spend meter is unavailable.
+- Firecrawl crawling is disabled until redirect and egress controls are enforced. `FIRECRAWL_API_KEY` is not needed or used.
 - [Semantic Scholar](https://api.semanticscholar.org) API key — citation graph (higher rate limits)
 - [Mem0](https://mem0.ai) API key — user memory personalisation
+- GitHub token (optional, `GITHUB_TOKEN`) — higher quota for public repository candidate search; only public repositories are queried
 
 ### CLI Tools
 ```bash
@@ -130,9 +129,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 The production compose file:
-- Exposes the frontend on port 3000, backend on port 8000
+- Publishes the frontend on `127.0.0.1:3000` and backend on `127.0.0.1:8000` for the host nginx reverse proxy; direct public access to the app containers is blocked
 - Passes all environment variables explicitly (not just via `env_file`)
-- Includes health checks for the backend
+- Includes backend readiness and frontend HTTP health checks; the frontend starts only after the backend is healthy
 - Sets memory limits on the backend container (2 GB)
 
 ### 4. Set Up Reverse Proxy (nginx)
@@ -217,7 +216,6 @@ fly secrets set \
   ANTHROPIC_API_KEY="sk-ant-..." \
   GOOGLE_API_KEY="..." \
   MISTRAL_API_KEY="..." \
-  FIRECRAWL_API_KEY="fc-..." \
   MEM0_API_KEY="..."
 ```
 
@@ -379,6 +377,12 @@ SUPABASE_JWT_SECRET=<jwt secret>
 # Required for embeddings
 OPENAI_API_KEY=<your key>
 
+# Required to enable metered model calls (integer USD micros per UTC billing subject)
+LLM_DAILY_SPEND_CAP_USD_MICROS=<positive integer>
+LLM_MONTHLY_SPEND_CAP_USD_MICROS=<positive integer>
+# Set true only after a provider-side Mem0 spend cap is configured and verified
+MEM0_PROVIDER_SPEND_LIMIT_CONFIRMED=false
+
 # App
 APP_URL=https://your-frontend-domain.com
 CORS_ORIGINS=https://your-frontend-domain.com
@@ -386,9 +390,12 @@ CORS_ORIGINS=https://your-frontend-domain.com
 # Redis (required in production)
 REDIS_URL=redis://your-redis:6379
 
-# Optional but recommended
+# Optional; leave disabled until reviewed. Only latest-version arXiv PDFs
+# whose OAI arXivRaw record reports exact CC BY 4.0 or CC0 1.0 are eligible.
+PUBLIC_PAPER_EVIDENCE_ENABLED=false
+
+# Optional; direct chat-provider keys do not enable chat fallback while spend metering is enforced
 ANTHROPIC_API_KEY=<your key>
-FIRECRAWL_API_KEY=<your key>
 MEM0_API_KEY=<your key>
 
 # Optional
@@ -566,24 +573,19 @@ Production rate limits are applied by `slowapi`:
 | Endpoint | Limit |
 |----------|-------|
 | `/api/search` | 10 req / minute |
+| `/api/papers/{paper_id}/public-evidence` | 3 req / minute |
 | `/api/stream/*` | 20 req / minute |
 | All others | 60 req / minute |
 
 These limits are **per IP address** by default (using `get_remote_address`). Behind a reverse proxy, ensure `X-Forwarded-For` is being forwarded correctly, or adjust the key function in `backend/middleware/rate_limit.py`.
 
+`PUBLIC_PAPER_EVIDENCE_ENABLED` defaults to `false`. When enabled, the authenticated endpoint serves at most five exact, relevant native-text sentences for a paper only after its stored version matches the latest `arXivRaw` OAI version and the OAI record reports the exact CC BY 4.0 or CC0 1.0 license URI. Unknown/other licenses and ambiguous version/license metadata fail closed. PDFs and excerpts are not persisted; requests have 15-second HTTP timeouts, 20 MiB PDF and 256 KiB OAI response caps, and redirects are rejected. Production uses a Redis-backed global three-second request gate shared with the existing arXiv API search path. Keep the feature disabled until staging confirms OAI metadata parsing, exact-version resolution, PDF extraction, rate limiting, and logs do not capture excerpt text.
+
 ### LLM Cost Management
 
-LLM API calls are the primary cost driver. Mitigation strategies already implemented:
+Chat attempts use the dated OpenRouter price registry and service-only spend ledger. Configure positive `LLM_DAILY_SPEND_CAP_USD_MICROS` and `LLM_MONTHLY_SPEND_CAP_USD_MICROS` values; the API reports model availability only when the provider, database RPCs, and meter are ready. OpenAI embedding attempts are metered from returned token usage. Missing or ambiguous provider usage retains a reservation for reconciliation. These controls are implemented locally but still require staging concurrency, failure-recovery, and invoice-reconciliation checks before enabling synthesis or plan execution.
 
-1. **Caching** — Paper summaries and embeddings are cached in Supabase
-2. **Tiered models** — Fast/cheap models for pre-filtering (GPT-4o-mini), expensive models only for final summaries (Claude Sonnet)
-3. **Token limits** — `max_tokens=4096` on all LLM calls
-4. **Model selection** — Users can choose cheaper models via the ModelSelector
-
-Additional production safeguards to consider:
-- Set spending limits on your OpenRouter account
-- Monitor per-user API usage and set caps
-- Batch summary generation in off-peak hours (already supported via `daily_fetch.py`)
+Configure provider-side billing alerts and hard limits as a separate safeguard. Mem0 calls are not covered by the ledger and must remain unavailable unless a provider-side spend limit is confirmed. OpenRouter platform/credit fees and Resend email delivery are also outside model inference metering and need separate provider-side monitoring.
 
 ---
 

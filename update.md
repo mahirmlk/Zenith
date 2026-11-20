@@ -67,7 +67,7 @@ The supplied `ARCHITECTURE.md` describes:
 - Next.js 15 + TypeScript, Tailwind, React Query, Zustand, Three.js.
 - FastAPI, Supabase Auth/JWT, Redis-backed run state/rate limiting, SSE.
 - LangGraph with sequential `Research → Summary → Memory` nodes.
-- arXiv, Hugging Face Daily Papers, Firecrawl, Semantic Scholar, Papers With Code, Mem0, OpenRouter, direct-model fallbacks.
+- arXiv, Hugging Face Daily Papers, Semantic Scholar, Papers With Code, Mem0, OpenRouter, and direct-model fallbacks; Firecrawl is disabled in the current runtime.
 - Supabase tables `papers`, `user_papers`, `user_prefs`, `citations`, `crawled_content`; pgvector embeddings.
 - Fly.io backend + scheduled ingestion; Vercel frontend; CI described as manual-dispatch.
 
@@ -612,9 +612,9 @@ The following paths are **candidates from the architecture**. Verify actual loca
 | `backend/services/llm_router.py` | Model capability registry, privacy/cost policy, verified fallbacks |
 | `backend/services/embeddings.py` | Versioned embeddings, batch caching, tenant-aware search |
 | `backend/services/ingestion.py` | Incremental jobs, metadata versions, parsing, provenance and idempotency |
-| `backend/services/firecrawl.py` | Safe external fetching, SSRF defenses, source rights and cache versioning |
+| `backend/services/firecrawl.py` | Hosted fetch and legacy cache access fail closed until redirect and egress controls exist |
 | `backend/services/semantic_scholar.py` | Citation metadata validation, rate-limit handling, missing-data states |
-| `backend/services/papers_with_code.py` | Audit availability; replace/fallback if stale; remove dead endpoints |
+| `backend/services/github_repositories.py`, `backend/routers/paper_code.py` | Search public GitHub repo metadata by paper identifiers; preserve unverified-candidate labeling |
 | `backend/services/supabase_client.py` | Scope privileged client usage; authorization-safe queries |
 | `backend/services/observability.py` | Traces, privacy redaction, metrics and eval tags |
 | `frontend/lib/api.ts` | Typed API contracts, idempotency headers, auth-aware streaming |
@@ -1019,6 +1019,8 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
 
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
 ### §24.15 Synthesis rollout gate (2026-11-13)
 
 - [x] Added backend-owned `RESEARCH_SYNTHESIS_ENABLED`, defaulting to false, and an authenticated minimal capabilities endpoint. The API rejects synthesis while disabled before reading project or source data; the UI only exposes the mode when the backend reports it enabled.
@@ -1139,3 +1141,311 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Staging gates: verify concurrent reservations and both budget ceilings; repeated callbacks/settlements; actual provider fallback pricing; retry, timeout, cancellation, worker-crash/restart and unknown-usage behavior; UTC day/month boundaries; service-only database access; migration rollback; and reconciliation of recorded usage/cost against provider invoices or authoritative usage reports. Configure provider-side billing alerts/limits as a separate safeguard. No invoice-reconciled implementation or staging evidence exists at this audit.
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.26 Current model lifecycle and provider routing (2026-11-13)
+
+- [x] Re-audited the selectable model catalog against provider lifecycle documentation. Anthropic retired Claude Opus 4 and Sonnet 4 on 2026-06-15; defaults now use currently active Claude Opus 5.5 / Sonnet 5.5 OpenRouter IDs, with native direct-provider IDs `claude-opus-5-5` and `claude-sonnet-5-5` ([Anthropic lifecycle](https://docs.anthropic.com/en/docs/about-claude/model-deprecations), [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)). Google shut down Gemini 2.0 Flash on 2026-06-01; the selectable/default fast model now uses `google/gemini-3.6-flash` ([Gemini model status](https://ai.google.dev/gemini-api/docs/models/gemini-2.0-flash), [current Gemini models](https://ai.google.dev/gemini-api/docs/models)).
+- [x] Removed the retired Mistral Large 2 alias (`mistral-large-2407`) from the selectable catalog; Mistral lists it as retired and recommends Large 3 for new integrations ([Mistral Large 2 lifecycle](https://docs.mistral.ai/models/mistral-large-2-0-24-07)). Gemini 2.5 Pro was also removed pending confirmed access for new projects. Old persisted selections fail model validation; the server does not silently remap retired or unavailable IDs.
+- [x] Fixed namespaced provider routing: OpenRouter is the only chat route because the shared spend meter requires authoritative usage/cost metadata. Direct provider chat helpers are removed; missing OpenRouter configuration fails closed instead of falling through to another provider. The effective `/api/models` contract is completed in §24.27.
+- [x] Anthropic requests omit the `temperature` parameter, including OpenRouter requests, because Anthropic removed it from current API versions ([Anthropic parameter lifecycle](https://docs.anthropic.com/en/docs/about-claude/model-deprecations)). Other supported providers retain their configured temperature.
+- [x] Focused backend routing/catalog tests: 13 passed. Full current local backend suite passes 349 with 6 skipped; strict mypy passes across 80 application source files and Ruff passes. Frontend suite passes 65 tests across 11 files with lint/typecheck passing. The production build completes all 13 static pages and route traces using an isolated `NEXT_DIST_DIR`.
+- [ ] OpenRouter live calls, actual provider usage metadata, configured Auth, and model availability remain staging checks. The local build warns because Supabase public URL/key are absent from this environment. See [docs/STATUS.md](docs/STATUS.md) for migration, staging, CI, spend-metering, and product-quality gates.
+- [ ] Revalidate the selected catalog against provider lifecycle changes before each release and confirm configured account access and actual provider usage/charges in staging. The local constructor tests do not establish live credentials or model availability.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.27 Provider spend metering implementation (2026-11-13)
+
+- [x] Added a versioned OpenRouter pricing snapshot (`openrouter-models-2026-11-13`) sourced from [`/api/v1/models`](https://openrouter.ai/api/v1/models). Prices are USD/token and converted with decimal ceiling to integer USD micros. Model IDs absent from the verified snapshot, including DeepSeek R1 in this snapshot, are unavailable. OpenRouter requests set provider `max_price` from the snapshot; catalog reservation uses the enforced serialized-message UTF-8 byte bound plus framing and output ceiling.
+- [x] All chat attempts now use OpenRouter and the shared meter. Summary application retries reserve unique attempts; both synthesis stages, including direct synthesis and plan synthesis, carry subject/run/operation identity. Chat SDK retries are disabled; application retries are metered. `/api/search` rejects submissions if OpenRouter, positive per-subject UTC caps, service-role storage, or migration 0023 is unavailable. `/api/models` reports `{available, default_model, models}` and returns an empty list/null default unless the complete admission prerequisites are configured.
+- [x] Raw OpenAI embeddings are separately metered on each retry using returned token usage and the dated OpenAI `text-embedding-3-small` price snapshot ([OpenAI model pricing](https://developers.openai.com/api/docs/models/text-embedding-3-small)). Memory-agent calls are user/run scoped; scheduled ingestion and operator jobs use `system`. Mem0 model-backed reads/writes fail closed until `MEM0_PROVIDER_SPEND_LIMIT_CONFIRMED=true`; account export reports memories withheld when credentials exist without this confirmation. Account deletion anonymizes ledger subject/run/operation identifiers and its 9-step RPC changes are reversible.
+- [x] Migration 0023 adds a service-only per-attempt ledger, atomic UTC daily/monthly reserve RPC, idempotent settlement/reference/unknown RPCs, a meter readiness probe, over-budget settlement state, and rollback. `usage.cost` plus token/model metadata is preferred; OpenRouter metadata response endpoints identify the selected provider. Generation lookup is retried briefly when a valid `gen-*` ID is available. Missing metadata, timeout, settlement/store failure, or provider-reference lookup failure retains the reservation for reconciliation. Rows with no provider ID require manual OpenRouter Activity review.
+- [ ] Configure positive `LLM_DAILY_SPEND_CAP_USD_MICROS` and `LLM_MONTHLY_SPEND_CAP_USD_MICROS` for the desired per-user and `system` limits, apply migration 0023, and run Postgres concurrency/idempotency/day-boundary tests in staging. Reconcile ledger totals against OpenRouter/OpenAI invoices and usage reports before enabling model-backed synthesis or plan execution. OpenRouter credit-purchase/platform fees are outside per-request inference usage and remain a separate reconciliation category; no account-plan fee factor is invented.
+- [x] Local validation after metering integration: full backend suite 349 passed / 6 skipped; focused routing/catalog/migration and spend-meter tests pass; Ruff and strict mypy pass. Frontend suite 65 passed across 11 files; lint/typecheck pass; production frontend build generated all 13 pages and standalone traces using `NEXT_DIST_DIR=.next-release-check`.
+- [ ] Live provider metadata, SQL RPC concurrency/recovery, migration application/rollback, invoice reconciliation, provider-side billing limits, and platform-fee reconciliation remain unverified without staging services. Keep model-backed synthesis and plan execution disabled until these gates pass.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+### §24.28 Summary provenance and API wire normalization (2026-11-13)
+
+- [x] Added `summary_status` (`generated`, `abstract_preview`, `unknown`) and a bounded `summary_fallback_reason` to the Paper API/database contract through migration 0024 and its rollback. Existing rows default to `unknown`; no historical text is inferred to be model-generated.
+- [x] Summary status becomes `generated` only after metered provider settlement and output validation. Spend-limit, billing-service, provider, invalid-output, and per-run-cap fallbacks carry distinct reason codes, omit model-derived difficulty, and remain explicitly marked as abstract previews.
+- [x] The frontend now normalizes backend snake_case Paper/search/SSE payloads into its camelCase view model. Feed, saved-paper, detail, and streamed search routes share the mapper. Cards and detail pages label generated summaries, abstract previews, fallback reasons, and legacy unknown provenance; papers without summary content do not receive an empty status block.
+- [x] Local validation: full backend suite 349 passed / 6 skipped, Ruff and strict mypy passed; frontend suite 65 passed across 11 files, lint/typecheck passed, and production build completed all 13 pages and standalone traces. Added backend fallback/migration/orchestrator and frontend API/SSE/UI regression tests.
+- [ ] Apply migration 0024 and verify legacy defaults, stored preview/generated statuses, and frontend/API behavior against staging. Product-wide release blockers remain as listed in [docs/STATUS.md](docs/STATUS.md).
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for verified local evidence and release gates.
+
+
+### §24.29 PDF-aware comparison sources and paper-detail error handling (2026-11-13)
+
+- [x] `/api/research/compare` and durable plan execution now return additive `pdf_comparisons` rows grouped by uploaded document. Dimension fields contain the exact selected sentence, page citation, page number, and page-local offsets. Existing heuristic paper rows remain unchanged. Documents stay separate because the schema does not connect them to individual papers; unsupported dimensions remain null. Public comparison requests return no PDF rows.
+- [x] The project workspace and plan-execution result panel render those PDF fields as independent cited sources and retain the existing abstract paper table and general PDF evidence list.
+- [x] Paper detail now distinguishes true 404s from authentication/access/network/server errors. Authentication errors link to sign-in; transient errors offer retry and feed navigation. Added regression tests for 404, 401, 503, and retry success.
+- [x] Updated the synthesis evaluation fixtures to mock the metered invocation boundary and provide a billing identity, keeping deterministic evaluations independent of live database credentials.
+- [x] Local validation: backend 352 passed / 6 skipped; frontend 69 passed across 12 files; Ruff, strict mypy (80 source files), frontend lint/typecheck, `grounded_qa_v3` (18/18), `pdf_evidence_v1` (6/6), `cross_paper_synthesis_v1` (3/3), `research_plan_v1` (5/5), `watchlist_notifications_v1` smoke gate, and production frontend build passed. The build emitted the expected warning because local Supabase public configuration is absent.
+- [ ] Migration/RLS staging, provider billing and invoice reconciliation, backup restore, live invite/notification delivery, current-head CI, monitoring, human-calibrated synthesis/watch quality, retraction/withdrawal/benchmark alerts, and complete project account discovery remain release gaps; see [docs/STATUS.md](docs/STATUS.md).
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for external release gates and remaining product scope.
+
+### §24.30 Locked backend dependencies and build inputs (2026-11-13)
+
+- [x] Generated `backend/uv.lock` for Python 3.12+ with 164 exact package resolutions and artifact hashes; pinned uv 0.12.7 in `pyproject.toml`. `uv lock --check --offline` passed after resolution; `uv export --locked --no-dev --no-emit-project` produced a hash-pinned runtime requirements set.
+- [x] CI now installs the pinned uv version and syncs/tests/evaluates with `--locked`. The production backend Dockerfile uses the pinned official uv image, syncs runtime-only locked dependencies into a virtual environment, and carries only that environment to the runtime stage. `backend/.dockerignore` now excludes local uv caches and tests.
+- [x] Updated contributor, developer, README, and Makefile installation/check commands to use the committed lock and `npm ci`.
+- [x] Locked Python 3.12 environment installed successfully; backend suite passed (352 passed, 6 skipped), Ruff/mypy passed, and deterministic evals passed (18/18 grounded QA, 6/6 PDF, 3/3 synthesis, 5/5 plan, plus watchlist smoke).
+- [ ] Docker image build could not be verified because Docker Desktop's Linux engine is unavailable. Current-head GitHub CI has not run; production staging and provider/database behavior still need verification.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) and [plans/code-inspection-plan.md](plans/code-inspection-plan.md).
+
+### §24.31 DOI-based Crossref publication-status watches (2026-11-13)
+
+- [x] arXiv ingestion now stores source DOI metadata. The Crossref provider validates the requested DOI and returned record, accepts only deposited `retraction`, `partial_retraction`, `withdrawal`, `removal`, and `expression_of_concern` relations, bounds relation count and request timeout, and preserves publisher-provided notice DOI, label, type, and date.
+- [x] Added migration 0025 and rollback for DOI/update provenance, an RLS-protected per-user paper-status watch table, and per-user notification idempotency keys. Paper detail exposes opt-in/opt-out controls and labels any Crossref notice with its source and linked DOI. Scheduled ingestion checks at most 100 watches per run with five concurrent lookups; provider failures preserve the last verified state and retry after a six-hour backoff.
+- [x] Local focused validation: Crossref parsing, provider failure/mismatch, watch isolation, retry/persistence/idempotency, arXiv DOI, duplicate-DOI propagation, and migration assertions passed. The current complete backend suite passes 381 tests with 6 skipped; Ruff and strict mypy pass across 82 source files. Frontend validation passes 71 tests across 12 files, lint/typecheck pass, and the production build generated all 13 static pages (15 routes reported).
+- [ ] Apply migration 0025 in staging; verify direct RLS, rollback, Crossref response/coverage, provider timeouts/rate limits, user opt-in/out, distinct notice delivery and recovery. Crossref data depends on publisher/member deposits: empty metadata is not evidence of no update. This slice does not complete benchmark changes, author/citation version changes, project-value explanations, or human-calibrated alert quality. See [Crossref REST API](https://www.crossref.org/documentation/retrieve-metadata/rest-api) and [Crossmark update types](https://support.crossref.org/hc/en-us/articles/115000108983-Getting-started).
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for external release gates and remaining product scope.
+
+### §24.32 Spend-ledger privilege hardening (2026-11-13)
+
+- [x] Removed direct `service_role` SELECT/INSERT/UPDATE grants on `model_spend_ledger`. Metering and deletion code already use the `SECURITY DEFINER` RPC contract; direct table writes could bypass atomic reservation, settlement, and idempotency rules.
+- [x] Added migration 0026 to revoke all direct table privileges for fresh or previously migrated environments, added the `(subject_id, created_at)` index used by UTC cap accounting, strengthened static migration assertions, and documented forward-only ACL behavior and 0023–0025 rollback preconditions.
+- [ ] Apply and verify migration 0026 in staging: `service_role` must be denied direct SELECT/INSERT/UPDATE/DELETE while authorized RPCs continue to work; inspect function ownership/bypass behavior on the target Supabase project. No live database is configured in this workspace.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for staging, CI, and product-quality gates.
+
+
+
+### §24.33 Maintained public code-repository discovery and provider bounds (2026-11-13)
+
+- [x] Replaced the Papers With Code HTTP dependency with the documented GitHub REST repository search endpoint. Searches use a DOI or arXiv identifier when available and otherwise a sanitized title; the query is restricted to `is:public`, returns at most ten validated `github.com` URLs, and never labels a match official.
+- [x] Preserved `/api/papers/{paper_id}/code` and implementation-plan response compatibility, renamed the route/service modules, added optional `GITHUB_TOKEN` documentation, a short public-result cache, bounded HTTP timeout, and endpoint request limits.
+- [x] Added source tests for query selection/sanitization, public-only enforcement, URL filtering, optional token use, upstream failure, and candidate provenance. Summary provider calls now pass a 30-second application timeout; timeouts retain unknown spend reservations under the metering contract. Full backend validation passes 381 tests with 6 skipped; all 82 source files pass Ruff and strict mypy; frontend validation passes 71 tests, lint, and typecheck.
+- [ ] Verify public GitHub search quota/latency and repository relevance with a configured deployment token, and review candidate precision with human labels. Verify provider timeout/retry behavior and spend accounting in staging before enabling model-backed features.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for staging, CI, and product-quality gates.
+
+### §24.34 Durable account-deletion lease renewal (2026-11-13)
+
+- [x] Added service-only migration 0027 with an owner-bound lease-renewal RPC that refuses renewal after lease expiry and bounds requested lease duration. The deletion worker renews a 600-second lease every 200 seconds while cleanup is in progress; failed renewal cancels the worker so another replica cannot overlap destructive steps.
+- [x] Added a failure-injection test proving cleanup stops when lease renewal fails, a migration/RPC boundary assertion, and a rollback script with stop-worker preconditions. The current full backend suite passes 381 tests with 6 skipped; Ruff and strict mypy pass across 82 source files.
+- [ ] Apply migration 0027 in staging and exercise multi-replica renewal, expiry, wrong-owner, renewal-RPC outage, cancellation, and long-running external cleanup behavior. The live worker/recovery behavior remains unverified without staging services.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for staging, CI, and product-quality gates.
+
+### §24.35 Project-linked watch relevance hints (2026-11-13)
+
+- [x] Project-linked watch notifications now carry a separate, optional relevance hint when the candidate title/abstract shares at least two distinctive words with the project title or one of up to 20 attached paper titles. The text names the observed terms and reference title and explicitly says this is not a scientific-importance assessment.
+- [x] Project context is read only while the watch owner remains the project owner/member and the project is active. Deleted projects, revoked members, absent references, insufficient overlap, and project-read failures leave the hint empty; the independently valid watch alert still goes through.
+- [x] Added additive migration 0028 and rollback, API type/UI rendering, ingestion/migration tests, and runbook coverage. This closes the local feature gap for observable project relevance; human-calibrated relevance/alert-quality evaluation and live RLS/provider behavior remain release gates.
+- [x] The current backend suite passes 386 tests with 6 skipped, including async project-linked watch integration. Migration assertions and pure relevance tests pass (25 tests); Ruff and strict mypy pass across all 82 source files. Frontend suite passes 71 tests; lint and typecheck pass.
+- [x] A fresh production frontend build passed in an isolated output directory and generated all 13 static pages. The local build warns that public Supabase Auth values are absent.
+- [x] Current deterministic evals pass: 18/18 grounded QA, 6/6 PDF evidence, 6/6 synthesis-contract, and 5/5 research-plan cases. These remain smoke/contract checks, not expert validation of scientific correctness.
+- [ ] Apply migration 0028 in staging and verify membership revocation, deleted projects, source bounds, notification visibility, rollback, and representative false-positive/false-negative rates with human labels. Do not treat lexical overlap as project value or scientific significance.
+
+### §24.36 Existing-account project invitation inbox (2026-11-14)
+
+- [x] Email invitations now handle existing Auth accounts without requiring the inviter to know a user UUID. The invite remains pending, owners can copy a pending acceptance link to share, and the recipient can accept from the projects page while signed in with the current Auth-confirmed email; membership still flows through the existing atomic verified-email RPC.
+- [x] Added a bounded inbox query scoped to that verified email. It omits expired invites and deleted projects, returns only project title/role/expiry needed for acceptance, and leaves the database invitation row service-role-only. Owner-facing create/list/resend responses no longer expose email delivery timestamps that could reveal whether an address already has an account.
+- [x] Added regression coverage for existing-account invite handling, generic provider failure, verified-email isolation, expired/deleted-project exclusion, unauthenticated email exclusion, frontend acceptance, and copy/open invitation links. Full local backend suite passes 389 tests with 6 skipped; Ruff passes, strict mypy passes across 75 application files and the eval runner, frontend passes 72 tests across 13 files with lint/typecheck green, and the fresh production build generated all 13 static pages.
+- [ ] Verify migration 0014/RLS, existing-account inbox access, new-account Auth invitation delivery, email changes, unverified accounts, expiry/revoke races, and role preservation against staging. The project roster continues to show UUIDs; no global account directory is exposed. This improves invite onboarding but does not verify all collaboration UX or live email delivery.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for staging, CI, provider, recovery, and quality gates.
+
+### §24.37 Reliable repository lint and format entry points (2026-11-14)
+
+- [x] Added the missing aggregate `make lint` and `make format` targets, included all declared targets in `.PHONY`, and made frontend lint invoke the TypeScript typecheck so the local aggregate matches the CI checks. Backend formatting now runs both Ruff autofixes and Ruff formatting.
+- [ ] The Windows environment used for this review does not have GNU Make installed, so Make target execution could not be verified here. The equivalent backend/frontend checks were run directly and passed in §24.36.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for staging, CI, provider, recovery, and quality gates.
+
+### §24.38 Product plan and changelog aligned with runtime (2026-11-14)
+
+- [x] Replaced the stale scaffold-era `PLAN.md` with a current capability summary and a staged roadmap that links to the runtime architecture and evidence-backed release status. It distinguishes implemented local behavior from partial product scope and external verification gates.
+- [x] Updated the unreleased changelog to reflect the current OCR, provisional synthesis, gated plan execution, spend metering, Crossref watches, email/invitation flows, and their documented limits. Removed claims that OCR and synthesis are unavailable.
+- [x] Checked every local Markdown link in both files and ran `git diff --check` on the documentation and Makefile changes; checks passed.
+- [ ] Current-head CI, staging/runtime verification, remaining product-quality scope, and all production release gates in [docs/STATUS.md](docs/STATUS.md) remain open.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for external gates and remaining product scope.
+
+### §24.39 Crossref notice deposit provenance (2026-11-14)
+
+- [x] The Crossref parser now preserves the optional relation-level `source` value when it is `publisher` or `retraction-watch`; missing and unrecognized values remain null. This field is separate from the existing `publication_update_source='crossref'` registry field.
+- [x] Added nullable `publication_update_deposit_source` through migration 0029 and rollback, Paper API/type normalization, paper detail display, and notification text. Existing records remain unknown; the UI only labels the notice source when Crossref reports one.
+- [x] Backend Ruff and strict mypy pass for the changed services/schema. Thirty-three synchronous parser/migration tests pass; 8 async tests were deselected because pytest's Windows event-loop socket-pair setup stalls before the tests start. Frontend suite passes 73 tests across 13 files; lint and typecheck pass.
+- [ ] A fresh Next.js build compiled and generated all 13 static pages but failed standalone trace copying with Windows `EPERM`; run the production build in CI/Linux. Apply and verify migration 0029, live Crossref coverage, notice idempotency, and source display in staging. This provenance does not establish the correctness of a notice or complete Crossref coverage.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for release blockers.
+
+### §24.40 Original uploaded PDF retention policy (2026-11-14)
+
+- [x] Product decision: discard original PDF bytes after bounded extraction. The upload route reads the bounded payload, closes the request file, and persists only document metadata plus project-scoped extracted page text; no object-storage copy is created. Existing export behavior returns only caller-authorized extracted page content.
+- [x] Recorded the policy in [PLAN.md](PLAN.md), [docs/STATUS.md](docs/STATUS.md), and [docs/security/DATA_HANDLING.md](docs/security/DATA_HANDLING.md). This resolves the original-file retention question; it does not resolve staging RLS, deployment verification, OCR runtime quality, or collaboration UX gaps.
+- [ ] Verify temporary upload cleanup, RLS, export/deletion cascade, and OCR behavior in staging. Keep the upload UI explicit that source bytes are not retained.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for remaining product and release gates.
+
+### §24.41 CI migration-test path correction (2026-11-14)
+
+- [x] Read current PR #3 CI run #56: frontend and Docker passed; backend Ruff/mypy passed, then 319 tests passed and 6 were skipped, with one failure. The failure used repository-root-relative migration paths while Actions' working directory is `backend/`.
+- [x] The current worktree resolves the migration and service files from `Path(__file__).resolve().parents[2]`; the failing CI test passes when run locally from the backend directory.
+- [x] Corrected two invalid regex-string escape warnings reported by that CI run. `tests/test_cors.py` passes all 9 tests with Python `SyntaxWarning` promoted to an error.
+- [ ] This test fix is uncommitted and has no remote CI result. PR #3 is still a draft; verify a successful full run on a remote commit before treating CI as green. No remote branch was changed in this step.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the remaining CI, staging, and product gates.
+
+### §24.42 Compose configuration validation (2026-11-14)
+
+- [x] `docker compose config --quiet` passes when run with a temporary empty root `.env`, matching CI's secret-free Compose validation setup. The temporary file was removed immediately afterward.
+- [ ] The local Docker engine is still unavailable, so the current worktree's images were not built locally. Run the Docker job on a remote commit containing these changes.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for remaining release gates.
+
+### §24.43 Shipment-readiness cross-check and crawl-cache identity (2026-11-14)
+
+- [x] Re-audited the current implementation against this file with parallel backend, frontend, and infrastructure reviews. The audit confirmed the documented partial scope: project annotations, saved searches, versioned briefs, and section/page-grounded public-paper evidence are not implemented; the current project PDFs remain separate extractive sources. Frontend route tests pass, but these roadmap capabilities are not shipment-complete.
+- [x] Fixed the migration runbook omission for 0029 and stale model-provider/cost guidance. Added migration 0030 to version the legacy Firecrawl cache schema with URL/parser identity. Hosted crawling is now fully disabled; cache reads/writes are also disabled. Added rollback, schema snapshot, tests, and runbook instructions.
+- [x] The backend and frontend now use fetch-based SSE with the short-lived token in `Authorization`, strict numeric `Last-Event-ID` cursors, bounded reconnects with fresh exchange tokens, and abortable cleanup. The backend rejects query-token authentication and includes the cursor header in CORS. Both Firecrawl entry points fail closed, report unavailable, and do not access the legacy cache. Deployment docs no longer ask operators to configure an unused Firecrawl key.
+- [x] Verification: frontend tests pass (73/73 across 13 files); backend migration and CORS tests pass (33/33); deterministic watchlist smoke eval completes; targeted cache identity tests, Ruff, strict mypy, and `git diff --check` pass. The new async cache integration cases and full backend batch could not complete in the Windows pytest environment because of the known event-loop socket-pair stall.
+- [ ] Apply migration 0030 and all prior migrations in staging; complete RLS, backup/restore, provider, billing, email, OCR, recovery, and monitoring checks. Keep Firecrawl crawling unavailable until redirect and egress controls are verified; verify deployed proxy Authorization-header redaction; obtain successful full CI on the current worktree. See [docs/STATUS.md](docs/STATUS.md).
+
+**Current status remains not production-ready.** No local test suite or static audit substitutes for staging, external-provider, and release-gate evidence.
+
+### §24.44 SSE bearer-header and cursor replay (2026-11-15)
+
+- [x] Replaced the EventSource query-token flow with authenticated fetch streaming. Stream tokens are sent only in the Authorization header; the backend rejects query-only auth. The UI preserves the latest sequence across its bounded retries and requests a fresh five-minute SSE token for each connection.
+- [x] Added strict nonnegative ASCII cursor parsing, replay-after-cursor behavior, terminal-event deduplication, `Last-Event-ID` CORS support, incremental SSE parsing for split CRLF/multiline frames, and synchronous abort cleanup during session exchange or streaming.
+- [x] Local verification: the full frontend suite passes (79 tests across 13 files), with lint and TypeScript typecheck green. Backend Ruff, strict mypy for `routers/stream.py`, and CORS plus migration checks (35 tests) pass. Ten pure cursor-parser tests also pass with pytest-asyncio disabled. The ASGI endpoint and async replay test batch still stalls in this Windows sandbox; manual endpoint/proxy verification and remote CI remain outstanding. The frontend production build compiled and generated 13 static pages but Windows failed standalone trace copying with `EPERM`, so it is not counted as a successful build.
+- [ ] Verify stream endpoint integration, retry/replay with real shared Redis/Postgres across replicas, and Authorization-header redaction in staging/proxy logs; obtain full current-head CI. Keep the hosted Firecrawl crawl helper unavailable until its remote redirect behavior can be constrained and verified.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.45 Crawl shutdown and backend app startup fixes (2026-11-15)
+
+- [x] Closed the legacy-cache bypass: `crawl_paper_cached()` now fails before cache access, `is_available()` always returns false, and the unused Firecrawl API key setting/example and SDK construction path were removed. Deployment, developer, flow, schema, and baseline-audit docs now describe the retained cache as legacy and inactive. The SDK dependency remains declared and locked because lock regeneration needs unavailable package-index artifacts; it is not imported or invoked by application code.
+- [x] Focused test import exposed SlowAPI startup errors for new rate-limited paper status-watch and repository-code handlers. Added FastAPI `Request` parameters to those handlers. Focused Firecrawl tests pass (4/4); repository-wide Ruff and strict mypy on the changed routes/services pass; app import succeeds through pytest collection.
+- [ ] Run the full backend suite and current-head CI, then complete staging migrations, RLS/provider/deployment/recovery verification. The full local pytest run and focused watch/repository tests produced no output for 120 and 60 seconds respectively in the Windows runner and were stopped. `asyncio.run(asyncio.sleep(0))` also hangs in this environment, confirming the async test blockage is runner-level but leaving application async integration unverified. The local production build still fails Windows standalone trace copying with `EPERM`; Docker and staging services remain unavailable.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.46 Release documentation and selectable model pricing alignment (2026-11-15)
+
+- [x] Reconciled stale migration ranges in `PLAN.md`, `README.md`, and the LangGraph checkpointer note with migrations 0001–0030. Updated the README and CHANGELOG release snapshots to the latest verified CI/frontend/build state and corrected security/data-flow descriptions to reflect that user-controlled URL fetching is disabled and legacy crawl rows remain inactive.
+- [x] Removed DeepSeek R1 from the selectable model registry and TypeScript model union because the verified spend-price catalog has no bound for it. `validate_model()` now also rejects any registry entry without a verified price, preventing future catalog drift from reaching preferences or search admission.
+- [x] Verification: backend model-router tests pass (13/13); frontend ModelSelector tests pass (4/4); repository-wide Ruff passes; strict mypy on the changed router passes. Fresh audits found no additional unpriced registry entries.
+- [ ] Full async backend tests remain unverified because this Windows Python 3.13 runner hangs on even `asyncio.run(asyncio.sleep(0))`; obtain Linux CI, stage all migrations and integrations, and complete the remaining scope and operational release gates.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.47 Source-anchored project annotations (2026-11-15)
+
+- [x] Added project annotations anchored to exact attached-paper abstract or extracted PDF page text. The API validates the selected text slice and stores a SHA-256 fingerprint; list responses identify stale anchors; updates can change annotation content but cannot move the source anchor.
+- [x] Enforced owner/editor writes and member reads in the API and migration 0031 RLS. Composite foreign keys bind paper/document sources to the same project. Account export includes annotations, and account deletion removes caller-created annotations from shared projects.
+- [x] Added project workspace UI for creating annotations from abstract/PDF evidence, listing citations/stale state, and editing/deleting for writers. Frontend workspace tests pass (15/15), and TypeScript typecheck passes. Migration static assertion passes (1/1).
+- [ ] Backend async endpoint tests remain unverified: pytest hangs in the local Windows event-loop setup; no live Supabase project is configured for applying migration 0031 and testing owner/editor/viewer/outsider RLS. Verify staging before release.
+
+**Current status remains not production-ready.** Project saved searches, versioned briefs, public-paper page-grounded evidence, CI on the current head, and service-backed release gates remain open. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.48 Project-scoped saved searches (2026-11-15)
+
+- [x] Added personal and project-scoped saved-search configurations through migration 0032 with rollback. Project scope and creator identity are immutable at the database layer; project members can read/run, project creators can manage their own while members, and owner/editor roles can manage all project searches. Personal searches are creator-only.
+- [x] Added authenticated list/create/read/update/delete/run API routes. Each explicit run revalidates project membership and starts a new metered search with a fresh idempotency key; results are not stored on the saved-search row. Model choices are validated against the spend-priced registry.
+- [x] Added project workspace UI for creating, editing, deleting, and running saved searches, with streamed progress/results and role-aware controls. Personal searches do not appear in the project panel. Frontend workspace tests pass (17/17), ESLint on changed files passes, and TypeScript typecheck passes. Backend Ruff, strict mypy on changed modules, saved-search schema validation, and migration static tests pass.
+- [ ] Backend async route tests are authored but blocked by the local Windows event-loop hang. Migration 0032, RLS, repeat-run behavior, quotas and provider spend still need staging verification. Watchlists remain recurring subscriptions with alert cadence, not saved searches.
+
+**Current status remains not production-ready.** Versioned briefs, public-paper page-grounded evidence, CI on the current head, and service-backed release gates remain open. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.49 Versioned project briefs and lazy-router rate limits (2026-11-15)
+
+- [x] Added project brief metadata and immutable user-authored versions with exact abstract/PDF-page source snapshots, quote/source/content SHA-256 fingerprints, expected-version concurrency checks, and clear manual authorship provenance. Migration 0033 adds member-read RLS, revoked direct mutation grants, and service-only RPCs that recheck owner/editor role and exact source text. Brief creation/version append are atomic; stale writes return 409.
+- [x] Added authenticated list/create/read/version APIs, source citation capture from project evidence, history/conflict UI, project/account export, and deletion handling. Migration 0033 includes rollback and runbook verification steps. Original PDF bytes remain discarded; snapshots refer to extracted page text and do not claim model-generated correctness.
+- [x] Fixed rate-limit registration for current FastAPI lazy-included routers. `apply_rate_limits()` now recursively finds included APIRoutes so configured SlowAPI limits apply after router inclusion. New brief mutations are limited to 20/minute. Regression tests cover direct and included-router mutations.
+- [x] Verification: full frontend suite passes (86 tests across 14 files), lint and typecheck pass. Backend Ruff and strict mypy pass on changed modules; rate-limit tests pass (2/2), focused migration/contract checks pass (5/5), migration 0033 static assertions pass, and app import plus wrapped-route inspection pass.
+- [ ] Async brief route/account-export tests remain unverified because the local Windows runner hangs during asyncio setup. Migration 0033/RPC/RLS and rollback have not been applied or exercised against staging; obtain full CI on the current branch and complete the migration, tenant-isolation, concurrency, backup/restore, and operational checks before release.
+
+### §24.50 Current production-build and CI evidence refresh (2026-11-15)
+
+- [x] Re-audited the current requirements in §§24.47–24.49 against backend routes, frontend clients/workspace UI, migrations 0031–0033, rate-limit registration, and related tests. Those local features are present; the remaining unchecked items are staging, async CI/runtime, data-source, and human-calibrated quality gates.
+- [x] Re-ran the default frontend production build with `CI=1`: compilation, TypeScript validation, and all 13 static pages passed, but standalone trace collection failed with Windows `EPERM` creating a nested `.next/standalone` directory. A clean alternate `NEXT_DIST_DIR` attempt failed during trace copying too. One retry passed after pre-creating its failing directory, but this was not reproducible and does not count as a successful build. Generated `next-env.d.ts` and `tsconfig.json` drift was restored.
+- [x] Read PR #3 checks for exact remote head `63f2f18d17a182cbce84b513b685d8f743bf9130`. Frontend and Docker checks passed; backend Ruff/mypy passed, then pytest reported 319 passed, 6 skipped, and one migration-path failure. The local test now resolves paths from `__file__`; the focused test passes from both repository root and CI's `backend/` working directory. The fix is uncommitted and has no remote CI result.
+- [x] Current repository-wide backend Ruff and strict mypy pass locally; mypy checked 84 source files. Full async integration tests remain unverified in this Windows runner.
+- [x] Current frontend suite passes again: 86 tests across 14 files. Direct synchronous evaluation slices pass: 18/18 grounded QA, 6/6 PDF evidence, and 5/5 research-plan cases; watchlist smoke eval passes five cases (one incomplete source). The full evaluation runner stalls when it reaches the async synthesis fixtures in this Windows environment; the historical 6/6 synthesis result still needs current Linux CI revalidation.
+- [x] Updated [README.md](README.md), [docs/STATUS.md](docs/STATUS.md), and [plans/code-inspection-plan.md](plans/code-inspection-plan.md) to reflect the non-reproducible standalone trace failure and current CI evidence.
+- [ ] Release remains blocked: run clean production builds on Linux with configured public Auth values; publish a reviewed current worktree revision and obtain green current-head CI; exercise migrations 0001–0033, RLS, rollback, tenant isolation, provider behavior, spend reconciliation, recovery, backup/restore, and monitoring in staging. Public-paper full-text sourcing and broader human-reviewed research-quality evidence remain open.
+
+**Current status remains not production-ready.** Public-paper section/page-grounded evidence, current-head CI, staging migration/RLS, and provider/recovery/quality release gates remain open. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.51 Unrestricted production build and full local verification (2026-11-15)
+
+- [x] Ran the default Next.js production build outside the Windows sandbox with `CI=1` and telemetry disabled. It completed compilation, lint/type validation, all 13 static pages, and standalone trace collection. The sandboxed build still fails with `EPERM` during trace copying; this is an environment restriction, not a source/configuration workaround.
+- [x] Started the generated standalone server and smoke-tested `/`, `/feed`, `/projects`, and `/watchlists` over loopback; each returned HTTP 200. The server was stopped after the requests. Auth warned because `.env.local` has empty Supabase URL/key values.
+- [x] Ran the full backend suite outside the sandbox with provider credentials cleared. The first run exposed five stale direct-route test calls/fixtures; corrected them without weakening quote integrity or authorization assertions. The complete rerun passes **425 tests, 6 skipped**. Repository-wide Ruff and strict mypy pass (84 source files).
+- [x] Re-ran frontend tests (**86/86**) and the full deterministic eval runner outside the sandbox: grounded QA 18/18, PDF evidence 6/6, mocked-provider synthesis 6/6, and research plan 5/5. The watchlist smoke evaluation passes five cases, with one incomplete source excluded from recall.
+- [x] Updated [README.md](README.md), [docs/EVALUATIONS.md](docs/EVALUATIONS.md), [docs/STATUS.md](docs/STATUS.md), and [plans/code-inspection-plan.md](plans/code-inspection-plan.md) to reflect current local evidence.
+- [ ] Current-head remote CI still needs to run with the local test fixes; the remote head remains `63f2f18` and the worktree is uncommitted. Docker image build, production Supabase/Auth configuration, staging migrations 0001–0033, direct RLS/tenant-isolation checks, rollback/restore, provider spend reconciliation, live notifications/OCR, operational monitoring, public-paper section/page evidence, and human-reviewed scientific quality remain open before release.
+
+**Current status remains not production-ready.** Local build, full test, and deterministic eval evidence now pass, but remote CI and production service-backed gates are still open. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.52 PDF temporary-file cleanup and final cross-layer audit (2026-11-16)
+
+- [x] Confirmed the selected retention policy is already implemented: PDF bytes are read with a bounded limit, closed before extraction, and never persisted; only project-scoped metadata and extracted page text are stored. The UI tells users the original is not retained.
+- [x] Hardened cleanup so the upload stream closes in a `finally` path when authorization/content-type validation or reading fails. Added regression cases for rejected content types and read errors; focused PDF ingestion tests pass (17/17), and the complete backend suite passes (427 passed, 6 skipped).
+- [x] Ran parallel read-only backend, frontend, and release-infrastructure audits against this plan. They confirmed the current PDF policy and identified no release-safe way to infer reuse rights for arbitrary public-paper full text. Public-paper section/page evidence, expert-calibrated scientific quality, and fuller account discovery remain product gaps.
+- [x] Corrected release documentation to reconcile current local suite/build/eval results with historical CI run #56, and updated the migration range and evaluation baseline.
+- [ ] Production release remains blocked on a green current-head CI run, Docker build for the current revision, configured Auth/Supabase and staging services, migrations/RLS/rollback/restore verification, live provider and spend reconciliation, monitoring/recovery exercises, and the remaining product/quality scope. Do not mark production-ready based on local checks alone.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for the exact locally verified state and external release gates.
+
+### §24.53 CI workflow supply-chain hardening (2026-11-16)
+
+- [x] Pinned checkout, setup-python, and setup-node to full immutable commit SHAs for their verified releases. The already pinned setup-uv action remains pinned. Upstream references: [checkout v4.2.2](https://github.com/actions/checkout/releases/tag/v4.2.2), [setup-python v5.6.0](https://github.com/actions/setup-python/releases/tag/v5.6.0), and [setup-node v4.4.0](https://github.com/actions/setup-node/releases/tag/v4.4.0).
+- [x] Set the workflow token to read-only repository contents and cancel superseded workflow runs for the same branch or pull request.
+- [ ] Validate this workflow on the current remote head. The existing references preserve the current action majors; evaluate Node 20 action-runtime migration separately before changing majors.
+
+**Current status remains not production-ready.** A local workflow edit does not replace current-head CI evidence or the staging and product-quality gates in [docs/STATUS.md](docs/STATUS.md).
+
+### §24.54 Version- and license-gated public arXiv page evidence (2026-11-16)
+
+- [x] Implemented authenticated `GET /api/papers/{paper_id}/public-evidence` and capability-gated paper UI. The service validates the stored paper ID/arXiv ID/version relationship, checks the latest `arXivRaw` OAI record, allows only exact CC BY 4.0 or CC0 1.0 license URIs, and returns at most five exact native-text page sentences with page-local offsets, source/license links, and attribution. Unknown/ambiguous rights fail closed; stale or mismatched versions return a conflict.
+- [x] PDFs and excerpts are processed ephemerally and never persisted. OAI/PDF responses and request time are bounded, redirects and unsupported IDs are rejected, PDF parsing runs off the event loop, and a shared Redis owner-token gate serializes arXiv API traffic with at least three seconds between requests. Production fails closed if the shared gate is unavailable; development uses a process-local gate.
+- [x] Frontend only offers evidence search when the capability and validated arXiv ID/version are present. Unsupported sources, stale metadata, and denied reuse receive distinct guidance. The feature remains disabled by default. Docs, API schemas, Paper metadata, environment examples, and deployment instructions were updated.
+- [x] Validation: focused backend tests 62/62; complete backend suite 450 passed / 6 skipped; Ruff and strict mypy passed (82 source files); frontend suite 97/97, lint and typecheck passed; production build generated 13 static pages and 15 routes. Deterministic evals passed: grounded QA 18/18, PDF evidence 6/6, mocked synthesis 6/6, research plan 5/5, and watchlist smoke 5 cases (one incomplete source excluded from recall). `git diff --check` passed.
+- [ ] Keep `PUBLIC_PAPER_EVIDENCE_ENABLED=false` until staging verifies live OAI version/license associations, allowed and denied licenses, exact-version PDF retrieval, shared Redis pacing under concurrent replicas, and excerpt/log/cache behavior. Current-head CI, Docker build, migrations/RLS/rollback/restore, configured production Auth, provider reconciliation, monitoring, and human-reviewed product-quality gates remain open.
+
+**Current status remains not production-ready.** This local feature and validation evidence do not replace staging or current-head CI. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.55 Production-gate re-audit and documentation consistency (2026-11-16)
+
+- [x] Rechecked current external state: PR #3 remains open/draft at `63f2f18`; the local worktree is also at `63f2f18` with uncommitted changes, so there is no reviewable remote revision containing the current code and no current-worktree CI evidence. The authenticated GitHub connector confirmed the PR state; local `gh` credentials are invalid and cannot start or inspect Actions runs.
+- [x] Docker Compose configuration parses with a temporary empty root `.env`. Docker CLI is present, but the Docker Desktop Linux engine pipe is absent, so no current image build or container runtime verification was possible.
+- [x] Reconciled stale test counts in README/release notes and corrected `docs/SCHEMA.md` so it identifies migrations `0001`–`0033` as the source of truth and labels `supabase/schema.sql` as an incomplete legacy baseline.
+- [ ] Production remains blocked on a current reviewed remote revision and green CI, Docker image/runtime validation, configured staging Supabase/Auth/Redis/Postgres/provider services, applying and verifying migrations/RLS/rollback/restore, live spend/provider/recovery checks, operational monitoring, and human-reviewed scientific and monitoring quality gates. These require external service state and review; local regression tests cannot substitute for them.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) and [plans/code-inspection-plan.md](plans/code-inspection-plan.md).
+
+### §24.56 Fresh release-state verification after goal resumed (2026-11-20)
+
+- [x] Rechecked current state rather than relying on the prior block: local and remote branch HEAD remain `63f2f18`; 155 paths are changed/untracked; PR #3 is still open/draft and last updated 2026-11-14. The connected GitHub integration can read PR metadata and reports only historical CI run #56; local `gh` auth remains invalid.
+- [x] Rechecked deployment configuration without exposing secret values: root/backend `.env` files are absent and `frontend/.env.local` has no required Supabase/Auth/provider settings. Docker Desktop is installed but its process exits and neither headless nor desktop launch exposed a window or Linux engine. Docker Compose configuration still parses with a temporary empty `.env`.
+- [ ] Production readiness remains blocked on a reviewable remote revision, current-head CI, Docker image/runtime verification, configured staging services, migrations/RLS/rollback/restore, live provider/recovery/monitoring checks, and human-reviewed quality gates. Local worktree validation remains green but cannot prove these production conditions.
+
+**Current status remains not production-ready.** Recheck these external gates after GitHub authentication, Docker Desktop, or staging configuration changes.
+
+### §24.57 Local production image build and health checks (2026-11-20)
+
+- [x] Recovered Docker Desktop's Linux engine through the Docker CLI after the earlier availability check. Replaced the GHCR-only `ghcr.io/astral-sh/uv:0.12.7` stage with a PyPI install pinned to `uv==0.12.7`, matching CI while keeping `uv sync --locked --no-dev --no-install-project` for runtime dependencies. This avoids the GHCR OAuth token denial observed on this host without weakening dependency locking.
+- [x] `docker compose build` completed successfully for both `zenith-backend` and `zenith-frontend`. The frontend image completed Next production compile, static page generation, and standalone trace steps. Production Compose config parses with the existing empty `.env`; the production frontend now has an HTTP health check alongside the backend readiness check. `git diff --check` passes.
+- [x] Ran a frontend container smoke check; the root route returned HTTP 200. The new frontend Compose healthcheck uses the Node 20 runtime's built-in `fetch` against the local root route. Backend container startup/readiness and end-to-end frontend-to-backend behavior have not been smoke-tested.
+- [ ] No staging Supabase/Auth/Redis/Postgres/provider credentials are configured, so migrations/RLS, OCR/Tesseract behavior, recovery, provider integration, and deployed monitoring remain unverified. Current-head CI is still outstanding because these worktree changes are uncommitted and PR #3 remains at `63f2f18`.
+
+**Current status remains not production-ready.** Local image construction closes the prior Docker build verification gap only; see [docs/STATUS.md](docs/STATUS.md) for all remaining release gates.
+
+### §24.58 Production Compose exposure and startup ordering (2026-11-20)
+
+- [x] Bound frontend/backend host ports to loopback because the documented single-host deployment uses nginx for TLS and proxy controls. This prevents direct public access to plaintext app ports.
+- [x] Changed frontend `depends_on` to wait for the backend `/api/ready` healthcheck before starting. Added static regression tests for loopback binding and readiness ordering.
+- [x] Verified parsed production Compose output has `host_ip=127.0.0.1` for both published ports and `service_healthy` for the frontend dependency. The full backend suite passes 454 tests with 6 skipped; repository-wide Ruff and strict mypy pass (86 source files); frontend passes 97 tests, lint, and typecheck. `git diff --check` passes.
+- [ ] Backend container readiness remains unverified without production dependency configuration. Current-head CI, staging migration/RLS/rollback/restore, provider reconciliation, operational recovery/monitoring, and human-reviewed scientific-quality gates remain required.
+
+**Current status remains not production-ready.** This hardens the documented single-host Compose topology; it does not replace configured staging or current-head CI. See [docs/STATUS.md](docs/STATUS.md).

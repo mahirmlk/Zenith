@@ -46,6 +46,9 @@ async def export_account(
         saved, prefs, owned_projects, member_rows, watches, notifications, runs = await _load_base_data(
             supabase, uid
         )
+        personal_searches = await _fetch_all(
+            lambda: supabase.table("saved_searches").select("*").eq("created_by", uid).is_("project_id", "null")
+        )
         owned_project_ids = list(dict.fromkeys(
             str(row["id"]) for row in owned_projects if row.get("id")
         ))
@@ -69,6 +72,32 @@ async def export_account(
             sources = await _project_content_rows(
                 supabase, "project_sources", owned_project_ids, member_project_ids, uid
             )
+            annotations = await _project_content_rows(
+                supabase, "project_annotations", owned_project_ids, member_project_ids, uid
+            )
+            project_saved_searches = await _project_content_rows(
+                supabase, "saved_searches", owned_project_ids, member_project_ids, uid
+            )
+            owned_briefs = await _fetch_in_chunks(supabase, "project_briefs", "project_id", owned_project_ids)
+            accessible_member_briefs = await _fetch_in_chunks(
+                supabase, "project_briefs", "project_id", member_project_ids
+            )
+            owned_brief_ids = list(dict.fromkeys(
+                str(row["id"]) for row in owned_briefs if row.get("id")
+            ))
+            member_brief_ids = list(dict.fromkeys(
+                str(row["id"]) for row in accessible_member_briefs if row.get("id")
+            ))
+            brief_versions = await _fetch_in_chunks(
+                supabase, "project_brief_versions", "brief_id", owned_brief_ids
+            )
+            brief_versions.extend(await _fetch_in_chunks(
+                supabase,
+                "project_brief_versions",
+                "brief_id",
+                member_brief_ids,
+                extra_filter=("created_by", uid),
+            ))
             project_documents = await _project_content_rows(
                 supabase, "project_documents", owned_project_ids, member_project_ids, uid
             )
@@ -81,6 +110,11 @@ async def export_account(
         else:
             notes = []
             sources = []
+            annotations = []
+            project_saved_searches = []
+            owned_briefs = []
+            accessible_member_briefs = []
+            brief_versions = []
             project_documents = []
             project_document_pages = []
 
@@ -101,6 +135,8 @@ async def export_account(
         if mem0_client.is_configured():
             memories = await mem0_client.get_user_profile(uid)
             memory_status = "exported"
+        elif mem0_client.has_credentials():
+            memory_status = "withheld: provider spend limit unconfirmed"
 
         return {
             "user_id": uid,
@@ -112,6 +148,10 @@ async def export_account(
             "project_memberships": member_rows,
             "project_notes": notes,
             "project_sources": sources,
+            "project_annotations": annotations,
+            "saved_searches": personal_searches + project_saved_searches,
+            "project_briefs": owned_briefs + accessible_member_briefs,
+            "project_brief_versions": brief_versions,
             "project_documents": project_documents,
             "project_document_pages": project_document_pages,
             "watchlists": watches,

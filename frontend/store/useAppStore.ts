@@ -11,7 +11,7 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  selectedModel: 'anthropic/claude-sonnet-4-5',
+  selectedModel: 'anthropic/claude-sonnet-5.5',
   setSelectedModel: (model) => set({ selectedModel: model }),
   userPrefs: null,
   setUserPrefs: (prefs) => set({ userPrefs: prefs }),

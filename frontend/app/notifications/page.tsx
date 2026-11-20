@@ -59,6 +59,7 @@ export default function NotificationsPage() {
                 </div>
                 {item.body && <p className="mt-1 text-sm leading-6 text-zenith-body">{item.body}</p>}
                 {item.reason_text && <p className="mt-2 text-xs leading-5 text-zenith-muted"><span className="font-semibold text-ink-900">Why you received this:</span> {item.reason_text}</p>}
+                {item.project_relevance_text && <p className="mt-2 text-xs leading-5 text-zenith-muted"><span className="font-semibold text-ink-900">Project relevance:</span> {item.project_relevance_text}</p>}
                 {item.paper_id && <Link href={`/paper/${encodeURIComponent(item.paper_id)}`} className="mt-2 inline-block text-xs font-semibold text-ink-900 underline underline-offset-4">Open paper</Link>}
                 {item.project_id && <Link href={`/projects/${encodeURIComponent(item.project_id)}` as Route} className="mt-2 inline-block text-xs font-semibold text-ink-900 underline underline-offset-4">Open linked project</Link>}
                 {!item.read_at && <button type="button" onClick={() => markOneRead.mutate(item.id)} disabled={markOneRead.isPending} className="mt-2 block text-xs font-semibold text-ink-900 underline underline-offset-4 disabled:cursor-wait disabled:opacity-60" aria-label={`Mark ${item.title} as read`}>Mark as read</button>}

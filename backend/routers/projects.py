@@ -3,6 +3,8 @@
 Supabase-backed; every operation enforces owner/member authorization
 server-side (RLS in migration 0001 is defence-in-depth, not the only check).
 """
+import asyncio
+import hashlib
 import logging
 from typing import Any, Optional
 from uuid import UUID
@@ -18,6 +20,11 @@ from services.pdf_ingestion import (
     PdfIngestionError,
     PdfOcrUnavailableError,
     extract_pdf_pages_async,
+)
+from models.schemas import (
+    ProjectAnnotationCreate,
+    ProjectAnnotationResponse,
+    ProjectAnnotationUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,11 +111,15 @@ async def upload_project_pdf(
     supabase: Any = Depends(get_supabase),
 ) -> dict[str, Any]:
     """Extract bounded page text from a user-provided PDF into project evidence."""
-    await _writable_project(supabase, project_id, user["user_id"])
-    if file.content_type not in {"application/pdf", "application/octet-stream"}:
-        raise HTTPException(status_code=415, detail="Upload must be a PDF")
-    payload = await file.read(MAX_PDF_BYTES + 1)
-    await file.close()
+    try:
+        await _writable_project(supabase, project_id, user["user_id"])
+        if file.content_type not in {"application/pdf", "application/octet-stream"}:
+            raise HTTPException(status_code=415, detail="Upload must be a PDF")
+        payload = await file.read(MAX_PDF_BYTES + 1)
+    finally:
+        # UploadFile may be backed by a spooled temporary file. Close it even
+        # when authorization, content-type validation, or reading fails.
+        await file.close()
     try:
         from config import get_settings
 
@@ -476,6 +487,263 @@ async def list_notes(
         return resp.data or []
     except Exception:
         logger.exception("list_notes failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+async def _annotation_source_text(
+    supabase: Any,
+    project_id: str,
+    body: ProjectAnnotationCreate | dict[str, Any],
+) -> tuple[str, str]:
+    """Fetch the current project-scoped source text and a display label."""
+    source_type = body.source_type if isinstance(body, ProjectAnnotationCreate) else body["source_type"]
+    if source_type == "paper_abstract":
+        paper_source_id = (
+            str(body.paper_source_id)
+            if isinstance(body, ProjectAnnotationCreate)
+            else str(body["paper_source_id"])
+        )
+        source = await (
+            supabase.table("project_sources")
+            .select("id,paper_id")
+            .eq("id", paper_source_id)
+            .eq("project_id", project_id)
+            .maybe_single()
+            .execute()
+        )
+        if not isinstance(source.data, dict) or not source.data.get("paper_id"):
+            raise HTTPException(status_code=422, detail="Paper source does not belong to this project")
+        paper = await (
+            supabase.table("papers")
+            .select("title,abstract")
+            .eq("id", str(source.data["paper_id"]))
+            .maybe_single()
+            .execute()
+        )
+        if not isinstance(paper.data, dict) or not isinstance(paper.data.get("abstract"), str):
+            raise HTTPException(status_code=422, detail="Paper abstract is unavailable for annotation")
+        title = paper.data.get("title")
+        return paper.data["abstract"], title if isinstance(title, str) else str(source.data["paper_id"])
+
+    document_id = (
+        str(body.document_id)
+        if isinstance(body, ProjectAnnotationCreate)
+        else str(body["document_id"])
+    )
+    page_number = (
+        body.page_number
+        if isinstance(body, ProjectAnnotationCreate)
+        else int(body["page_number"])
+    )
+    document = await (
+        supabase.table("project_documents")
+        .select("id,filename")
+        .eq("id", document_id)
+        .eq("project_id", project_id)
+        .maybe_single()
+        .execute()
+    )
+    if not isinstance(document.data, dict):
+        raise HTTPException(status_code=422, detail="PDF document does not belong to this project")
+    page = await (
+        supabase.table("project_document_pages")
+        .select("text")
+        .eq("document_id", document_id)
+        .eq("page_number", page_number)
+        .maybe_single()
+        .execute()
+    )
+    if not isinstance(page.data, dict) or not isinstance(page.data.get("text"), str):
+        raise HTTPException(status_code=422, detail="PDF page is unavailable for annotation")
+    filename = document.data.get("filename")
+    return page.data["text"], filename if isinstance(filename, str) else document_id
+
+
+def _annotation_anchor_matches(source_text: str, row: dict[str, Any]) -> bool:
+    start_offset = row.get("start_offset")
+    end_offset = row.get("end_offset")
+    quote = row.get("quote")
+    digest = row.get("quote_sha256")
+    return (
+        isinstance(start_offset, int)
+        and isinstance(end_offset, int)
+        and isinstance(quote, str)
+        and 0 <= start_offset < end_offset <= len(source_text)
+        and source_text[start_offset:end_offset] == quote
+        and hashlib.sha256(quote.encode("utf-8")).hexdigest() == digest
+    )
+
+
+async def _annotation_source_from_row(
+    supabase: Any, project_id: str, row: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    try:
+        text, label = await _annotation_source_text(supabase, project_id, row)
+        return text, label
+    except HTTPException:
+        return None, None
+
+
+@router.get("/{project_id}/annotations", response_model=list[ProjectAnnotationResponse])
+async def list_project_annotations(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> list[ProjectAnnotationResponse]:
+    await _owned_project(supabase, project_id, user["user_id"])
+    try:
+        response = await (
+            supabase.table("project_annotations")
+            .select("*")
+            .eq("project_id", project_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        rows = [row for row in (response.data or []) if isinstance(row, dict)]
+        semaphore = asyncio.Semaphore(10)
+
+        async def enrich(row: dict[str, Any]) -> ProjectAnnotationResponse:
+            async with semaphore:
+                source_text, source_label = await _annotation_source_from_row(
+                    supabase, project_id, row
+                )
+            return ProjectAnnotationResponse(
+                **row,
+                source_label=source_label,
+                is_stale=source_text is None or not _annotation_anchor_matches(source_text, row),
+            )
+
+        return list(await asyncio.gather(*(enrich(row) for row in rows)))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Project annotation listing failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.post(
+    "/{project_id}/annotations",
+    response_model=ProjectAnnotationResponse,
+    status_code=201,
+)
+async def create_project_annotation(
+    project_id: str,
+    body: ProjectAnnotationCreate,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> ProjectAnnotationResponse:
+    del request
+    await _writable_project(supabase, project_id, user["user_id"])
+    try:
+        source_text, source_label = await _annotation_source_text(supabase, project_id, body)
+        if body.end_offset > len(source_text) or source_text[body.start_offset : body.end_offset] != body.quote:
+            raise HTTPException(status_code=422, detail="Quote does not match the selected source offsets")
+        payload = {
+            "project_id": project_id,
+            "source_type": body.source_type,
+            "paper_source_id": str(body.paper_source_id) if body.paper_source_id else None,
+            "document_id": str(body.document_id) if body.document_id else None,
+            "page_number": body.page_number,
+            "start_offset": body.start_offset,
+            "end_offset": body.end_offset,
+            "quote": body.quote,
+            "quote_sha256": hashlib.sha256(body.quote.encode("utf-8")).hexdigest(),
+            "content": body.content,
+            "created_by": user["user_id"],
+        }
+        response = await supabase.table("project_annotations").insert(payload).execute()
+        row = response.data
+        if isinstance(row, list):
+            row = row[0] if row else None
+        if not isinstance(row, dict):
+            raise RuntimeError("Annotation insert returned no row")
+        return ProjectAnnotationResponse(**row, source_label=source_label, is_stale=False)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Project annotation creation failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.patch(
+    "/{project_id}/annotations/{annotation_id}",
+    response_model=ProjectAnnotationResponse,
+)
+async def update_project_annotation(
+    project_id: str,
+    annotation_id: UUID,
+    body: ProjectAnnotationUpdate,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> ProjectAnnotationResponse:
+    del request
+    await _writable_project(supabase, project_id, user["user_id"])
+    try:
+        current = await (
+            supabase.table("project_annotations")
+            .select("*")
+            .eq("id", str(annotation_id))
+            .eq("project_id", project_id)
+            .maybe_single()
+            .execute()
+        )
+        if not isinstance(current.data, dict):
+            raise HTTPException(status_code=404, detail="Annotation not found")
+        updated = await (
+            supabase.table("project_annotations")
+            .update({"content": body.content})
+            .eq("id", str(annotation_id))
+            .eq("project_id", project_id)
+            .execute()
+        )
+        row = updated.data
+        if isinstance(row, list):
+            row = row[0] if row else None
+        if not isinstance(row, dict):
+            row = {**current.data, "content": body.content}
+        source_text, source_label = await _annotation_source_from_row(supabase, project_id, row)
+        return ProjectAnnotationResponse(
+            **row,
+            source_label=source_label,
+            is_stale=source_text is None or not _annotation_anchor_matches(source_text, row),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Project annotation update failed")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.delete("/{project_id}/annotations/{annotation_id}")
+async def delete_project_annotation(
+    project_id: str,
+    annotation_id: UUID,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> dict[str, str]:
+    del request
+    await _writable_project(supabase, project_id, user["user_id"])
+    try:
+        response = await (
+            supabase.table("project_annotations")
+            .delete()
+            .eq("id", str(annotation_id))
+            .eq("project_id", project_id)
+            .execute()
+        )
+        if response.data == []:
+            # Some Supabase client versions return no deleted rows when the
+            # representation preference is omitted; authorization was already checked.
+            return {"status": "ok"}
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("Project annotation deletion failed")
         raise HTTPException(status_code=500, detail="Internal error")
 
 

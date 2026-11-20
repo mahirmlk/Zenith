@@ -15,6 +15,7 @@ from services.project_invitations import (
     invitation_expiry,
     send_project_invitation,
 )
+from services.notification_email import confirmed_email
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,14 @@ class ProjectInvitationResponse(BaseModel):
     status: Literal["pending", "accepted", "revoked", "expired", "delivery_failed"]
     created_at: datetime
     expires_at: datetime
-    email_sent_at: datetime | None = None
+
+
+class ReceivedProjectInvitation(BaseModel):
+    id: UUID
+    project_id: UUID
+    project_title: str
+    role: Literal["viewer", "editor"]
+    expires_at: datetime
 
 
 def _email_key(value: str) -> str:
@@ -88,6 +96,14 @@ async def _dispatch_invitation(
     except InvitationDeliveryError as exc:
         from security.audit import audit
 
+        if exc.existing_account:
+            # Existing accounts accept from their authenticated project inbox.
+            # Keep this response indistinguishable from an ordinary pending
+            # invite; membership is still granted only by the verified-email RPC.
+            audit(actor_id, action, "allowed", str(invitation.get("project_id", invitation_id)))
+            invitation["email_sent_at"] = None
+            return invitation
+
         audit(actor_id, action, "failed", str(invitation.get("project_id", invitation_id)))
         try:
             await (
@@ -102,11 +118,6 @@ async def _dispatch_invitation(
                 invitation_id,
                 type(state_error).__name__,
             )
-        if exc.existing_account:
-            raise HTTPException(
-                status_code=409,
-                detail="This address may already have an account. Add existing members by user ID.",
-            ) from None
         logger.warning("Project invite email delivery failed id=%s", invitation_id)
         raise HTTPException(
             status_code=502,
@@ -154,7 +165,11 @@ async def _dispatch_invitation(
     }
 
 
-@projects_router.post("/{project_id}/invitations", status_code=201)
+@projects_router.post(
+    "/{project_id}/invitations",
+    status_code=201,
+    response_model=ProjectInvitationResponse,
+)
 async def create_project_invitation(
     project_id: UUID,
     body: ProjectInvitationCreate,
@@ -241,6 +256,70 @@ async def create_project_invitation(
     )
 
 
+@router.get(
+    "/api/project-invitations/received",
+    response_model=list[ReceivedProjectInvitation],
+)
+async def list_received_project_invitations(
+    user: dict[str, Any] = Depends(get_current_user),
+    supabase: Any = Depends(get_supabase),
+) -> list[dict[str, Any]]:
+    """List pending invites matching the current Auth-confirmed email only."""
+    try:
+        email = await confirmed_email(supabase, str(user["user_id"]))
+        if not email:
+            return []
+        now = datetime.now(timezone.utc)
+        invitations_result = await (
+            supabase.table("project_invitations")
+            .select("id,project_id,role,expires_at")
+            .eq("normalized_email", _email_key(email))
+            .eq("status", "pending")
+            .gt("expires_at", now.isoformat())
+            .order("expires_at")
+            .limit(50)
+            .execute()
+        )
+        invitations = [
+            row for row in (invitations_result.data or [])
+            if isinstance(row, dict)
+            and row.get("expires_at")
+            and datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00")) > now
+        ]
+        project_ids = list(dict.fromkeys(
+            str(row["project_id"]) for row in invitations if row.get("project_id")
+        ))
+        if not project_ids:
+            return []
+        projects_result = await (
+            supabase.table("projects")
+            .select("id,title,deleted_at")
+            .in_("id", project_ids)
+            .execute()
+        )
+        projects = {
+            str(project["id"]): str(project.get("title") or "Research project")
+            for project in (projects_result.data or [])
+            if isinstance(project, dict)
+            and project.get("id")
+            and project.get("deleted_at") is None
+        }
+        return [
+            {
+                "id": row["id"],
+                "project_id": row["project_id"],
+                "project_title": projects[str(row["project_id"])],
+                "role": row["role"],
+                "expires_at": row["expires_at"],
+            }
+            for row in invitations
+            if str(row.get("project_id")) in projects
+        ]
+    except Exception as error:
+        logger.error("Received project invitation lookup failed error_type=%s", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Project invitations are temporarily unavailable") from None
+
+
 @projects_router.get("/{project_id}/invitations", response_model=list[ProjectInvitationResponse])
 async def list_project_invitations(
     project_id: UUID,
@@ -251,7 +330,7 @@ async def list_project_invitations(
     try:
         result = await (
             supabase.table("project_invitations")
-            .select("id,project_id,email,role,status,created_at,expires_at,email_sent_at")
+            .select("id,project_id,email,role,status,created_at,expires_at")
             .eq("project_id", str(project_id))
             .order("created_at", desc=True)
             .range(0, 99)
@@ -267,7 +346,10 @@ async def list_project_invitations(
         raise HTTPException(status_code=500, detail="Invitations could not be listed") from None
 
 
-@projects_router.post("/{project_id}/invitations/{invitation_id}/resend")
+@projects_router.post(
+    "/{project_id}/invitations/{invitation_id}/resend",
+    response_model=ProjectInvitationResponse,
+)
 async def resend_project_invitation(
     project_id: UUID,
     invitation_id: UUID,

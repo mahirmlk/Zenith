@@ -25,12 +25,20 @@ async def search(
     """Authenticated only (update.md §5.2): anonymous callers must not
     trigger the LLM pipeline. Frontend already sends the Supabase JWT
     via `Authorization: Bearer` (lib/api.ts getHeaders)."""
+    from services.llm_router import effective_models
+    from services.spend_meter import meter_ready
+
+    if not effective_models() or not await meter_ready():
+        raise HTTPException(status_code=503, detail="Metered model service is not configured")
     # Model registry gate (update.md §14): reject unknown/expensive models.
     if req.model is not None:
         try:
             validate_model(req.model)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        callable_ids = {str(item["id"]) for item in effective_models()}
+        if req.model not in callable_ids:
+            raise HTTPException(status_code=422, detail="Selected model has no verified spend bound")
     user_id = user["user_id"]
     run_id = str(uuid.uuid4())
     from config import get_settings

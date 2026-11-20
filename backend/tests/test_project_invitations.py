@@ -15,7 +15,7 @@ import services.project_invitations as invitation_service
 class Query:
     def __init__(self, db, table):
         self.db, self.name = db, table
-        self.filters, self.payload, self.action = {}, None, "select"
+        self.filters, self.gt_filters, self.payload, self.action = {}, {}, None, "select"
         self.single = False
 
     def select(self, *_):
@@ -30,6 +30,10 @@ class Query:
         self.filters[key] = values
         return self
 
+    def gt(self, key, value):
+        self.gt_filters[key] = value
+        return self
+
     def maybe_single(self):
         self.single = True
         return self
@@ -38,6 +42,9 @@ class Query:
         return self
 
     def range(self, *_):
+        return self
+
+    def limit(self, *_):
         return self
 
     def insert(self, payload):
@@ -56,7 +63,7 @@ class Query:
             if all(
                 (r.get(k) in v if isinstance(v, list) else r.get(k) == v)
                 for k, v in self.filters.items()
-            )
+            ) and all(str(r.get(k, "")) > str(v) for k, v in self.gt_filters.items())
         ]
         if self.action == "insert":
             row = {
@@ -80,6 +87,10 @@ class Query:
 class Admin:
     def __init__(self):
         self.calls, self.error = [], None
+        self.user = SimpleNamespace(email="member@example.com", email_confirmed_at="2026-01-01T00:00:00Z")
+
+    async def get_user_by_id(self, _user_id):
+        return SimpleNamespace(user=self.user)
 
     async def invite_user_by_email(self, email, *, options):
         self.calls.append((email, options))
@@ -210,7 +221,7 @@ def test_production_callback_requires_https(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_provider_failure_marks_delivery_failed_and_existing_account_is_generic_409(
+async def test_provider_failure_marks_delivery_failed_and_existing_account_uses_inbox(
     monkeypatch, caplog
 ):
     monkeypatch.setattr(
@@ -220,6 +231,30 @@ async def test_provider_failure_marks_delivery_failed_and_existing_account_is_ge
     )
     db = DB()
     db.auth.admin.error = RuntimeError("User already registered: private@example.com")
+    result = await routes.create_project_invitation(
+        PROJECT,
+        routes.ProjectInvitationCreate(email="private@example.com", role="viewer"),
+        request=None,
+        user=OWNER_USER,
+        supabase=db,
+    )
+    assert result["status"] == "pending"
+    assert result["email_sent_at"] is None
+    public_response = routes.ProjectInvitationResponse.model_validate(result).model_dump()
+    assert "email_sent_at" not in public_response
+    assert "private@example.com" not in caplog.text
+    assert db.rows["project_invitations"][0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_unclassified_provider_failure_still_marks_invite_failed(monkeypatch):
+    monkeypatch.setattr(
+        invitation_service,
+        "get_settings",
+        lambda: SimpleNamespace(app_url="https://app.example", app_env="production"),
+    )
+    db = DB()
+    db.auth.admin.error = RuntimeError("provider unavailable")
     with pytest.raises(HTTPException) as exc:
         await routes.create_project_invitation(
             PROJECT,
@@ -228,10 +263,62 @@ async def test_provider_failure_marks_delivery_failed_and_existing_account_is_ge
             user=OWNER_USER,
             supabase=db,
         )
-    assert exc.value.status_code == 409
-    assert "private@example.com" not in exc.value.detail
-    assert "private@example.com" not in caplog.text
+    assert exc.value.status_code == 502
     assert db.rows["project_invitations"][0]["status"] == "delivery_failed"
+
+
+@pytest.mark.asyncio
+async def test_received_inbox_only_returns_verified_email_pending_active_project_invites():
+    db = DB()
+    now = datetime.now(timezone.utc)
+    db.rows["project_invitations"].extend(
+        [
+            {
+                "id": str(uuid4()), "project_id": str(PROJECT),
+                "normalized_email": "member@example.com", "status": "pending",
+                "role": "editor", "expires_at": (now + timedelta(minutes=30)).isoformat(),
+            },
+            {
+                "id": str(uuid4()), "project_id": str(PROJECT),
+                "normalized_email": "other@example.com", "status": "pending",
+                "role": "viewer", "expires_at": (now + timedelta(minutes=30)).isoformat(),
+            },
+            {
+                "id": str(uuid4()), "project_id": str(PROJECT),
+                "normalized_email": "member@example.com", "status": "pending",
+                "role": "viewer", "expires_at": (now - timedelta(minutes=1)).isoformat(),
+            },
+        ]
+    )
+    db.rows["projects"].append(
+        {"id": str(uuid4()), "owner_id": OWNER, "title": "Deleted", "deleted_at": now.isoformat()}
+    )
+    deleted_project_id = db.rows["projects"][-1]["id"]
+    db.rows["project_invitations"].append(
+        {
+            "id": str(uuid4()), "project_id": deleted_project_id,
+            "normalized_email": "member@example.com", "status": "pending",
+            "role": "viewer", "expires_at": (now + timedelta(minutes=30)).isoformat(),
+        }
+    )
+
+    result = await routes.list_received_project_invitations(
+        user={"user_id": "member"}, supabase=db
+    )
+
+    assert len(result) == 1
+    assert result[0]["project_id"] == str(PROJECT)
+    assert result[0]["project_title"] == "T"
+    assert result[0]["role"] == "editor"
+
+
+@pytest.mark.asyncio
+async def test_received_inbox_is_empty_without_auth_confirmed_email():
+    db = DB()
+    db.auth.admin.user.email_confirmed_at = None
+    assert await routes.list_received_project_invitations(
+        user={"user_id": "member"}, supabase=db
+    ) == []
 
 
 @pytest.mark.asyncio

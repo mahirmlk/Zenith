@@ -29,14 +29,14 @@
                 │                        BACKEND                         │
                 │  FastAPI ── middleware: JWT, rate-limit, timing        │
                 │  routers ── health, auth, papers, search, stream,      │
-                │             graph, prefs, pwc, internal                │
+                │         graph, prefs, paper_code, internal              │
                 │  agents  ── research → summary → memory (LangGraph)    │
                 │  services── arxiv, hf, firecrawl, s2, supabase, ...    │
                 └──────┬──────────┬──────────┬──────────────┬────────────┘
                        │          │          │              │
                        ▼          ▼          ▼              ▼
                    Supabase   Redis     OpenRouter/     ArXiv / HF / S2 /
-                  (DB+Auth)  (state/      LLM fallbacks  Firecrawl / PwC
+                  (DB+Auth)  (state/      metered LLM    Firecrawl disabled
                               limits)
 ```
 
@@ -52,7 +52,8 @@ This is the primary interactive path: the user types a query, sees live agent pr
 sequenceDiagram
     participant UI as Frontend
     participant API as FastAPI
-    participant RS as RunStore (Redis)
+    participant RS as RunStore (Postgres)
+    participant Q as Redis queue
     participant ST as Stream router (SSE)
     participant OR as LangGraph orchestrator
     participant AG as research/summary/memory agents
@@ -61,10 +62,17 @@ sequenceDiagram
 
     UI->>API: POST /api/search {query, model}
     API->>RS: run_store.create(run_id, query, model)
+    API->>Q: enqueue run for worker
     API-->>UI: 200 {run_id}
 
-    UI->>ST: GET /api/stream/{run_id} (SSE, Authorization header)
-    ST->>OR: run_orchestrator(run_id, query, callback)
+    UI->>ST: POST /api/stream/session (exchange user JWT)
+    ST-->>UI: short-lived session token
+    UI->>ST: GET /api/stream/{run_id} (Authorization: Bearer session token)
+    Note over UI,ST: Reconnect sends Last-Event-ID with the latest event sequence
+    ST->>RS: replay persisted events after cursor (read-only)
+    RS-->>ST: ordered run events
+    Q->>OR: worker claims queued run once
+    OR->>AG: run_orchestrator(run_id, query, callback)
     OR->>AG: StateGraph: research → summary → memory
     AG->>SVC: fetch papers (ArXiv + HuggingFace)
     AG->>SVC: embed + summarise (LLM via llm_router)
@@ -80,14 +88,15 @@ Key files:
 
 - `frontend/app/feed/page.tsx`, `frontend/components/StreamingResponse.tsx`
 - `backend/routers/search.py` — creates the run
-- `backend/routers/stream.py` — SSE endpoint (token in header, not URL — see [.plans/007](../.plans/007-fix-sse-jwt-exposure.md))
+- `backend/routers/stream.py` — SSE session exchange and read-only stream endpoint. The frontend uses `fetch` streaming so it can send the short-lived session token in `Authorization: Bearer`; it never puts the token in the URL.
 - `backend/agents/orchestrator.py` — the LangGraph pipeline
 - `backend/services/run_store.py` — run state (Redis-backed)
 
 Details:
 
 - **Step 1 — kick off:** `POST /api/search` only stores a run; it returns immediately with `{run_id}`. All heavy work happens async.
-- **Step 2 — stream:** the frontend opens `GET /api/stream/{run_id}`. `run_orchestrator` registers a callback that emits `AgentStep` events as each agent starts/completes/errors, and `stream.py` fans them out over SSE.
+- **Step 2 — stream:** the frontend exchanges its user JWT for a short-lived SSE session token, then opens `GET /api/stream/{run_id}` with that token in the Authorization header. The endpoint only replays and subscribes to persisted worker events; it does not start orchestration.
+- **Reconnect:** on transport failure the frontend retries at most three times, mints a fresh session token for each connection, and sends the latest sequence in `Last-Event-ID`. A named `error` event is terminal; `result` and `cancelled` events also end the stream.
 - **Step 3 — orchestration:** the graph runs `research → summary → memory` ([ADR-001](./adr/0001-four-layer-architecture.md)). Each node catches its own errors and emits an `error` step rather than crashing the run; failures degrade to the previous stage's output (e.g., raw papers if summarisation fails).
 - **Step 4 — result:** the final state is projected into `Paper` objects, persisted to the run store, and returned. `max_summaries` is not capped here because interactive result sets are small ([ADR-008](./adr/0008-summary-cost-cap.md)).
 
@@ -172,7 +181,7 @@ Details:
 
 - **Validation:** `paper_id` is checked against `^[a-zA-Z0-9\-._:/]+$` before use.
 - **No fabricated data:** if S2 is unavailable and the cache is cold, the endpoint returns an **empty graph** — never mock data — so the UI shows an empty state rather than lies ([ADR-007](./adr/0007-citation-cache.md)).
-- **Paper detail code links** are a parallel path: `backend/routers/pwc.py` → `services/papers_with_code.py` (Papers With Code API) and, for full text, `services/firecrawl.py` (`crawl_paper_cached`, backed by the `crawled_content` table).
+- **Paper detail code links** are a parallel path: `backend/routers/paper_code.py` → `services/github_repositories.py` (public GitHub repository search; candidates remain unverified). `services/firecrawl.py` keeps both hosted crawling and legacy cache access disabled until redirect and egress controls are enforced.
 
 ---
 
@@ -262,10 +271,10 @@ Details:
 
 | Concern | Where it's handled | Notes |
 |---------|--------------------|-------|
-| **Retries** | `services/retry.py` | Exponential backoff; used by embeddings, ingestion writes, summary agent, Firecrawl ([ADR-005](./adr/0005-retry-strategy.md)) |
+| **Retries** | `services/retry.py` | Exponential backoff for active provider/database operations; hosted Firecrawl is disabled ([ADR-005](./adr/0005-retry-strategy.md)) |
 | **Rate limiting** | `middleware/rate_limit.py` | Redis-backed via slowapi; per-IP; search 10/min, stream 20/min, default 60/min ([ADR-006](./adr/0006-rate-limiting.md)) |
 | **Response timing** | `middleware/timing.py` | `X-Response-Time` header; latency logged |
 | **Tracing** | `services/observability.py` | Langfuse callback attached to orchestrator `ainvoke` ([ADR-009](./adr/0009-observability.md)) |
 | **Error tracking** | `services/observability.py` | Sentry init in app lifespan, `APP_ENV` tagging |
 | **Structured logging** | `logging_config.py` | Timestamped, level-tagged logs for all services |
-| **Caching** | `citation_cache.py`, `firecrawl.py` | Supabase-backed citation edges + crawled content, 7-day TTL ([ADR-007](./adr/0007-citation-cache.md)) |
+| **Caching** | `citation_cache.py`, legacy `crawled_content` table | Supabase-backed citation edges are active; the Firecrawl cache is retained for old rows but disabled in runtime ([ADR-007](./adr/0007-citation-cache.md)) |

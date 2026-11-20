@@ -8,9 +8,11 @@
 
 Zenith is a research paper discovery and organization app. The current UI provides a paper feed, saved papers, settings and account privacy controls, citation graph, project workspaces, topic watchlists, notifications, and streamed search. FastAPI validates user JWTs and owns server-side data access. Search and plan execution requests enter the same Redis Streams worker queue; the worker dispatches either the LangGraph Research → Summary → Memory search pipeline or the bounded LangGraph plan graph. Both use the existing Postgres run/event store, worker leases, and checkpoint lifecycle. The pipelines use ArXiv, Hugging Face, configured LLM providers, Supabase, and optional Mem0. Separate endpoints provide project-scoped extractive evidence maps, answers, and comparisons. A Redis-leased scheduler triggers watchlist ingestion and creates caller-scoped in-app notifications. A separate opt-in Resend path can deliver generic daily or weekly watchlist digests; it uses a service-only preferences/consent, recipient suppression, and deduplicated outbox schema and never includes private project or watch text.
 
-**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. The separate `/api/research/synthesize` endpoint is disabled by default through `RESEARCH_SYNTHESIS_ENABLED`; when enabled, it drafts up to five provisional claims from at most six exact abstract sentences, then asks a second provider call to review evidence relations. An authenticated `/api/research/capabilities` response controls whether the UI exposes that mode, while the API independently enforces the flag. It returns server-validated citations and model-reviewed status labels, not independently verified scientific conclusions; private PDFs are excluded. Non-project answers, general retrieval, and comparison dimensions remain abstract/metadata based. See `docs/STATUS.md` for release blockers.
+**Current limitation:** project `/api/research/answer` and `/api/research/evidence-map` return exact abstract and extracted PDF page sentences selected by keyword overlap. The separate `/api/research/synthesize` endpoint is disabled by default through `RESEARCH_SYNTHESIS_ENABLED`; when enabled, it drafts up to five provisional claims from at most six exact abstract sentences, then asks a second provider call to review evidence relations. An authenticated `/api/research/capabilities` response controls whether the UI exposes that mode, while the API independently enforces the flag. It returns server-validated citations and model-reviewed status labels, not independently verified scientific conclusions; private PDFs are excluded. Non-project answers and general retrieval remain abstract/metadata based. Project comparisons keep paper rows abstract-derived and surface uploaded PDF dimensions as separate cited document sources, without asserting a PDF-to-paper relation. See `docs/STATUS.md` for release blockers.
 
-`POST /api/research/plan` remains a provider-free, deterministic preview. It classifies intent, returns a fixed task template and bounded limits, and authorizes project scope before responding. When `RESEARCH_PLAN_EXECUTION_ENABLED=false` (the default), it does not execute a plan. When enabled, authenticated `POST /api/research/execute` accepts the preview's query/scope, creates a normal durable research run plus service-only plan metadata, and enqueues it on the existing Redis Streams queue; no second queue is introduced. The worker uses the LangGraph Postgres checkpointer and existing run leases, event replay, cancellation, retention, and account-deletion cleanup (run deletion cascades plan metadata). Project membership and active-project state are rechecked before each project data read. The graph enforces a 10-source ceiling, classifier-specific tool-call ceilings (2/3/4/6), and wall-clock ceilings (20/30/45/90 seconds for feed/explain/compare/deep research), with cancellation checks between steps. A Redis-backed budget allows 10 executions per user/day and the API rate limit is 5 requests/IP/minute. Synthesis remains separately gated and is capped at two calls/1,800 output tokens. A crash inside a provider operation can cause at-least-once repetition before the next checkpoint. Monetary spend remains untracked (`cost_tracking_available=false`); keep the feature flag off until staging recovery, authorization, budget, and quality checks pass.
+An opt-in authenticated `GET /api/papers/{paper_id}/public-evidence` can return up to five exact page sentences from a public arXiv PDF. `PUBLIC_PAPER_EVIDENCE_ENABLED` defaults to `false`. The service checks current `arXivRaw` OAI metadata and requires the stored DB version to match the latest OAI version; only exact CC BY 4.0 and CC0 1.0 license URLs are accepted. It fetches from fixed arXiv hosts without redirects, uses native PDF text extraction only, and does not persist the PDF or excerpts. A Redis-backed shared gate spaces arXiv API requests at least three seconds apart in production; development uses a process-local gate when Redis is absent.
+
+`POST /api/research/plan` remains a provider-free, deterministic preview. It classifies intent, returns a fixed task template and bounded limits, and authorizes project scope before responding. When `RESEARCH_PLAN_EXECUTION_ENABLED=false` (the default), it does not execute a plan. When enabled, authenticated `POST /api/research/execute` accepts the preview's query/scope, creates a normal durable research run plus service-only plan metadata, and enqueues it on the existing Redis Streams queue; no second queue is introduced. The worker uses the LangGraph Postgres checkpointer and existing run leases, event replay, cancellation, retention, and account-deletion cleanup (run deletion cascades plan metadata). Project membership and active-project state are rechecked before each project data read. The graph enforces a 10-source ceiling, classifier-specific tool-call ceilings (2/3/4/6), and wall-clock ceilings (20/30/45/90 seconds for feed/explain/compare/deep research), with cancellation checks between steps. A Redis-backed budget allows 10 executions per user/day and the API rate limit is 5 requests/IP/minute. Synthesis remains separately gated and is capped at two calls/1,800 output tokens. A crash inside a provider operation can cause at-least-once repetition before the next checkpoint. Chat and OpenAI embedding attempts reserve and settle against the service-only Postgres spend ledger; unknown outcomes retain reservations. OpenRouter credit-purchase fees are outside per-request inference cost and require invoice reconciliation. Keep model-backed feature flags off until migration 0023, staging recovery, authorization, budget concurrency, and invoice reconciliation are verified.
 
 ---
 
@@ -27,7 +29,7 @@ flowchart TB
   Worker[LangGraph worker<br/>Research → Summary → Memory]
   Checkpoints[(Postgres LangGraph checkpoints<br/>AsyncPostgresSaver)]
   Scheduler[Watchlist scheduler<br/>daily UTC + shared lease]
-  Providers[External providers<br/>ArXiv · Hugging Face · LLMs<br/>Semantic Scholar · Papers with Code · Firecrawl]
+  Providers[External providers<br/>ArXiv · Hugging Face · LLMs<br/>Semantic Scholar · GitHub search · Firecrawl]
   Memory[Optional Mem0 preferences]
 
   Browser --> Frontend
@@ -120,7 +122,7 @@ GET    /api/stream/{run_id}?token=...       # Read-only SSE replay/subscription
 GET    /api/runs/{id}, /events              # Status and replayable events
 POST   /api/runs/{id}/cancel
 POST   /api/retrieval/search                # Hybrid search; optional project scope
-POST   /api/research/plan|compare|answer    # Plan, heuristic comparison, abstract-only answer
+POST   /api/research/plan|execute|compare|answer # Preview/execute plan, cited comparison, extractive answer
 POST   /api/research/evidence-map           # Project abstracts + extracted PDF page spans
 GET/POST/PATCH/DELETE /api/projects/...     # Projects, members, email invitations, notes, papers and PDF documents/pages
 GET/POST/PATCH/DELETE /api/watchlists/...   # Watchlists
@@ -194,7 +196,8 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 
 | Service | Role | Integration | Auth | Retry |
 |---------|------|-------------|------|-------|
-| **ArXiv API** | Paper discovery | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
+| **ArXiv API** | Paper discovery and DOI metadata | `arxiv` Python lib (sync, run in executor) | No | Yes (3 retries, exp backoff) |
+| **Crossref REST API** | Opt-in publication update notices for DOI papers | Bounded async `httpx` lookups from backend ingestion | No | Six-hour per-watch retry backoff; five concurrent lookups |
 | **HuggingFace Daily Papers** | Curated highlights | REST API (`httpx`) | No | Yes (3 retries) |
 | **OpenRouter** | Primary LLM gateway | OpenAI-compatible endpoint (`langchain-openai`) | API key | Yes (transient errors at call site) |
 | **Anthropic (direct)** | Claude fallback | `langchain-anthropic` | API key | Yes (transient errors at call site) |
@@ -205,7 +208,7 @@ The graph is compiled with `langgraph.graph.StateGraph` and uses a typed `Orches
 | **Mem0** | User memory | `mem0` Python client | API key | No |
 | **Supabase** | Auth + vector DB + relational data | `supabase-py` async client | Service role key | No |
 | **Semantic Scholar** | Citation graph | S2 REST API (`httpx`) | Optional API key | Yes (3 retries), edges cached in Supabase |
-| **Papers With Code** | GitHub repos for papers | PWC REST API (`httpx`) | No | No (silent degradation) |
+| **GitHub repository search** | Public repository candidates by DOI/arXiv ID or title | GitHub REST `search/repositories` (`httpx`) | Optional `GITHUB_TOKEN` | Bounded timeout and result count; candidates remain unverified |
 | **Redis** | Streams queue, worker leases, global rate limits, per-user budgets, scheduler leases | `redis.asyncio` (required for production) | `REDIS_URL` | Pending-entry reclaim; bounded readiness check |
 
 Retry is kept separate from the provider fallback chain: `async_retry` handles
@@ -222,6 +225,14 @@ limits; no additional environment variable is required.
 `services/retry.py` matches transient errors by exception class (builtin +
 `httpx` errors, plus vendor SDK names such as `APIConnectionError`,
 `RateLimitError`, `InternalServerError`).
+
+Crossref status watches require explicit user opt-in per paper. Only Crossmark
+relations for retraction, partial retraction, withdrawal, removal, and
+expression of concern are surfaced. Stored fields retain Crossref provenance
+and the linked notice DOI. Crossref metadata reflects publisher/member
+deposits; an empty result is not evidence that no update exists. Checks are
+bounded to 100 watches per ingestion run and do not call Crossref from the
+frontend. No new environment variable is required.
 
 ---
 
@@ -523,11 +534,14 @@ See **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** for step-by-step deployment i
 ## 13. Environment Variables
 
 See `.env.example` for the full list. Key categories:
-- **LLM Providers:** `OPENROUTER_API_KEY` (required), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`
+- **LLM Providers:** `OPENROUTER_API_KEY` is required for metered chat; `OPENAI_API_KEY` is required for metered embeddings. Direct chat-provider keys do not enable unmetered fallback.
+- **Repository discovery:** optional `GITHUB_TOKEN` raises the GitHub public repository search quota. Queries include `is:public`; returned matches are unverified candidates, not claims of official authorship.
 - **Data Sources:** `FIRECRAWL_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`
 - **Memory & Storage:** `MEM0_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` (HS256 legacy fallback only)
 - **PDF processing:** `OCR_ENABLED` (defaults to `false`; enables bounded local Tesseract OCR for scanned project PDF pages; production container provides English language data)
-- **Research workflow:** `RESEARCH_PLAN_EXECUTION_ENABLED` (defaults to `false`; gates durable plan execution on the existing run queue and Postgres checkpoint lifecycle; allows 10 executions/user/day and 5 API requests/IP/minute; monetary spend is not tracked)
+- **Public paper evidence:** `PUBLIC_PAPER_EVIDENCE_ENABLED` (defaults to `false`; opts into exact-version arXiv page evidence only when OAI reports the exact CC BY 4.0 or CC0 1.0 license; production uses the shared Redis arXiv request gate)
+- **Provider spend guardrails:** `LLM_DAILY_SPEND_CAP_USD_MICROS` and `LLM_MONTHLY_SPEND_CAP_USD_MICROS` are per billing-subject UTC caps, in integer USD micros; both default to zero and model calls fail closed until set. They apply to `/api/search` summaries, both synthesis calls, plan synthesis, and embeddings. Scheduled ingestion/backfill/seed operations use the separately shared `system` billing subject. Chat uses OpenRouter only, with maximum provider prices from a versioned catalog snapshot; models without a verified price are unavailable. Every chat and embedding attempt reserves against service-only Postgres RPCs and records actual usage. OpenRouter credit-purchase fees are outside per-request inference usage and require invoice reconciliation. `MEM0_PROVIDER_SPEND_LIMIT_CONFIRMED` defaults to `false`; Mem0 model-backed reads/writes remain disabled until its provider-side spend limit is confirmed, and account exports report that memory data is withheld.
+- **Research workflow:** `RESEARCH_PLAN_EXECUTION_ENABLED` (defaults to `false`; gates durable plan execution on the existing run queue and Postgres checkpoint lifecycle; allows 10 executions/user/day and 5 API requests/IP/minute; model calls remain subject to the spend ledger)
 - **Email notifications:** `NOTIFICATIONS_EMAIL_ENABLED` (defaults to `false`; requires `RESEND_API_KEY`, `NOTIFICATIONS_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET`, and `NOTIFICATIONS_UNSUBSCRIBE_SECRET`; optionally accepts comma-separated prior HMAC keys in `NOTIFICATIONS_UNSUBSCRIBE_SECRET_PREVIOUS` during rotation. Migration 0020 adds service-only preferences/consent audit, normalized recipient suppression, unsubscribe tokens, and a per-user/digest-window unique outbox. Delivery requires a confirmed Auth email and explicit opt-in, rechecks consent and suppression immediately before sending, and supports daily/weekly IANA-timezone digests at 08:00 and one-click unsubscribe. Bounce and complaint events permanently suppress the HMAC-only normalized recipient, including across account deletion. The worker polls every 30 seconds and sends at most five digests per tick; retries use Resend idempotency and are capped at five total attempts (initial send plus four exponential-backoff retries at 30/60/120/240 seconds, capped at one hour). Webhook events are deduplicated by Svix event and recipient. No private project/watch text is included. Unsubscribe tokens use a one-way SHA-256 hash at rest and remain valid across HMAC-key rotation; keep prior recipient-HMAC keys configured to preserve matching for existing consent and permanent suppressions. Production Uvicorn commands disable access logs because unsubscribe tokens are passed as query parameters.)
 - **Notification request limits:** email-preference API requests are capped at 10/minute/IP, unsubscribe requests at 20/minute/IP, and Resend webhook requests at 120/minute/IP; webhook signatures and timestamp freshness are also verified.
 - **Email spend:** Zenith does not meter Resend delivery costs; monitor provider usage and billing limits in Resend.

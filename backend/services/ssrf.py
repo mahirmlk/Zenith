@@ -1,9 +1,10 @@
-"""SSRF defence for server-side URL fetching (update.md §5.4).
+"""URL validator for any future server-side user URL fetching (update.md §5.4).
 
 Only http/https URLs are allowed. Literal private/loopback/link-local/
 reserved/multicast IPs are rejected, and hostnames are resolved and every
-resulting IP is checked. This runs *before* Firecrawl/httpx fetching;
-Firecrawl is a fetcher, not a security boundary.
+resulting IP is checked. This helper is not currently used by a fetch path and
+cannot enforce redirects or DNS behavior in remote hosted workers. Hosted
+Firecrawl and its cache reader therefore remain disabled.
 """
 import ipaddress
 import socket

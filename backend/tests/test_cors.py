@@ -2,7 +2,7 @@
 
 import pytest
 
-from main import _configured_cors_origins
+from main import _configured_cors_origins, app
 
 
 def test_cors_defaults_to_one_canonical_app_url():
@@ -30,12 +30,18 @@ def test_cors_accepts_multiple_exact_origins_and_deduplicates():
     ],
 )
 def test_cors_rejects_non_origin_values(value: str):
-    with pytest.raises(ValueError, match="exact http\(s\) origins"):
+    with pytest.raises(ValueError, match=r"exact http\(s\) origins"):
         _configured_cors_origins("https://app.example.com", value)
 
 
 def test_cors_rejects_legacy_comma_separated_app_url():
-    with pytest.raises(ValueError, match="exact http\(s\) origins"):
+    with pytest.raises(ValueError, match=r"exact http\(s\) origins"):
         _configured_cors_origins(
             "https://app.example.com,https://admin.example.com", ""
         )
+
+
+def test_cors_allows_authorization_and_sse_replay_cursor_headers():
+    cors = next(middleware for middleware in app.user_middleware if middleware.cls.__name__ == "CORSMiddleware")
+    allowed_headers = {header.lower() for header in cors.kwargs["allow_headers"]}
+    assert {"authorization", "last-event-id"} <= allowed_headers

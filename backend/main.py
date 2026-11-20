@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from jwt.exceptions import InvalidTokenError
-from routers import health, auth, papers, search, stream, graph, prefs, pwc, internal, runs, projects, project_invitations, retrieval, research, implementations, watchlists, notifications, account, models
+from routers import health, auth, papers, search, saved_searches, stream, graph, prefs, paper_code, internal, runs, projects, project_briefs, project_invitations, retrieval, research, implementations, watchlists, notifications, account, models
 from middleware.rate_limit import limiter, apply_rate_limits
 from middleware.timing import TimingMiddleware
 from config import get_settings
@@ -149,7 +149,14 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "Accept", "X-Admin-Key"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Idempotency-Key",
+        "Accept",
+        "X-Admin-Key",
+        "Last-Event-ID",
+    ],
 )
 app.add_middleware(TimingMiddleware)
 
@@ -188,13 +195,15 @@ app.include_router(health.ready_router)
 app.include_router(auth.router)
 app.include_router(papers.router)
 app.include_router(search.router)
+app.include_router(saved_searches.router)
 app.include_router(stream.router)
 app.include_router(graph.router)
 app.include_router(prefs.router)
-app.include_router(pwc.router)
+app.include_router(paper_code.router)
 app.include_router(internal.router)
 app.include_router(runs.router)
 app.include_router(projects.router)
+app.include_router(project_briefs.router)
 app.include_router(project_invitations.router)
 app.include_router(retrieval.router)
 app.include_router(research.router)

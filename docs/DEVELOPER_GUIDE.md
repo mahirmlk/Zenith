@@ -38,7 +38,6 @@
 - `OPENAI_API_KEY` — GPT fallback + embeddings
 - `GOOGLE_API_KEY` — Gemini fallback
 - `MISTRAL_API_KEY` — Mistral fallback
-- `FIRECRAWL_API_KEY` — full paper text extraction
 - `SEMANTIC_SCHOLAR_API_KEY` — citation graph (higher rate limits)
 - `MEM0_API_KEY` — user memory personalisation
 
@@ -113,7 +112,6 @@ All environment variables are defined in `.env.example`. Here is what each does:
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `FIRECRAWL_API_KEY` | No | Full paper text extraction |
 | `SEMANTIC_SCHOLAR_API_KEY` | No | Citation graph data (higher rate limits) |
 
 ### Memory & Storage
@@ -186,22 +184,20 @@ If you prefer running without Docker:
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Start Redis separately (Docker or native)
 docker run -d -p 6379:6379 redis:7-alpine
 
 # Start the API
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run --locked uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### Frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -260,7 +256,7 @@ ai-paper-research-agent/
 │   │   ├── stream.py                 # GET /api/stream/{run_id} (SSE)
 │   │   ├── graph.py                  # GET /api/graph/{paper_id}
 │   │   ├── prefs.py                  # GET/POST /api/prefs
-│   │   ├── pwc.py                    # GET /api/papers/{paper_id}/code
+│   │   ├── paper_code.py             # GET /api/papers/{paper_id}/code
 │   │   └── internal.py               # POST /api/internal/ingest (admin-key)
 │   ├── agents/                       # LangGraph multi-agent layer
 │   │   ├── orchestrator.py           # StateGraph: research → summary → memory
@@ -273,8 +269,8 @@ ai-paper-research-agent/
 │   │   ├── llm_router.py             # OpenRouter primary, direct provider fallbacks
 │   │   ├── arxiv.py                  # ArXiv API wrapper
 │   │   ├── huggingface.py            # HuggingFace Daily Papers API
-│   │   ├── firecrawl.py              # Firecrawl full-text extraction (cached)
-│   │   ├── papers_with_code.py       # Papers With Code API (GitHub repos)
+│   │   ├── firecrawl.py              # Disabled hosted crawl/cache entry points
+│   │   ├── github_repositories.py    # Public GitHub repository candidates
 │   │   ├── semantic_scholar.py       # Semantic Scholar citation data
 │   │   ├── mem0_client.py            # Mem0 user memory client
 │   │   ├── supabase_client.py        # Supabase async client singleton
@@ -347,7 +343,7 @@ The schema snapshot documents these core tables (the ordered migrations are auth
 | `user_papers` | Junction table for saved/dismissed papers |
 | `user_prefs` | Per-user LLM model preference and research interests |
 | `citations` | Cached Semantic Scholar citation edges (feed + graph) |
-| `crawled_content` | Cached Firecrawl full-text extractions |
+| `crawled_content` | Legacy derived full-text cache; new hosted crawls are disabled |
 
 The snapshot also documents:
 - `match_papers()` — PostgreSQL function for vector similarity search
@@ -376,8 +372,8 @@ This inserts 5 sample papers (covering transformer surveys, diffusion models, RL
 
 ```bash
 cd backend
-pip install -e ".[dev]"  # if not already installed
-pytest
+uv sync --locked --extra dev
+uv run --locked pytest
 ```
 
 ### Frontend (vitest)
@@ -404,13 +400,13 @@ The CI pipeline is defined in `.github/workflows/ci.yml` and runs on pushes, pul
 cd backend
 
 # Lint (Ruff)
-ruff check .
+uv run --locked ruff check .
 
 # Type check (mypy, strict mode)
-mypy .
+uv run --locked mypy .
 
 # Auto-fix lint issues
-ruff check . --fix
+uv run --locked ruff check . --fix
 ```
 
 Configuration: `pyproject.toml` sections `[tool.ruff]` and `[tool.mypy]`.
@@ -464,7 +460,7 @@ For example, adding a new API endpoint:
 docker compose up --build
 
 # Run backend checks
-cd backend && ruff check . && mypy . && pytest
+cd backend && uv run --locked ruff check . && uv run --locked mypy . && uv run --locked pytest
 
 # Run frontend checks
 cd frontend && npm run lint && npm run typecheck && npm test
@@ -535,11 +531,11 @@ If you see `ModuleNotFoundError` after pulling changes:
 ```bash
 # Backend
 cd backend
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Frontend
 cd frontend
-npm install
+npm ci
 ```
 
 ### Docker build fails on Windows
@@ -555,9 +551,9 @@ If you have pre-commit hooks set up and they fail, run the checks manually to se
 
 ```bash
 cd backend
-ruff check .
-mypy .
-pytest
+uv run --locked ruff check .
+uv run --locked mypy .
+uv run --locked pytest
 
 cd ../frontend
 npm run lint

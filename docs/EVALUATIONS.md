@@ -39,7 +39,7 @@ Historical 2026-11-08 baseline (`grounded_qa_v2`):
 | Fabricated-citation negative control | Pass |
 | Gate | **Pass** |
 
-Current local baseline on 2026-11-13:
+Current local baseline on 2026-11-15:
 
 | Dataset / metric | Measured |
 |---|---:|
@@ -47,7 +47,7 @@ Current local baseline on 2026-11-13:
 | Paper abstention, citation, exact support, coverage, Recall@5, MRR@5 | 1.000 each |
 | `pdf_evidence_v1` | 6 / 6 pass |
 | PDF citation accuracy, exact span rate, abstention, forbidden-text safety | 1.000 each |
-| `cross_paper_synthesis_v1` mocked-provider contract cases | 3 / 3 pass |
+| `cross_paper_synthesis_v2` mocked-provider contract cases | 6 / 6 pass |
 | `research_plan_v1` deterministic plan-preview cases | 5 / 5 pass |
 | Fabricated-citation negative control | Pass |
 
@@ -55,7 +55,7 @@ The gate passes after BM25 ignores common question terms, claim selection requir
 
 ## What this suite does not prove
 
-`cross_paper_synthesis_v1` adds three mocked-provider contract fixtures to the runner: opposing evidence remains conflicting, one-source support is downgraded to uncertain, and fabricated evidence IDs are rejected. These fixtures exercise deterministic service validation, not live model behavior or scientific correctness.
+`cross_paper_synthesis_v2` currently has six mocked-provider contract fixtures: opposing evidence remains conflicting, one-source support is downgraded to uncertain, fabricated generation anchors and verifier evidence IDs are rejected, incomplete assessments fail closed, and an unsupported verifier result is downgraded to uncertain. These fixtures exercise deterministic service validation, not live model behavior or scientific correctness.
 
 `research_plan_v1` verifies deterministic route selection, static task steps, fixed bounds, and preview-only metadata. It does not evaluate a plan executor because execution is not implemented.
 

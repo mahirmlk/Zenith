@@ -39,6 +39,14 @@ def _evidence() -> list[SynthesisEvidenceItem]:
     ]
 
 
+@pytest.fixture(autouse=True)
+def mock_metered_invocation(monkeypatch):
+    async def invoke_metered(llm, messages, **_kwargs):
+        return await llm.ainvoke(messages)
+
+    monkeypatch.setattr(synthesis, "invoke_metered", invoke_metered)
+
+
 @pytest.mark.asyncio
 async def test_synthesis_returns_conflict_with_only_verified_evidence_ids(monkeypatch):
     llm = FakeLLM([
@@ -53,7 +61,9 @@ async def test_synthesis_returns_conflict_with_only_verified_evidence_ids(monkey
     ])
     monkeypatch.setattr(synthesis, "get_llm", lambda **_kwargs: llm)
 
-    claims = await synthesis.synthesize_claims("diffusion retrieval recall", _evidence())
+    claims = await synthesis.synthesize_claims(
+        "diffusion retrieval recall", _evidence(), user_id="test-user"
+    )
 
     assert len(claims) == 1
     assert claims[0].status == "conflicting"
@@ -71,7 +81,9 @@ async def test_synthesis_rejects_fabricated_evidence_ids_before_verification(mon
     monkeypatch.setattr(synthesis, "get_llm", lambda **_kwargs: llm)
 
     with pytest.raises(synthesis.SynthesisOutputError, match="invalid citation"):
-        await synthesis.synthesize_claims("diffusion retrieval recall", _evidence())
+        await synthesis.synthesize_claims(
+            "diffusion retrieval recall", _evidence(), user_id="test-user"
+        )
 
     assert len(llm.messages) == 1
 
@@ -84,7 +96,9 @@ async def test_synthesis_requires_two_distinct_papers_before_provider_call(monke
     monkeypatch.setattr(synthesis, "get_llm", no_provider_call)
     evidence = [_evidence()[0], _evidence()[0].model_copy(update={"evidence_id": "E2"})]
 
-    claims = await synthesis.synthesize_claims("diffusion retrieval recall", evidence)
+    claims = await synthesis.synthesize_claims(
+        "diffusion retrieval recall", evidence, user_id="test-user"
+    )
 
     assert claims == []
 
@@ -103,4 +117,6 @@ async def test_synthesis_rejects_evidence_marked_as_both_support_and_contradicti
     monkeypatch.setattr(synthesis, "get_llm", lambda **_kwargs: llm)
 
     with pytest.raises(synthesis.SynthesisOutputError, match="invalid citation"):
-        await synthesis.synthesize_claims("diffusion retrieval recall", _evidence())
+        await synthesis.synthesize_claims(
+            "diffusion retrieval recall", _evidence(), user_id="test-user"
+        )

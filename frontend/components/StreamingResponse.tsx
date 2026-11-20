@@ -28,20 +28,28 @@ export function StreamingResponse({ runId, onResult }: StreamingResponseProps) {
     let completed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let retries = 0;
+    let lastEventId: string | undefined;
     const seenEventIds = new Set<string>();
     const MAX_RETRIES = 3;
 
     const connect = () => {
-      streamSearch(
-        runId,
-        (event, eventId) => {
-          // The server replays its event log to a newly-created EventSource.
-          // Keep a per-run cursor so reconnects don't duplicate progress rows.
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = streamSearch(runId, {
+        onEvent: (event, eventId) => {
+          // The server replays its event log to each new fetch stream.
+          // Keep a per-run cursor so fetch reconnects resume after the last event.
+          if (eventId) lastEventId = eventId;
           if (eventId) {
             if (seenEventIds.has(eventId)) return;
             seenEventIds.add(eventId);
           }
-          if ('papers' in event) {
+          if ('status' in event && event.status === 'cancelled') {
+            completed = true;
+            setCancelled(true);
+            setDone(false);
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimerRef.current = undefined;
+          } else if ('papers' in event) {
             completed = true;
             setDone(true);
             onResult?.(event as PaperSearchResult);
@@ -49,21 +57,32 @@ export function StreamingResponse({ runId, onResult }: StreamingResponseProps) {
             setSteps((prev) => [...prev, event as AgentStep]);
           }
         },
-        (err) => {
+        onLastEventId: (eventId) => {
+          lastEventId = eventId;
+        },
+        onTerminalError: (err) => {
+          if (disposed || completed) return;
+          completed = true;
+          setError(err.message);
+        },
+        onTransportError: (err) => {
           // Backend replays persisted events on reconnect (update.md
-          // §7.1), so safe to re-subscribe. Retry with backoff.
+          // §7.1), so retry transport failures with the latest event cursor.
           if (disposed || completed) return;
           if (retries < MAX_RETRIES) {
             retries += 1;
-            retryTimer = setTimeout(connect, 1000 * retries);
+            retryTimer = setTimeout(() => {
+              retryTimer = undefined;
+              retryTimerRef.current = undefined;
+              connect();
+            }, 1000 * retries);
             retryTimerRef.current = retryTimer;
           } else {
+            completed = true;
             setError(err.message);
           }
-        }
-      ).then((unsub) => {
-        unsubscribeRef.current = unsub;
-      });
+        },
+      }, { lastEventId });
     };
     connect();
 

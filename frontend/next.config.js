@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // Allow CI and local Windows verification to avoid ACL-protected build caches.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   outputFileTracingRoot: __dirname,
   typedRoutes: true,
   async rewrites() {

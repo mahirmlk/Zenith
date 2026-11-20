@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     mistral_api_key: str = ""
 
-    firecrawl_api_key: str = ""
     semantic_scholar_api_key: str = ""
+    github_token: str = ""
 
     mem0_api_key: str = ""
     supabase_url: str = ""
@@ -29,10 +29,14 @@ class Settings(BaseSettings):
 
     max_summaries_per_run: int = 20
     max_searches_per_day_per_user: int = 100
+    llm_daily_spend_cap_usd_micros: int = 0
+    llm_monthly_spend_cap_usd_micros: int = 0
+    mem0_provider_spend_limit_confirmed: bool = False
     ocr_enabled: bool = False
     sandbox_enabled: bool = False
     research_plan_execution_enabled: bool = False
     research_synthesis_enabled: bool = False
+    public_paper_evidence_enabled: bool = False
 
     notifications_email_enabled: bool = False
     resend_api_key: str = ""

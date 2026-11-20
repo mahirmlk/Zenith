@@ -17,6 +17,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.research_types import (
     ComparisonRow,
+    PdfComparisonRow,
     ResearchPlanExecutionResult,
     ResearchPlanEvidence,
     ResearchPlanSource,
@@ -24,6 +25,7 @@ from agents.research_types import (
     SynthesisClaim,
     SynthesisEvidenceItem,
     build_comparison,
+    build_pdf_comparison,
 )
 from config import get_settings
 from security.authorization import can_access_project
@@ -67,6 +69,7 @@ class PlanExecutionState(TypedDict):
     sources: list[dict[str, Any]]
     evidence: list[dict[str, Any]]
     comparison: list[dict[str, Any]]
+    pdf_comparisons: list[dict[str, Any]]
     gaps: list[str]
     synthesis: list[dict[str, Any]]
     steps: list[dict[str, Any]]
@@ -293,6 +296,7 @@ def _pdf_evidence(
                     citation_id=f"{doc_id}:page:{page_number}",
                     document_id=doc_id,
                     page_number=page_number,
+                    filename=str(document.get("filename") or "document.pdf"),
                     sentence=sentence,
                     start_offset=start,
                     end_offset=end,
@@ -348,6 +352,12 @@ async def _compare_sources(state: PlanExecutionState) -> PlanExecutionState:
     state["comparison"] = [
         row.model_dump() for row in build_comparison(state["papers"][: state["max_sources"]])
     ]
+    state["pdf_comparisons"] = [
+        row.model_dump()
+        for row in build_pdf_comparison(
+            [item for item in state["evidence"] if item.get("document_id")]
+        )
+    ]
     state["steps"].append(
         ResearchPlanStepOutcome(
             step_id="compare_sources", status="complete", count=len(state["comparison"])
@@ -402,7 +412,10 @@ async def _synthesize(state: PlanExecutionState) -> PlanExecutionState:
     ][:6]
     await _emit_step(state, "draft_synthesis", "complete", count=len(evidence))
     await _emit_step(state, "review_claims", "started")
-    claims = await synthesize_claims(state["query"], evidence)
+    claims = await synthesize_claims(
+        state["query"], evidence, user_id=state["user_id"], run_id=state["run_id"],
+        operation_id=state["run_id"],
+    )
     state["synthesis"] = [claim.model_dump() for claim in claims]
     state["steps"].append(
         ResearchPlanStepOutcome(
@@ -539,6 +552,7 @@ async def run_plan_execution(run_id: str, user_id: str, query: str) -> None:
         "sources": [],
         "evidence": [],
         "comparison": [],
+        "pdf_comparisons": [],
         "gaps": [],
         "synthesis": [],
         "steps": [],
@@ -581,6 +595,10 @@ async def run_plan_execution(run_id: str, user_id: str, query: str) -> None:
         evidence=[ResearchPlanEvidence.model_validate(item) for item in final["evidence"]],
         gaps=list(final["gaps"]),
         comparison=[ComparisonRow.model_validate(row) for row in final["comparison"]],
+        pdf_comparisons=[
+            PdfComparisonRow.model_validate(row)
+            for row in final.get("pdf_comparisons", [])
+        ],
         synthesis=[SynthesisClaim.model_validate(claim) for claim in final["synthesis"]],
     )
     await run_store.update(run_id, status="complete", results=[results.model_dump()])

@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from agents.implementation_planner import make_plan
 from agents.implementation_planner import ImplementationPlan
 from dependencies import get_current_user
-from services.papers_with_code import fetch_paper_repos
+from services.github_repositories import search_paper_repositories
 from services.sandbox_runner import run_in_sandbox
 from services.supabase_client import get_supabase
 
@@ -28,7 +28,7 @@ async def implementation_plan(
         resp = await supabase.table("papers").select("*").eq("id", paper_id).single().execute()
         if not resp.data:
             raise HTTPException(status_code=404, detail="Paper not found")
-        repo_result = await fetch_paper_repos(paper_id)
+        repo_result = await search_paper_repositories(resp.data)
         repos = repo_result.get("repos", [])
         lookup_status: Literal["available", "no_results", "unavailable"] = (
             "unavailable"
@@ -41,6 +41,7 @@ async def implementation_plan(
             resp.data,
             repos if isinstance(repos, list) else [],
             repository_lookup_status=lookup_status,
+            repository_source=str(repo_result.get("source") or "GitHub repository search"),
         )
     except HTTPException:
         raise

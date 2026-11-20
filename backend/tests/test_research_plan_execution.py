@@ -34,6 +34,7 @@ def _state(**overrides):
         "sources": [],
         "evidence": [],
         "comparison": [],
+        "pdf_comparisons": [],
         "gaps": [],
         "synthesis": [],
         "steps": [],
@@ -67,6 +68,41 @@ def test_exact_evidence_uses_canonical_paper_and_offset_citation():
     item = evidence[0]
     assert item.citation_id == f"paper-1:{item.start_offset}:{item.end_offset}"
     assert item.sentence == state["papers"][0]["abstract"][item.start_offset:item.end_offset]
+
+
+@pytest.mark.asyncio
+async def test_plan_comparison_keeps_pdf_sources_separate_and_cited(monkeypatch):
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(execution, "_check_run_and_deadline", no_op)
+    monkeypatch.setattr(execution, "_emit_step", no_op)
+    sentence = "We evaluate retrieval on the Harbor benchmark."
+    state = _state(
+        project_id="project-1",
+        source_scope="project",
+        evidence=[
+            {
+                "citation_id": "doc-1:page:8",
+                "document_id": "doc-1",
+                "filename": "study.pdf",
+                "page_number": 8,
+                "sentence": sentence,
+                "start_offset": 14,
+                "end_offset": 14 + len(sentence),
+            }
+        ],
+    )
+
+    result = await execution._compare_sources(state)
+
+    assert result["comparison"] == []
+    assert len(result["pdf_comparisons"]) == 1
+    row = result["pdf_comparisons"][0]
+    assert row["document_id"] == "doc-1"
+    assert row["filename"] == "study.pdf"
+    assert row["datasets"]["citation_id"] == "doc-1:page:8"
+    assert row["datasets"]["sentence"] == sentence
 
 
 def test_synthesis_caps_disable_calls_unless_both_calls_and_tokens_fit():
@@ -289,8 +325,9 @@ async def test_execute_endpoint_enqueue_failure_marks_run_failed_and_refunds(mon
 
 
 def test_migration_cascades_run_cleanup_and_is_service_only():
-    migration = Path("supabase/migrations/0019_durable_research_plan_execution.sql").read_text()
-    deletion = Path("backend/services/account_deletion.py").read_text()
+    repository_root = Path(__file__).resolve().parents[2]
+    migration = (repository_root / "supabase/migrations/0019_durable_research_plan_execution.sql").read_text()
+    deletion = (repository_root / "backend/services/account_deletion.py").read_text()
 
     assert "REFERENCES public.research_runs(id) ON DELETE CASCADE" in migration
     assert "REVOKE ALL ON public.research_plan_executions FROM PUBLIC, anon, authenticated" in migration

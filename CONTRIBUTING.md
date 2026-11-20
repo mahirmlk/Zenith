@@ -69,15 +69,15 @@ git remote add upstream https://github.com/<org>/ai-paper-research-agent.git
 **Backend:**
 ```bash
 cd backend
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
 
-This installs the backend with all dev dependencies: `pytest`, `pytest-asyncio`, `httpx`, `ruff`, `mypy`.
+This installs the exact versions from `uv.lock`, including dev dependencies: `pytest`, `pytest-asyncio`, `httpx`, `ruff`, and `mypy`.
 
 **Frontend:**
 ```bash
 cd frontend
-npm install
+npm ci
 ```
 
 ### 3. Set Up Environment
@@ -185,7 +185,7 @@ Follow the [Coding Standards](#coding-standards). Write tests for new functional
 **Backend:**
 ```bash
 cd backend
-pytest
+uv run --locked pytest
 ```
 
 **Frontend:**
@@ -201,8 +201,8 @@ All tests must pass before opening a PR.
 **Backend:**
 ```bash
 cd backend
-ruff check .        # Python linter
-mypy .              # Static type checker (strict mode)
+uv run --locked ruff check .        # Python linter
+uv run --locked mypy .              # Static type checker (strict mode)
 ```
 
 **Frontend:**
@@ -314,10 +314,10 @@ test("renders paper title and TL;DR", () => {
 
 ```bash
 # Backend (all tests)
-cd backend && pytest
+cd backend && uv run --locked pytest
 
 # Backend (single file)
-cd backend && pytest tests/test_papers.py
+cd backend && uv run --locked pytest tests/test_papers.py
 
 # Frontend (all tests)
 cd frontend && npx vitest run

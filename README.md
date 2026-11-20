@@ -38,7 +38,7 @@ Zenith brings paper discovery, evidence-backed reading, and research organizatio
 | Paper-to-code planning | Extracts facts from exact abstract spans, flags missing reproduction details, and exports a Markdown plan. Suggested repositories are unverified; arbitrary code execution is disabled. |
 | Research planning | Shows a bounded plan preview. A separate queued executor exists behind a disabled-by-default feature flag and still needs staging validation. |
 | Change monitoring | Supports topic, author, citation, and DOI-backed Crossref status watches, plus in-app notifications. Email digests are opt-in and gated. |
-| Cost and safety controls | Applies per-user daily budgets, provider spend metering, bounded model fan-out, rate limits, citation checks, SSRF defenses, and explicit approvals for higher-risk actions. |
+| Cost and safety controls | Applies per-user daily budgets, provider spend metering, bounded model fan-out, rate limits, citation checks, disables uncontrolled user-URL fetching, and requires explicit approvals for higher-risk actions. |
 
 ### What sets Zenith apart
 
@@ -109,7 +109,7 @@ The main search is a three-step LangGraph pipeline. Each step reports progress t
 
 ## Evaluation and validation
 
-The full deterministic baseline in the project status record is dated **2026-11-13**. On **2026-11-14**, the abstract and PDF case evaluators, deterministic plan cases, and watchlist runner were run again over the current fixtures, and the recorded backend/frontend validation snapshot was reviewed. These are local checks against versioned, hand-authored fixtures: useful regression evidence for specific behaviors, but not measurements of production service quality.
+The full deterministic baseline in the project status record is dated **2026-11-15**. It includes grounded QA, PDF evidence, mocked-provider synthesis, research-plan, and watchlist fixtures run against the current code. These are local checks against versioned, hand-authored fixtures: useful regression evidence for specific behaviors, but not measurements of production service quality.
 
 ### Deterministic retrieval and evidence metrics
 
@@ -138,7 +138,7 @@ The full deterministic baseline in the project status record is dated **2026-11-
 
 | Dataset | Result | Cases exercise | What a pass does not mean |
 |---|---:|---|---|
-| `cross_paper_synthesis_v2` | 6 / 6 mocked-provider fixtures | Conflicting outcomes, one-source support downgraded to uncertain, fabricated generation anchors, unknown verifier evidence IDs, incomplete assessments, and unsupported verifier claims downgraded to uncertain. | It validates service contracts with canned provider responses. It does not measure live model behavior, evidence-span correctness, or scientific conclusions. |
+| `cross_paper_synthesis_v2` | 6 / 6 mocked-provider fixtures (2026-11-15) | Conflicting outcomes, one-source support downgraded to uncertain, fabricated generation anchors, unknown verifier evidence IDs, incomplete assessments, and unsupported verifier claims downgraded to uncertain. | It validates service contracts with canned provider responses. It does not measure live model behavior, evidence-span correctness, or scientific conclusions. |
 | `research_plan_v1` | 5 / 5 deterministic fixtures | Task routing, phrase-boundary false positives, source scope, bounded ceilings, feature-gated synthesis steps, and preview-only metadata. | It checks plan preview behavior, not live queue/database execution or successful completion of a research plan. |
 | `watchlist_notifications_v1` | 5 labeled fixtures; 4 complete source cases | Topic matching and fixture-based author/citation selection. Incomplete-source cases are excluded from recall denominators. | This is a smoke gate, not a live Semantic Scholar or Crossref quality evaluation. Current per-target results are listed below. |
 
@@ -162,17 +162,18 @@ One author-provider outage fixture was marked incomplete and excluded from the r
 | 2026-11-13 | `cross_paper_synthesis_v2` | 6 / 6 | Mocked service-contract checks, not a model-quality benchmark. |
 | 2026-11-14 | `research_plan_v1` | 5 / 5 | Deterministic preview checks, not an execution benchmark. |
 | 2026-11-14 | `watchlist_notifications_v1` | Topic 0.750 / 1.000; author 0.500 / 1.000; citation 0.500 / 1.000 (precision / recall) | Fresh local fixture-run output; four complete cases and one incomplete case. |
+| 2026-11-15 | `grounded_qa_v3`, `pdf_evidence_v1`, `cross_paper_synthesis_v2`, `research_plan_v1`, and `watchlist_notifications_v1` | 18/18, 6/6, 6/6, 5/5, and 5 cases passed respectively | Full deterministic regression suite; one watchlist source case was incomplete. These fixture scores are not calibrated scientific or live-provider quality measures. |
 
 ### Broader local validation snapshot
 
-| Check | Recorded result (2026-11-14) | Coverage / qualification |
+| Check | Recorded result (2026-11-15) | Coverage / qualification |
 |---|---:|---|
-| Backend tests | 389 passed, 6 skipped | Includes API, agent, retrieval, evidence, authorization, migrations, budgets, and recovery behavior using local fixtures and mocks. |
-| Frontend tests | 72 tests across 13 files | Component, page, and API normalization tests. |
+| Backend tests | 454 passed, 6 skipped | Full local suite, including async routes and migration, authorization, recovery, deployment-config, and project feature tests; provider credentials were cleared. |
+| Frontend tests | 97 tests across 14 files | Component, page, API normalization, invitations, project briefs, and streaming tests. |
 | Frontend lint and typecheck | Passed | Local ESLint and TypeScript checks. |
-| Backend Ruff and strict mypy | Passed | Ruff across backend; strict mypy across the 75 application source files reported in the status snapshot. |
-| Production frontend build | Passed | Compilation and generation of all 13 static pages completed. Supabase public Auth build variables were absent locally, so deployed Auth configuration still needs verification. |
-| Remote CI on current local head | Not verified | Run #48 passed an earlier revision; run #50 failed a retry-timing test later fixed locally; runs #52 and #54 did not start because of GitHub account billing limits. |
+| Backend Ruff and strict mypy | Passed | Repository-wide Ruff and strict mypy across 86 source files. |
+| Production frontend build | Passed outside sandbox | Default build generated all 13 pages and standalone traces; `/`, `/feed`, `/projects`, and `/watchlists` returned HTTP 200. Supabase public Auth build values are empty locally, so deployed Auth still needs verification. |
+| Remote CI on current local head | Not verified | PR #3 check run #56 failed one backend migration-path test on the remote revision; the local test fix passes, but this worktree revision has no remote result. |
 | Current-head Docker build | Not verified | Docker daemon was unavailable in the recorded local validation. |
 
 ### Reproducing the evaluation
@@ -224,7 +225,7 @@ flowchart TB
     Research --> ArXiv[(arXiv API)]
     Research --> HF[(Hugging Face API)]
     Summary --> OpenRouter[OpenRouter · model registry]
-    Summary --> Firecrawl[Firecrawl · SSRF-validated]
+    Summary -. disabled until redirect and egress controls exist .-> Firecrawl[Firecrawl · unavailable]
     Memory --> Mem0[(Mem0 memory)]
     Memory --> DB
 ```
@@ -236,7 +237,7 @@ flowchart TB
 | Next.js frontend | App Router pages for search, feed, saved papers, projects, paper details, graphs, watchlists, notifications, and account settings. Uses typed API clients and TanStack Query for server state. | Calls the FastAPI service; it does not read Supabase tables directly. |
 | FastAPI backend | Authenticates JWTs, validates request and response schemas, checks ownership and project roles, applies rate/spend limits, exposes REST/SSE endpoints, and manages the run lifecycle. | Owns authorization and external-service access. User-supplied model IDs and URLs are validated against server-side policy. |
 | LangGraph workers | Run the discovery → summary → memory graph and the separately gated plan-execution workflow. Emit structured agent steps and use checkpoints for resumable work. | Graph nodes call backend services; they do not bypass the model router or service-level spend controls. |
-| External providers and storage | arXiv and Hugging Face for discovery; Semantic Scholar and Crossref for graph/watch data; OpenRouter for model routing; optional Firecrawl and Mem0; Supabase/Postgres for application data and vectors; Redis for queues, budgets, and leases. | Provider access is wrapped by backend services. Production connections, migrations, provider behavior, and recovery still require staging verification. |
+| External providers and storage | arXiv and Hugging Face for discovery; Semantic Scholar and Crossref for graph/watch data; OpenRouter for model routing; optional Mem0; Supabase/Postgres for application data and vectors; Redis for queues, budgets, and leases. Firecrawl is disabled. | Provider access is wrapped by backend services. Production connections, migrations, provider behavior, and recovery still require staging verification. |
 
 ### External sources and their limits
 
@@ -248,7 +249,7 @@ flowchart TB
 | Crossref | DOI metadata and deposited update/retraction relations | Missing Crossref relations do not prove that a paper has never been updated. |
 | GitHub repository search | Candidate repositories for paper-to-code planning | Candidate links are unverified and may not be official or reproducible implementations. |
 | OpenRouter and configured model providers | Structured summaries and gated cross-paper synthesis | Model output is validated and evidence-linked where possible, but this does not establish scientific correctness. |
-| Firecrawl (optional) | Server-side full-text crawling when configured | Requests pass SSRF checks. Crawled content remains untrusted input and is handled as source text. |
+| Firecrawl | Disabled | The application issues no hosted crawl or legacy-cache read until redirect and worker egress controls are enforced. |
 | Mem0 (optional) | User research-interest memory | Memory availability affects personalization; fallback ranking remains available. |
 
 ### Request flow (search to stream)
@@ -300,7 +301,6 @@ Full stack with Docker: `docker compose up --build` from the repository root (fr
 | `APP_URL` | Yes | One canonical frontend origin; sent as OpenRouter HTTP-Referer |
 | `CORS_ORIGINS` | No (defaults to `APP_URL`) | Comma-separated exact browser origins |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend build | Supabase Auth client configuration; required for deployed sign-in |
-| `FIRECRAWL_API_KEY` | Optional | Full-text crawling for supported workflows |
 | `MEM0_API_KEY` | Optional | User research-interest memory |
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional | Raises provider quota where applicable for citation and author lookups |
 | `GITHUB_TOKEN` | Optional | Raises public GitHub repository-search quota; searches remain public-only |
@@ -316,7 +316,7 @@ Full stack with Docker: `docker compose up --build` from the repository root (fr
 | `ADMIN_API_KEY` | Scheduler | Authenticates `POST /api/internal/ingest` |
 | `SANDBOX_ENABLED` | Ignored by current runner | Arbitrary paper-code execution is always refused |
 
-The root [.env.example](.env.example) is the canonical full configuration reference. For the local frontend, copy [frontend/.env.local.example](frontend/.env.local.example) to `frontend/.env.local` and set the Supabase public URL/key. In production, configure Redis and Postgres, set nonzero budgets intentionally, and leave model-backed synthesis, plan execution, and email delivery disabled until their release gates pass. Before production, apply migrations `0001–0028` using the [migration runbook](docs/MIGRATIONS_RUNBOOK.md), then verify RLS, invitations, provider behavior, and rollback/restore in staging.
+The root [.env.example](.env.example) is the canonical full configuration reference. For the local frontend, copy [frontend/.env.local.example](frontend/.env.local.example) to `frontend/.env.local` and set the Supabase public URL/key. In production, configure Redis and Postgres, set nonzero budgets intentionally, and leave model-backed synthesis, plan execution, and email delivery disabled until their release gates pass. Before production, apply migrations `0001–0030` using the [migration runbook](docs/MIGRATIONS_RUNBOOK.md), then verify RLS, invitations, provider behavior, and rollback/restore in staging.
 
 ## API
 
@@ -354,7 +354,7 @@ Zenith/
 │   ├── security/      authorization · policies · input/output validation
 │   ├── guardrails/    pipeline · action approvals
 │   └── tests/         pytest (security · guardrails · retrieval · research)
-├── supabase/migrations/  0001–0028 (RLS, runs, projects, PDFs, invitations, spend and watch status)
+├── supabase/migrations/  0001–0033 (RLS, runs, projects, PDFs, invitations, spend and collaboration)
 ├── evals/             versioned deterministic regression fixtures and runners
 └── docs/              API · architecture · security · runbooks · STATUS
 ```
@@ -365,17 +365,17 @@ Zenith/
 
 JWT verification accepts ES256, RS256, and EdDSA signatures, with HS256 only as a legacy fallback. Issuer and audience are validated; JWKS keys are refreshed during rotation; Supabase `service_role` tokens are rejected as user sessions. Protected handlers apply server-side ownership and membership checks, and project roles constrain write access. Ownerless runs cannot be read through the user API.
 
-Ordered Supabase migrations define row-level security and the service-only tables used for run metadata, spend accounting, email delivery, and plan metadata. Static tests check important SQL and rollback boundaries. Migrations `0001–0028` have not been applied to staging in the recorded release review, so the live RLS policies and tenant-access matrix are **not yet verified**.
+Ordered Supabase migrations define row-level security and the service-only tables used for run metadata, spend accounting, email delivery, and plan metadata. Static tests check important SQL and rollback boundaries. Migrations `0001–0030` have not been applied to staging in the recorded release review, so the live RLS policies and tenant-access matrix are **not yet verified**.
 
 ### Untrusted papers and model output
 
-Paper titles, abstracts, crawled text, and uploaded PDF text are treated as untrusted data. Prompt content is explicitly delimited, instruction-like sentences are excluded from evidence selection, generated model output is schema-validated, and citation IDs are checked against evidence available to the operation. The deterministic evaluation includes prompt-injection and fabricated-citation cases, but its fixture coverage is small.
+Paper titles, abstracts, and uploaded PDF text are treated as untrusted data. Prompt content is explicitly delimited, instruction-like sentences are excluded from evidence selection, generated model output is schema-validated, and citation IDs are checked against evidence available to the operation. The deterministic evaluation includes prompt-injection and fabricated-citation cases, but its fixture coverage is small.
 
 Higher-risk tool actions use a deny-by-default policy and backend-recorded approvals. Paper-to-code plans are evidence extraction and documentation only; the runner refuses arbitrary code execution even when the legacy `SANDBOX_ENABLED` variable is set.
 
 ### Outbound requests, budgets, and logs
 
-Server-side URLs are checked for scheme and resolved IP before fetching to reduce SSRF risk. GitHub repository lookup is host-allowlisted, and returned candidate repositories are labeled unverified. Expensive paths use request rate limits and per-user search budgets. Provider spend is reserved and settled through the backend meter; model calls use the server registry and shared LLM router rather than caller-supplied provider IDs.
+User-controlled URL fetching is disabled, including hosted Firecrawl and its legacy cache reader. The SSRF validator is not currently a fetch boundary and cannot constrain remote redirects. GitHub repository lookup uses a fixed API host, and returned candidates are labeled unverified. Expensive paths use request rate limits and per-user search budgets. Provider spend is reserved and settled through the backend meter; selectable model IDs must have a verified spend bound and use the shared LLM router.
 
 Client errors are generic, security headers are configured, and Langfuse/Sentry integrations redact sensitive values. Threat model, data handling, and security test details are in [docs/security/THREAT_MODEL.md](docs/security/THREAT_MODEL.md), [docs/security/DATA_HANDLING.md](docs/security/DATA_HANDLING.md), and [docs/security/SECURITY_TEST_PLAN.md](docs/security/SECURITY_TEST_PLAN.md).
 
@@ -389,21 +389,21 @@ uv run --project backend --locked python evals/runners/run_evals.py   # determin
 uv run --project backend --locked python evals/runners/run_watchlist_evals.py
 ```
 
-GitHub Actions are configured for lint, typecheck, tests, evaluation smoke, and Docker build. The latest recorded remote status is not a current-head pass: earlier run #48 passed, run #50 failed a retry-timing test later fixed locally, and subsequent runs #52/#54 did not start because of account billing limits. Docker build, current-head CI, and staging deployment still need verification.
+GitHub Actions are configured for lint, typecheck, tests, evaluation smoke, and Docker build. The latest recorded remote evidence is workflow run #56 on commit `63f2f18`: frontend and Docker passed, while backend tests reported 319 passed, 6 skipped, and one migration-path failure. A local fix exists but has no remote CI result. Current-head CI and staging deployment still need verification.
 
-### Release readiness snapshot — 2026-11-14
+### Release readiness snapshot — 2026-11-20
 
 | Area | Local implementation / evidence | Remaining release check |
 |---|---|---|
-| Backend and frontend | Full backend and frontend suites, lint, typecheck, and frontend build passed in the local status snapshot. | Obtain a successful current-head remote CI run and repeat the deployment build with real Auth build configuration. |
-| Database and tenant isolation | Migrations `0001–0028`, ownership checks, role checks, and static migration tests exist locally. | Apply and verify migrations in staging, exercise owner/member/editor/viewer/outsider/anonymous access, and verify rollback and backup restore. |
+| Backend and frontend | Backend: 454 tests passed, 6 skipped; Ruff and strict mypy pass. Frontend: 97 tests passed, lint and typecheck pass. The production build generated 13 static pages and 15 routes. | Obtain green CI on a reviewed remote revision and verify the backend image against configured production services. |
+| Database and tenant isolation | Migrations `0001–0033`, ownership checks, role checks, and static migration tests exist locally. | Apply and verify migrations in staging, exercise owner/member/editor/viewer/outsider/anonymous access, and verify rollback and backup restore. |
 | Providers and spend | Provider routing, retries, timeouts, spend reservation/settlement, and fallback paths are implemented locally. | Validate provider calls, invoice reconciliation, concurrent spend behavior, rate limits, and failure recovery against staging services. |
 | Queue and recovery | Redis queue/leases and Postgres run/checkpoint code are implemented. | Exercise restarts, lease loss, cancellation, replay, checkpoint resumption, and retention against shared deployed infrastructure. |
 | Synthesis and plan execution | Both are bounded and feature-gated; deterministic fixture tests pass. | Keep disabled until staging authorization/recovery tests, provider checks, and quality evaluation pass. |
 | Notifications and OCR | Consent-controlled email and optional local OCR paths are implemented. | Verify Resend webhooks and unsubscribe/suppression behavior, and build/run the OCR container in staging. |
 | Production monitoring | Readiness checks and observability integrations exist. | Verify alerting and run an outage/recovery exercise; no live operational exercise was recorded. |
 
-The local code and passing tests do not establish production readiness. See [docs/STATUS.md](docs/STATUS.md) for the full release matrix, exact CI history, and evidence limitations.
+The local code and passing checks do not establish production readiness. Project annotations, repeatable project-scoped saved searches, versioned user-authored briefs, and opt-in page-grounded evidence for exact-version CC BY 4.0/CC0 1.0 arXiv sources are implemented locally. Public evidence remains disabled until staging verifies live OAI metadata and shared rate limiting. The Next.js production build passes outside the Windows sandbox, including standalone trace collection; a prior standalone smoke check returned HTTP 200 for `/`, `/feed`, `/projects`, and `/watchlists`. In-sandbox trace copying still fails with `EPERM`. The local Supabase public URL/key values are empty, and Docker and staging services are unavailable here. See [docs/STATUS.md](docs/STATUS.md) for the release matrix, CI history, and evidence limitations.
 
 ## Roadmap
 

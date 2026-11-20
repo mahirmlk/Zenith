@@ -6,13 +6,15 @@ import { fetchProjectSources } from '@/lib/project-api';
 import { buildProjectExport } from '@/lib/project-export';
 
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'project-1' }) }));
-vi.mock('@/lib/auth', () => ({ getJWT: async () => 'test-token' }));
+vi.mock('@/lib/auth', () => ({ getJWT: async () => 'x.eyJzdWIiOiJ1c2VyLTEifQ.x' }));
 
 describe('ProjectWorkspacePage', () => {
   let sources: { id: string; paper_id: string; paper?: { id: string; title: string; authors: string[]; url: string } | null }[];
   let notes: { id: string; content: string; created_at: string }[];
+  let annotations: Record<string, unknown>[];
+  let savedSearches: Record<string, unknown>[];
   let members: { project_id: string; user_id: string; role: 'viewer' | 'editor' }[];
-  let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string; email_sent_at: string | null }[];
+  let invitations: { id: string; project_id: string; email: string; role: 'viewer' | 'editor'; status: string; created_at: string; expires_at: string }[];
   let documents: { id: string; filename: string; page_count: number }[];
   let pageExtractionMethods: ('native' | 'ocr' | 'empty' | 'ocr_limit')[];
   let currentRole: 'owner' | 'editor' | 'viewer';
@@ -23,6 +25,8 @@ describe('ProjectWorkspacePage', () => {
   beforeEach(() => {
     sources = [];
     notes = [];
+    annotations = [];
+    savedSearches = [];
     members = [];
     invitations = [];
     documents = [];
@@ -47,6 +51,61 @@ describe('ProjectWorkspacePage', () => {
         const payload = JSON.parse(String(init?.body)) as { content: string };
         notes = [{ id: 'note-1', content: payload.content, created_at: '2026-11-11T12:00:00Z' }];
         body = notes;
+      } else if (url.pathname === '/api/projects/project-1/annotations' && method === 'GET') {
+        body = annotations;
+      } else if (url.pathname === '/api/projects/project-1/briefs' && method === 'GET') {
+        body = [];
+      } else if (url.pathname.startsWith('/api/projects/project-1/briefs/') && url.pathname.endsWith('/versions') && method === 'GET') {
+        body = [];
+      } else if (url.pathname === '/api/saved-searches' && method === 'GET') {
+        body = savedSearches;
+      } else if (url.pathname === '/api/saved-searches' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const savedSearch = { ...payload, id: `saved-search-${savedSearches.length + 1}`, model: null, created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' };
+        savedSearches = [...savedSearches, savedSearch];
+        body = savedSearch;
+      } else if (url.pathname.startsWith('/api/saved-searches/') && url.pathname.endsWith('/run') && method === 'POST') {
+        body = { run_id: 'run-saved-search' };
+      } else if (url.pathname.startsWith('/api/saved-searches/') && method === 'PATCH') {
+        const id = url.pathname.split('/').at(-1);
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        savedSearches = savedSearches.map((savedSearch) => savedSearch.id === id ? { ...savedSearch, ...payload } : savedSearch);
+        body = savedSearches.find((savedSearch) => savedSearch.id === id) ?? {};
+      } else if (url.pathname.startsWith('/api/saved-searches/') && method === 'DELETE') {
+        const id = url.pathname.split('/').at(-1);
+        savedSearches = savedSearches.filter((savedSearch) => savedSearch.id !== id);
+        body = { status: 'ok' };
+      } else if (url.pathname === '/api/projects/project-1/annotations' && method === 'POST') {
+        const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const annotation = {
+          id: `annotation-${annotations.length + 1}`,
+          project_id: 'project-1',
+          source_type: payload.source_type,
+          paper_source_id: payload.paper_source_id ?? null,
+          document_id: payload.document_id ?? null,
+          page_number: payload.page_number ?? null,
+          start_offset: payload.start_offset,
+          end_offset: payload.end_offset,
+          quote: payload.quote,
+          quote_sha256: 'abc123',
+          content: payload.content,
+          created_by: 'user-1',
+          created_at: '2026-11-15T10:00:00Z',
+          updated_at: '2026-11-15T10:00:00Z',
+          is_stale: false,
+          source_label: payload.source_type === 'pdf_page' ? 'methods.pdf' : 'Reliable Retrieval',
+        };
+        annotations = [...annotations, annotation];
+        body = annotation;
+      } else if (url.pathname.startsWith('/api/projects/project-1/annotations/') && method === 'PATCH') {
+        const id = url.pathname.split('/').at(-1);
+        const payload = JSON.parse(String(init?.body)) as { content: string };
+        annotations = annotations.map((annotation) => annotation.id === id ? { ...annotation, ...payload } : annotation);
+        body = annotations.find((annotation) => annotation.id === id) ?? {};
+      } else if (url.pathname.startsWith('/api/projects/project-1/annotations/') && method === 'DELETE') {
+        const id = url.pathname.split('/').at(-1);
+        annotations = annotations.filter((annotation) => annotation.id !== id);
+        body = { status: 'ok' };
       } else if (url.pathname === '/api/projects/project-1/members' && method === 'GET') {
         body = members;
       } else if (url.pathname === '/api/projects/project-1/members' && method === 'POST') {
@@ -57,7 +116,7 @@ describe('ProjectWorkspacePage', () => {
         body = invitations;
       } else if (url.pathname === '/api/projects/project-1/invitations' && method === 'POST') {
         const payload = JSON.parse(String(init?.body)) as { email: string; role: 'viewer' | 'editor' };
-        invitations = [{ id: 'invite-1', project_id: 'project-1', ...payload, status: 'pending', created_at: '2026-11-12T10:00:00Z', expires_at: '2026-11-19T10:00:00Z', email_sent_at: '2026-11-12T10:00:00Z' }];
+        invitations = [{ id: 'invite-1', project_id: 'project-1', ...payload, status: 'pending', created_at: '2026-11-12T10:00:00Z', expires_at: '2026-11-19T10:00:00Z' }];
         body = invitations[0];
       } else if (url.pathname === '/api/projects/project-1/invitations/invite-1/resend' && method === 'POST') {
         body = invitations[0];
@@ -120,6 +179,11 @@ describe('ProjectWorkspacePage', () => {
       } else if (url.pathname === '/api/research/compare' && method === 'POST') {
         body = {
           rows: [{ paper_id: 'paper-1', problem: 'A useful project paper.', methods: null, datasets: null, metrics: null, limitations: null, code_status: 'unverified' }],
+          pdf_comparisons: [{
+            document_id: 'document-1',
+            filename: 'methods.pdf',
+            methods: { sentence: 'The PDF reports the comparison benchmark.', citation_id: 'document-1:page:4', page_number: 4, start_offset: 10, end_offset: 50 },
+          }],
           pdf_evidence: [{ document_id: 'document-1', filename: 'methods.pdf', page_number: 4, citation_id: 'document-1:page:4', sentence: 'The PDF reports the comparison benchmark.', start_offset: 10, end_offset: 50 }],
         };
       } else if (url.pathname === '/api/research/plan' && method === 'POST') {
@@ -293,9 +357,12 @@ describe('ProjectWorkspacePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
     fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'compare retrieval benchmark' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
-    expect(await screen.findByText('“The PDF reports the comparison benchmark.”')).toBeInTheDocument();
-    expect(screen.getByText('[document-1:page:4] · page offsets 10–50')).toBeInTheDocument();
+    expect((await screen.findAllByText('“The PDF reports the comparison benchmark.”')).length).toBe(2);
+    expect(screen.getAllByText('[document-1:page:4] · page offsets 10–50')).toHaveLength(2);
     expect(screen.getByText('PDF source evidence · extractive, not synthesized')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Project PDF comparison fields · separate source documents' })).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded PDFs are shown as their own sources and are not attributed to a paper\./)).toBeInTheDocument();
+    expect(screen.getByText('Methods · page 4')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Synthesize' }));
     fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'diffusion recall' } });
@@ -309,7 +376,139 @@ describe('ProjectWorkspacePage', () => {
     expect(await screen.findByText('No papers attached yet. Add one from your feed to use project-scoped research.')).toBeInTheDocument();
   });
 
+  it('creates source-linked annotations from abstract and PDF evidence and supports edit/delete', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    await screen.findByRole('heading', { name: 'Alpha Project' });
+    fireEvent.change(await screen.findByLabelText('Choose a paper to add'), { target: { value: 'paper-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add paper' }));
+    await screen.findByRole('button', { name: 'Remove Reliable Retrieval from project' });
+
+    fireEvent.change(screen.getByLabelText('Question or comparison'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Run research' }));
+    await screen.findByText('“The PDF reports the same benchmark.”');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate evidence from Reliable Retrieval' }));
+    expect(screen.getByText('Reliable Retrieval · abstract')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Your annotation'), { target: { value: 'Abstract note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save annotation' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/annotations') && init?.method === 'POST')).toBe(true));
+    expect(await screen.findByText('Abstract note')).toBeInTheDocument();
+
+    const abstractPost = request.mock.calls.find(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(abstractPost?.[1]?.body))).toEqual({
+      source_type: 'paper_abstract', paper_source_id: 'source-1', start_offset: 5, end_offset: 48,
+      quote: 'Retrieval quality improved on the benchmark.', content: 'Abstract note',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate quote from methods.pdf page 4' }));
+    fireEvent.change(screen.getByLabelText('Your annotation'), { target: { value: 'PDF note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save annotation' }));
+    await waitFor(() => expect(request.mock.calls.filter(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    )).toHaveLength(2));
+    const pdfPost = request.mock.calls.filter(([input, init]) =>
+      String(input).endsWith('/annotations') && init?.method === 'POST',
+    )[1];
+    expect(JSON.parse(String(pdfPost?.[1]?.body))).toEqual({
+      source_type: 'pdf_page', document_id: 'document-1', page_number: 4, start_offset: 0, end_offset: 35,
+      quote: 'The PDF reports the same benchmark.', content: 'PDF note',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit annotation for Reliable Retrieval' }));
+    fireEvent.change(screen.getByLabelText('Edit annotation'), { target: { value: 'Updated abstract note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/annotations/annotation-1') && init?.method === 'PATCH' &&
+      JSON.stringify(JSON.parse(String(init.body))) === JSON.stringify({ content: 'Updated abstract note' }),
+    )).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete annotation for methods.pdf' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) =>
+      String(input).endsWith('/annotations/annotation-2') && init?.method === 'DELETE',
+    )).toBe(true));
+  });
+
+  it('shows annotations read-only to viewers', async () => {
+    currentRole = 'viewer';
+    annotations = [{
+      id: 'annotation-existing', project_id: 'project-1', source_type: 'pdf_page', paper_source_id: null,
+      document_id: 'document-1', page_number: 4, start_offset: 0, end_offset: 5, quote: 'Exact quote',
+      quote_sha256: 'abc', content: 'Viewer note', created_by: 'user-2', created_at: '2026-11-15T10:00:00Z',
+      updated_at: '2026-11-15T10:00:00Z', is_stale: true, source_label: 'methods.pdf',
+    }];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText('Viewer note')).toBeInTheDocument();
+    expect(screen.getByText('Source changed · quote may be stale')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Annotate / })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit annotation for methods.pdf' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete annotation for methods.pdf' })).not.toBeInTheDocument();
+  });
+
+  it('creates, lists, edits, deletes, and runs a project saved search', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('heading', { name: 'Saved searches' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search name'), { target: { value: 'Retrieval quality scan' } });
+    fireEvent.change(screen.getByLabelText('Query'), { target: { value: 'retrieval quality benchmark' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save search' }));
+
+    expect(await screen.findByText('Retrieval quality scan')).toBeInTheDocument();
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/api/saved-searches') && init?.method === 'POST');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+        name: 'Retrieval quality scan', query: 'retrieval quality benchmark', project_id: 'project-1',
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run search' }));
+    expect(await screen.findByText('run-saved-search')).toBeInTheDocument();
+    expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1/run') && init?.method === 'POST')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit saved search name'), { target: { value: 'Updated scan' } });
+    fireEvent.change(screen.getByLabelText('Edit saved search query'), { target: { value: 'retrieval robustness' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Updated scan')).toBeInTheDocument();
+    await waitFor(() => {
+      const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1') && init?.method === 'PATCH');
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ name: 'Updated scan', query: 'retrieval robustness', model: null });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/api/saved-searches/saved-search-1') && init?.method === 'DELETE')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Updated scan')).not.toBeInTheDocument());
+  });
+
+  it('lets project viewers run saved searches but hides create/edit/delete controls', async () => {
+    currentRole = 'viewer';
+    savedSearches = [
+      { id: 'saved-search-existing', name: 'Shared scan', query: 'retrieval', model: null, project_id: 'project-1', created_by: 'owner-2', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+      { id: 'saved-search-mine', name: 'My contribution', query: 'retrieval ablation', model: null, project_id: 'project-1', created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+      { id: 'saved-search-personal', name: 'Private scan', query: 'my private query', model: null, project_id: null, created_by: 'user-1', created_at: '2026-11-15T10:00:00Z', updated_at: '2026-11-15T10:00:00Z' },
+    ];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
+
+    expect(await screen.findByText('Shared scan')).toBeInTheDocument();
+    expect(await screen.findByText('My contribution')).toBeInTheDocument();
+    expect(screen.queryByText('Private scan')).not.toBeInTheDocument();
+    expect(screen.queryByText('my private query')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Search name')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Run search' })).toHaveLength(2);
+  });
+
   it('lets owners create, list, resend, and revoke email invitations', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}><ProjectWorkspacePage /></QueryClientProvider>);
 
@@ -318,10 +517,17 @@ describe('ProjectWorkspacePage', () => {
     fireEvent.change(screen.getByLabelText('Invitation role'), { target: { value: 'editor' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
     expect(await screen.findByText('researcher@example.org')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open invitation link for researcher@example.org' }))
+      .toHaveAttribute('href', '/projects/invitations/accept?invitation_id=invite-1');
     await waitFor(() => {
       const call = request.mock.calls.find(([input, init]) => String(input).endsWith('/invitations') && init?.method === 'POST');
       expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'researcher@example.org', role: 'editor' });
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy invitation link for researcher@example.org' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}/projects/invitations/accept?invitation_id=invite-1`,
+    ));
+    expect(screen.getByRole('button', { name: 'Copy invitation link for researcher@example.org' })).toHaveTextContent('Copied');
     fireEvent.click(screen.getByRole('button', { name: 'Resend invitation to researcher@example.org' }));
     fireEvent.click(screen.getByRole('button', { name: 'Revoke invitation to researcher@example.org' }));
     await waitFor(() => expect(request.mock.calls.some(([input, init]) => String(input).endsWith('/invitations/invite-1/resend') && init?.method === 'POST')).toBe(true));

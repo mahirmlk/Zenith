@@ -2,14 +2,19 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
+import type { Route } from 'next';
 import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getJWT } from '@/lib/auth';
 import { executeResearchPlan } from '@/lib/api';
 import { fetchProjectSources } from '@/lib/project-api';
+import { createProjectAnnotation, deleteProjectAnnotation, fetchProjectAnnotations, updateProjectAnnotation } from '@/lib/project-annotations-api';
+import { createSavedSearch, deleteSavedSearch, fetchSavedSearches, runSavedSearch, updateSavedSearch } from '@/lib/saved-searches-api';
 import ResearchPlanExecutionPanel from '@/components/ResearchPlanExecutionPanel';
+import ProjectBriefsPanel from '@/components/ProjectBriefsPanel';
+import { StreamingResponse } from '@/components/StreamingResponse';
 import { buildProjectExport, type ExportFormat, type ProjectExportNote, type ProjectExportPaper, type ProjectExportSource } from '@/lib/project-export';
-import type { ResearchPlanPreview } from '@/types';
+import type { PaperSearchResult, ProjectAnnotation, ProjectAnnotationAnchor, ProjectBriefSourceLocator, ResearchPlanPreview, SavedSearch } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -36,7 +41,6 @@ interface ProjectInvitation {
   status: string;
   created_at: string;
   expires_at: string;
-  email_sent_at: string | null;
 }
 
 type ProjectNote = ProjectExportNote & { created_by?: string };
@@ -96,6 +100,7 @@ interface ComparisonRow {
 
 interface ComparisonResponse {
   rows: ComparisonRow[];
+  pdf_comparisons?: PdfComparisonRow[];
   pdf_evidence: {
     document_id: string;
     filename: string;
@@ -105,6 +110,24 @@ interface ComparisonResponse {
     start_offset: number;
     end_offset: number;
   }[];
+}
+
+interface PdfComparisonEvidence {
+  sentence: string;
+  citation_id: string;
+  page_number: number;
+  start_offset: number;
+  end_offset: number;
+}
+
+interface PdfComparisonRow {
+  document_id: string;
+  filename: string;
+  problem?: PdfComparisonEvidence | null;
+  methods?: PdfComparisonEvidence | null;
+  datasets?: PdfComparisonEvidence | null;
+  metrics?: PdfComparisonEvidence | null;
+  limitations?: PdfComparisonEvidence | null;
 }
 
 interface ProjectSearchResult {
@@ -178,6 +201,21 @@ interface ProjectDocumentPages {
 
 type ResearchMode = 'search' | 'plan' | 'evidence' | 'answer' | 'compare' | 'synthesize';
 type ResearchResponse = ResearchPlanResponse | EvidenceResponse | AnswerResponse | ComparisonResponse | ProjectSearchResponse | SynthesisResponse;
+
+type AnnotationAnchorDraft = ProjectAnnotationAnchor & { label: string };
+
+function getTokenSubject(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=');
+    const claims = JSON.parse(window.atob(base64)) as { sub?: unknown };
+    return typeof claims.sub === 'string' ? claims.sub : null;
+  } catch {
+    return null;
+  }
+}
 
 function extractionMethodLabel(method: ExtractionMethod): string {
   switch (method) {
@@ -270,12 +308,28 @@ export default function ProjectWorkspacePage() {
   const projectId = params.id;
   const queryClient = useQueryClient();
   const [noteDraft, setNoteDraft] = useState('');
+  const [savedSearchName, setSavedSearchName] = useState('');
+  const [savedSearchQueryDraft, setSavedSearchQueryDraft] = useState('');
+  const [editingSavedSearchId, setEditingSavedSearchId] = useState<string | null>(null);
+  const [editingSavedSearchName, setEditingSavedSearchName] = useState('');
+  const [editingSavedSearchQuery, setEditingSavedSearchQuery] = useState('');
+  const [editingSavedSearchModel, setEditingSavedSearchModel] = useState<string | null>(null);
+  const [activeSavedSearchRunId, setActiveSavedSearchRunId] = useState<string | null>(null);
+  const [savedSearchRunResult, setSavedSearchRunResult] = useState<PaperSearchResult | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [annotationAnchor, setAnnotationAnchor] = useState<AnnotationAnchorDraft | null>(null);
+  const [annotationDraft, setAnnotationDraft] = useState('');
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editingAnnotationDraft, setEditingAnnotationDraft] = useState('');
+  const [briefSources, setBriefSources] = useState<ProjectBriefSourceLocator[]>([]);
   const [paperToAttach, setPaperToAttach] = useState('');
   const [paperSearch, setPaperSearch] = useState('');
   const [memberId, setMemberId] = useState('');
   const [memberRole, setMemberRole] = useState<'viewer' | 'editor'>('viewer');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'viewer' | 'editor'>('viewer');
+  const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null);
+  const [invitationLinkError, setInvitationLinkError] = useState<string | null>(null);
   const [debouncedPaperSearch, setDebouncedPaperSearch] = useState('');
   const [researchQuery, setResearchQuery] = useState('');
   const [researchMode, setResearchMode] = useState<ResearchMode>('evidence');
@@ -288,6 +342,16 @@ export default function ProjectWorkspacePage() {
     const timeout = window.setTimeout(() => setDebouncedPaperSearch(paperSearch.trim()), 250);
     return () => window.clearTimeout(timeout);
   }, [paperSearch]);
+
+  useEffect(() => {
+    let active = true;
+    void getJWT().then((token) => {
+      if (active) setCurrentUserId(getTokenSubject(token));
+    }).catch(() => {
+      if (active) setCurrentUserId(null);
+    });
+    return () => { active = false; };
+  }, []);
 
   const projectQuery = useQuery({
     queryKey: ['project', projectId],
@@ -316,6 +380,18 @@ export default function ProjectWorkspacePage() {
   const notesQuery = useQuery({
     queryKey: ['project-notes', projectId],
     queryFn: () => apiRequest<ProjectNote[]>(`/api/projects/${encodeURIComponent(projectId)}/notes`),
+    enabled: !!projectId,
+  });
+
+  const annotationsQuery = useQuery({
+    queryKey: ['project-annotations', projectId],
+    queryFn: () => fetchProjectAnnotations(projectId),
+    enabled: !!projectId,
+  });
+
+  const savedSearchesQuery = useQuery({
+    queryKey: ['saved-searches', projectId],
+    queryFn: fetchSavedSearches,
     enabled: !!projectId,
   });
 
@@ -400,6 +476,66 @@ export default function ProjectWorkspacePage() {
     },
   });
 
+  const createAnnotation = useMutation({
+    mutationFn: ({ anchor, content }: { anchor: ProjectAnnotationAnchor; content: string }) =>
+      createProjectAnnotation(projectId, anchor, content),
+    onSuccess: async () => {
+      setAnnotationAnchor(null);
+      setAnnotationDraft('');
+      await queryClient.invalidateQueries({ queryKey: ['project-annotations', projectId] });
+    },
+  });
+
+  const updateAnnotation = useMutation({
+    mutationFn: ({ annotationId, content }: { annotationId: string; content: string }) =>
+      updateProjectAnnotation(projectId, annotationId, content),
+    onSuccess: async () => {
+      setEditingAnnotationId(null);
+      setEditingAnnotationDraft('');
+      await queryClient.invalidateQueries({ queryKey: ['project-annotations', projectId] });
+    },
+  });
+
+  const removeAnnotation = useMutation({
+    mutationFn: (annotationId: string) => deleteProjectAnnotation(projectId, annotationId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-annotations', projectId] }),
+  });
+
+  const createSavedSearchMutation = useMutation({
+    mutationFn: () => createSavedSearch({
+      name: savedSearchName.trim(),
+      query: savedSearchQueryDraft.trim(),
+      project_id: projectId,
+    }),
+    onSuccess: async () => {
+      setSavedSearchName('');
+      setSavedSearchQueryDraft('');
+      await queryClient.invalidateQueries({ queryKey: ['saved-searches', projectId] });
+    },
+  });
+
+  const updateSavedSearchMutation = useMutation({
+    mutationFn: ({ id, name, query, model }: { id: string; name: string; query: string; model: string | null }) =>
+      updateSavedSearch(id, { name: name.trim(), query: query.trim(), model }),
+    onSuccess: async () => {
+      setEditingSavedSearchId(null);
+      await queryClient.invalidateQueries({ queryKey: ['saved-searches', projectId] });
+    },
+  });
+
+  const deleteSavedSearchMutation = useMutation({
+    mutationFn: deleteSavedSearch,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['saved-searches', projectId] }),
+  });
+
+  const runSavedSearchMutation = useMutation({
+    mutationFn: runSavedSearch,
+    onSuccess: ({ run_id }) => {
+      setSavedSearchRunResult(null);
+      setActiveSavedSearchRunId(run_id);
+    },
+  });
+
   const addMember = useMutation({
     mutationFn: (input: { user_id: string; role: 'viewer' | 'editor' }) => apiRequest<ProjectMember[]>(
       `/api/projects/${encodeURIComponent(projectId)}/members`,
@@ -446,6 +582,18 @@ export default function ProjectWorkspacePage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-invitations', projectId] }),
   });
 
+  async function copyInvitationLink(invitationId: string) {
+    setInvitationLinkError(null);
+    try {
+      const url = new URL('/projects/invitations/accept', window.location.origin);
+      url.searchParams.set('invitation_id', invitationId);
+      await navigator.clipboard.writeText(url.toString());
+      setCopiedInvitationId(invitationId);
+    } catch {
+      setInvitationLinkError('Could not copy the invitation link. Open the accept page below and copy its address instead.');
+    }
+  }
+
   const executePlan = useMutation({
     mutationFn: ({ query, projectId: scopedProjectId }: { query: string; projectId?: string }) => executeResearchPlan(query, scopedProjectId),
     onSuccess: ({ runId }) => setExecutionRunId(runId),
@@ -473,6 +621,60 @@ export default function ProjectWorkspacePage() {
     event.preventDefault();
     const content = noteDraft.trim();
     if (content) createNote.mutate(content);
+  }
+
+  function beginAnnotation(anchor: ProjectAnnotationAnchor, label: string) {
+    setAnnotationAnchor({ ...anchor, label });
+    setAnnotationDraft('');
+    createAnnotation.reset();
+  }
+
+  function addQuoteToBrief(source: ProjectBriefSourceLocator) {
+    setBriefSources((current) => {
+      if (current.length >= 50) return current;
+      const alreadyAdded = current.some((item) => item.source_type === source.source_type
+        && (item.source_type === 'paper_abstract'
+          ? source.source_type === 'paper_abstract' && item.paper_source_id === source.paper_source_id
+          : source.source_type === 'pdf_page' && item.document_id === source.document_id && item.page_number === source.page_number)
+        && item.start_offset === source.start_offset
+        && item.end_offset === source.end_offset);
+      return alreadyAdded ? current : [...current, source];
+    });
+  }
+
+  function handleAnnotationSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = annotationDraft.trim();
+    if (!annotationAnchor || !content) return;
+    const anchor: ProjectAnnotationAnchor = annotationAnchor.source_type === 'paper_abstract'
+      ? {
+        source_type: 'paper_abstract',
+        paper_source_id: annotationAnchor.paper_source_id,
+        start_offset: annotationAnchor.start_offset,
+        end_offset: annotationAnchor.end_offset,
+        quote: annotationAnchor.quote,
+      }
+      : {
+        source_type: 'pdf_page',
+        document_id: annotationAnchor.document_id,
+        page_number: annotationAnchor.page_number,
+        start_offset: annotationAnchor.start_offset,
+        end_offset: annotationAnchor.end_offset,
+        quote: annotationAnchor.quote,
+      };
+    createAnnotation.mutate({ anchor, content });
+  }
+
+  function beginAnnotationEdit(annotation: ProjectAnnotation) {
+    setEditingAnnotationId(annotation.id);
+    setEditingAnnotationDraft(annotation.content);
+    updateAnnotation.reset();
+  }
+
+  function handleAnnotationEdit(event: FormEvent<HTMLFormElement>, annotationId: string) {
+    event.preventDefault();
+    const content = editingAnnotationDraft.trim();
+    if (content) updateAnnotation.mutate({ annotationId, content });
   }
 
   function handleResearchSubmit(event: FormEvent<HTMLFormElement>) {
@@ -643,18 +845,25 @@ export default function ProjectWorkspacePage() {
               {isEvidenceResponse(result) && (
                 <div className="space-y-3">
                   <p className="text-sm text-zenith-body">{result.explanation}</p>
-                  {result.evidence.map((item) => (
-                    <article key={`${item.paper_id}:${item.start_offset}:${item.end_offset}`} className="rounded-xl border border-zenith-border bg-white p-4">
-                      <h4 className="text-sm font-semibold text-ink-900">{item.title || item.paper_id}</h4>
-                      <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
-                      <p className="mt-2 font-mono text-[10px] text-zenith-muted">{item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
-                    </article>
-                  ))}
+                  {result.evidence.map((item) => {
+                    const source = (sourceQuery.data ?? []).find((candidate) => candidate.paper_id === item.paper_id);
+                    return (
+                      <article key={`${item.paper_id}:${item.start_offset}:${item.end_offset}`} className="rounded-xl border border-zenith-border bg-white p-4">
+                        <h4 className="text-sm font-semibold text-ink-900">{item.title || item.paper_id}</h4>
+                        <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
+                        <p className="mt-2 font-mono text-[10px] text-zenith-muted">{item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
+                        {canWrite && source && <button type="button" onClick={() => beginAnnotation({ source_type: 'paper_abstract', paper_source_id: source.id, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence }, `${item.title || item.paper_id} · abstract`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate evidence from ${item.title || item.paper_id}`}>Annotate quote</button>}
+                        {canWrite && source && <button type="button" disabled={briefSources.length >= 50} onClick={() => addQuoteToBrief({ source_type: 'paper_abstract', paper_source_id: source.id, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence })} title={briefSources.length >= 50 ? 'A brief version supports at most 50 citations' : undefined} className="ml-2 mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary disabled:cursor-not-allowed disabled:opacity-50">Add quote to brief</button>}
+                      </article>
+                    );
+                  })}
                   {result.pdf_evidence?.map((item) => (
                     <article key={`${item.citation_id}:${item.start_offset}`} className="rounded-xl border border-zenith-secondary/30 bg-zenith-surface/60 p-4">
                       <h4 className="text-sm font-semibold text-ink-900">{item.filename} · page {item.page_number}</h4>
                       <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
                       <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{item.citation_id}] · page offsets {item.start_offset}–{item.end_offset}</p>
+                      {canWrite && <button type="button" onClick={() => beginAnnotation({ source_type: 'pdf_page', document_id: item.document_id, page_number: item.page_number, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence }, `${item.filename} · page ${item.page_number}`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate quote from ${item.filename} page ${item.page_number}`}>Annotate quote</button>}
+                      {canWrite && <button type="button" disabled={briefSources.length >= 50} onClick={() => addQuoteToBrief({ source_type: 'pdf_page', document_id: item.document_id, page_number: item.page_number, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence })} title={briefSources.length >= 50 ? 'A brief version supports at most 50 citations' : undefined} className="ml-2 mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary disabled:cursor-not-allowed disabled:opacity-50">Add quote to brief</button>}
                     </article>
                   ))}
                   {result.abstained && <p className="rounded-lg bg-zenith-surface p-3 text-sm text-zenith-muted">No matching abstract or PDF page evidence was found. Attach papers or upload a text-based PDF, then try a more specific query.</p>}
@@ -673,12 +882,16 @@ export default function ProjectWorkspacePage() {
                         <p className="mt-2 text-sm leading-6 text-ink-900">{claim.text}</p>
                         {claim.explanation && <p className="mt-2 text-xs leading-5 text-zenith-muted">{claim.explanation}</p>}
                         <ul className="mt-3 space-y-2">
-                          {cited.map((item) => (
-                            <li key={item.evidence_id} className="border-l-2 border-zenith-secondary/60 pl-3">
-                              <blockquote className="text-xs leading-5 text-zenith-body">“{item.sentence}”</blockquote>
-                              <p className="mt-1 font-mono text-[10px] text-zenith-muted">{item.title || item.paper_id} · {item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
-                            </li>
-                          ))}
+                          {cited.map((item) => {
+                            const source = (sourceQuery.data ?? []).find((candidate) => candidate.paper_id === item.paper_id);
+                            return (
+                              <li key={item.evidence_id} className="border-l-2 border-zenith-secondary/60 pl-3">
+                                <blockquote className="text-xs leading-5 text-zenith-body">“{item.sentence}”</blockquote>
+                                <p className="mt-1 font-mono text-[10px] text-zenith-muted">{item.title || item.paper_id} · {item.paper_id} · abstract offsets {item.start_offset}–{item.end_offset}</p>
+                                {canWrite && source && <button type="button" onClick={() => beginAnnotation({ source_type: 'paper_abstract', paper_source_id: source.id, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence }, `${item.title || item.paper_id} · abstract`)} className="mt-2 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate evidence from ${item.title || item.paper_id}`}>Annotate quote</button>}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </article>
                     );
@@ -695,6 +908,7 @@ export default function ProjectWorkspacePage() {
                       <h4 className="text-sm font-semibold text-ink-900">{item.filename} · page {item.page_number}</h4>
                       <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
                       <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{item.citation_id}] · page offsets {item.start_offset}–{item.end_offset}</p>
+                      {canWrite && <button type="button" onClick={() => beginAnnotation({ source_type: 'pdf_page', document_id: item.document_id, page_number: item.page_number, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence }, `${item.filename} · page ${item.page_number}`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate quote from ${item.filename} page ${item.page_number}`}>Annotate quote</button>}
                     </article>
                   ))}
                   {result.abstained && <p className="text-sm text-amber-900">{result.confidence_explanation}</p>}
@@ -713,6 +927,41 @@ export default function ProjectWorkspacePage() {
                       <p className="border-t border-zenith-border bg-white px-3 py-2 text-xs text-zenith-muted">Heuristic keyword matches return exact abstract sentences. Empty fields mean no matching sentence was found; the extracted categories are not independently verified.</p>
                     </div>
                   )}
+                  {(result.pdf_comparisons ?? []).length > 0 && (
+                    <section aria-labelledby="comparison-pdf-fields-heading" className="space-y-3">
+                      <div>
+                        <h3 id="comparison-pdf-fields-heading" className="text-xs font-semibold uppercase tracking-wide text-zenith-muted">Project PDF comparison fields · separate source documents</h3>
+                        <p className="mt-1 text-xs text-zenith-muted">Each field quotes an exact matching sentence. Uploaded PDFs are shown as their own sources and are not attributed to a paper.</p>
+                      </div>
+                      <div className="space-y-3">
+                        {(result.pdf_comparisons ?? []).map((row) => {
+                          const dimensions: [string, PdfComparisonEvidence | null | undefined][] = [
+                            ['Research focus', row.problem],
+                            ['Methods', row.methods],
+                            ['Datasets', row.datasets],
+                            ['Metrics', row.metrics],
+                            ['Limitations', row.limitations],
+                          ];
+                          return (
+                            <article key={row.document_id} className="rounded-xl border border-zenith-secondary/30 bg-white p-4">
+                              <h4 className="text-sm font-semibold text-ink-900">{row.filename}</h4>
+                              <dl className="mt-3 space-y-3">
+                                {dimensions.map(([label, evidence]) => evidence && (
+                                  <div key={label} className="border-t border-zenith-border pt-2">
+                                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-zenith-muted">{label} · page {evidence.page_number}</dt>
+                                    <dd>
+                                      <blockquote className="mt-1 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{evidence.sentence}”</blockquote>
+                                      <p className="mt-1 font-mono text-[10px] text-zenith-muted">[{evidence.citation_id}] · page offsets {evidence.start_offset}–{evidence.end_offset}</p>
+                                    </dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
                   {result.pdf_evidence.length > 0 && (
                     <section aria-labelledby="comparison-pdf-evidence-heading" className="space-y-3">
                       <h3 id="comparison-pdf-evidence-heading" className="text-xs font-semibold uppercase tracking-wide text-zenith-muted">PDF source evidence · extractive, not synthesized</h3>
@@ -722,18 +971,22 @@ export default function ProjectWorkspacePage() {
                             <p className="text-xs font-semibold text-ink-900">{item.filename} · page {item.page_number}</p>
                             <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{item.sentence}”</blockquote>
                             <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{item.citation_id}] · page offsets {item.start_offset}–{item.end_offset}</p>
+                            {canWrite && <button type="button" onClick={() => beginAnnotation({ source_type: 'pdf_page', document_id: item.document_id, page_number: item.page_number, start_offset: item.start_offset, end_offset: item.end_offset, quote: item.sentence }, `${item.filename} · page ${item.page_number}`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate quote from ${item.filename} page ${item.page_number}`}>Annotate quote</button>}
                           </li>
                         ))}
                       </ul>
                     </section>
                   )}
-                  {result.rows.length === 0 && result.pdf_evidence.length === 0 && <p className="text-sm text-zenith-muted">No matching attached paper or PDF evidence was found for this comparison.</p>}
+                  {result.rows.length === 0 && !(result.pdf_comparisons ?? []).length && result.pdf_evidence.length === 0 && <p className="text-sm text-zenith-muted">No matching attached paper or PDF evidence was found for this comparison.</p>}
                 </div>
               )}
               {isProjectSearchResponse(result) && (
                 result.results.length ? (
                   <ul className="space-y-3">
-                    {result.results.map((paper) => (
+                    {result.results.map((paper) => {
+                      const paperSource = paper.source_type === 'paper' ? (sourceQuery.data ?? []).find((source) => source.paper_id === paper.id) : undefined;
+                      const canAnchor = paper.snippet && typeof paper.start_offset === 'number' && typeof paper.end_offset === 'number';
+                      return (
                       <li key={paper.id} className="rounded-xl border border-zenith-border bg-white p-4">
                         <h4 className="text-sm font-semibold text-ink-900">
                           {paper.source_type === 'pdf_page' ? `${paper.filename ?? paper.title} · page ${paper.page_number ?? '?'}` : paper.title}
@@ -742,8 +995,11 @@ export default function ProjectWorkspacePage() {
                         {paper.snippet && <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{paper.snippet}”</blockquote>}
                         {paper.citation_id && <p className="mt-2 font-mono text-[10px] text-zenith-muted">[{paper.citation_id}] · page offsets {paper.start_offset}–{paper.end_offset}</p>}
                         {paper.abstract && <p className="mt-2 line-clamp-4 text-sm leading-6 text-zenith-body">{paper.abstract}</p>}
+                        {canWrite && canAnchor && paper.source_type === 'paper' && paperSource && <button type="button" onClick={() => beginAnnotation({ source_type: 'paper_abstract', paper_source_id: paperSource.id, start_offset: paper.start_offset!, end_offset: paper.end_offset!, quote: paper.snippet! }, `${paper.title} · abstract`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate evidence from ${paper.title}`}>Annotate quote</button>}
+                        {canWrite && canAnchor && paper.source_type === 'pdf_page' && typeof paper.page_number === 'number' && <button type="button" onClick={() => beginAnnotation({ source_type: 'pdf_page', document_id: paper.id.split(':page:')[0], page_number: paper.page_number!, start_offset: paper.start_offset!, end_offset: paper.end_offset!, quote: paper.snippet! }, `${paper.filename ?? paper.title} · page ${paper.page_number}`)} className="mt-3 rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-secondary hover:border-zenith-secondary" aria-label={`Annotate quote from ${paper.filename ?? paper.title} page ${paper.page_number}`}>Annotate quote</button>}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 ) : <p className="text-sm text-zenith-muted">No papers in this project matched the search. Attach a paper or try different terms.</p>
               )}
@@ -791,6 +1047,10 @@ export default function ProjectWorkspacePage() {
             </div>
             <div className="mt-5 border-t border-zenith-border pt-4">
               <h3 className="mb-3 text-sm font-semibold text-ink-900">Invite by email</h3>
+              <p className="mb-3 text-xs leading-5 text-zenith-muted">
+                New accounts receive a secure sign-up link by email. For an existing account, share
+                the pending invitation link below; acceptance is checked against the invited email.
+              </p>
               <form onSubmit={(event) => { event.preventDefault(); const email = inviteEmail.trim(); if (email) createInvitation.mutate({ email, role: inviteRole }); }} className="space-y-3">
                 <label htmlFor="invite-email" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Email address</label>
                 <input id="invite-email" type="email" autoComplete="email" required maxLength={320} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900" />
@@ -808,6 +1068,7 @@ export default function ProjectWorkspacePage() {
                 {invitationsQuery.isError && <p role="alert" className="text-sm text-red-700">Could not load invitations.</p>}
                 {resendInvitation.isError && <p role="alert" className="text-sm text-red-700">Could not resend invitation.</p>}
                 {revokeInvitation.isError && <p role="alert" className="text-sm text-red-700">Could not revoke invitation.</p>}
+                {invitationLinkError && <p role="alert" className="text-sm text-red-700">{invitationLinkError}</p>}
                 {!invitationsQuery.isLoading && !invitationsQuery.isError && (invitationsQuery.data ?? []).length === 0 && <p className="text-sm text-zenith-muted">No email invitations yet.</p>}
                 <ul className="space-y-2">
                   {(invitationsQuery.data ?? []).map((invitation) => (
@@ -819,6 +1080,10 @@ export default function ProjectWorkspacePage() {
                           <p className="mt-1 text-[11px] text-zenith-muted">Expires {new Date(invitation.expires_at).toLocaleDateString()}</p>
                         </div>
                         <div className="flex shrink-0 gap-2">
+                          {invitation.status === 'pending' && <>
+                            <button type="button" onClick={() => copyInvitationLink(invitation.id)} className="text-xs font-medium text-zenith-secondary underline" aria-label={`Copy invitation link for ${invitation.email}`}>{copiedInvitationId === invitation.id ? 'Copied' : 'Copy link'}</button>
+                            <Link href={`/projects/invitations/accept?invitation_id=${encodeURIComponent(invitation.id)}` as Route} target="_blank" rel="noreferrer" className="text-xs font-medium text-zenith-secondary underline" aria-label={`Open invitation link for ${invitation.email}`}>Open link</Link>
+                          </>}
                           <button type="button" onClick={() => resendInvitation.mutate(invitation.id)} disabled={resendInvitation.isPending || invitation.status === 'accepted' || invitation.status === 'revoked'} className="text-xs font-medium text-zenith-secondary underline disabled:opacity-50" aria-label={`Resend invitation to ${invitation.email}`}>Resend</button>
                           <button type="button" onClick={() => revokeInvitation.mutate(invitation.id)} disabled={revokeInvitation.isPending || invitation.status === 'accepted' || invitation.status === 'revoked'} className="text-xs font-medium text-red-700 underline disabled:opacity-50" aria-label={`Revoke invitation to ${invitation.email}`}>Revoke</button>
                         </div>
@@ -923,6 +1188,15 @@ export default function ProjectWorkspacePage() {
           )}
         </section>
 
+        <ProjectBriefsPanel
+          projectId={projectId}
+          canWrite={canWrite}
+          sources={briefSources}
+          onRemoveSource={(index) => setBriefSources((current) => current.filter((_, sourceIndex) => sourceIndex !== index))}
+          onClearSources={() => setBriefSources([])}
+          onSetSources={setBriefSources}
+        />
+
         <section className="surface-card p-5 sm:p-6" aria-labelledby="notes-heading">
           <div className="mb-5">
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Project notebook</p>
@@ -959,6 +1233,120 @@ export default function ProjectWorkspacePage() {
                 </li>
               ))}
             </ul>
+          </div>
+
+          <div className="mt-6 border-t border-zenith-border pt-5" aria-labelledby="project-saved-searches-heading">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Repeatable queries</p>
+            <h3 id="project-saved-searches-heading" className="mt-1 font-serif text-lg text-ink-900">Saved searches</h3>
+            <p className="mt-1 text-xs leading-5 text-zenith-muted">Save a query with this project and run it again when you return. Each run starts a new research job.</p>
+
+            {canWrite && <form onSubmit={(event) => { event.preventDefault(); if (savedSearchName.trim() && savedSearchQueryDraft.trim()) createSavedSearchMutation.mutate(); }} className="mt-4 space-y-2 rounded-xl border border-zenith-border bg-zenith-surface/40 p-3">
+              <label htmlFor="saved-search-name" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Search name</label>
+              <input id="saved-search-name" value={savedSearchName} onChange={(event) => setSavedSearchName(event.target.value)} maxLength={120} required placeholder="Weekly retrieval scan" className="w-full rounded-lg border border-zenith-border bg-white px-3 py-2 text-sm text-ink-900" />
+              <label htmlFor="saved-search-query" className="block pt-1 text-xs font-semibold uppercase tracking-wide text-zenith-muted">Query</label>
+              <textarea id="saved-search-query" value={savedSearchQueryDraft} onChange={(event) => setSavedSearchQueryDraft(event.target.value)} maxLength={500} rows={2} required placeholder="retrieval quality and benchmarks" className="w-full rounded-lg border border-zenith-border bg-white px-3 py-2 text-sm text-ink-900" />
+              {createSavedSearchMutation.isError && <p role="alert" className="text-xs text-red-700">{createSavedSearchMutation.error instanceof Error ? createSavedSearchMutation.error.message : 'Could not save search.'}</p>}
+              <button type="submit" disabled={createSavedSearchMutation.isPending || !savedSearchName.trim() || !savedSearchQueryDraft.trim()} className="rounded-lg bg-ink-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{createSavedSearchMutation.isPending ? 'Saving…' : 'Save search'}</button>
+            </form>}
+            {!canWrite && <p className="mt-3 text-xs text-zenith-muted">Only project owners and editors can save new searches.</p>}
+
+            {savedSearchesQuery.isLoading && <p role="status" className="mt-4 text-sm text-zenith-muted">Loading saved searches…</p>}
+            {savedSearchesQuery.isError && <p role="alert" className="mt-4 text-sm text-red-700">Could not load saved searches.</p>}
+            {updateSavedSearchMutation.isError && <p role="alert" className="mt-3 text-xs text-red-700">{updateSavedSearchMutation.error instanceof Error ? updateSavedSearchMutation.error.message : 'Could not update saved search.'}</p>}
+            {deleteSavedSearchMutation.isError && <p role="alert" className="mt-3 text-xs text-red-700">{deleteSavedSearchMutation.error instanceof Error ? deleteSavedSearchMutation.error.message : 'Could not delete saved search.'}</p>}
+            {runSavedSearchMutation.isError && <p role="alert" className="mt-3 text-xs text-red-700">{runSavedSearchMutation.error instanceof Error ? runSavedSearchMutation.error.message : 'Could not run saved search.'}</p>}
+            {activeSavedSearchRunId && <div className="mt-4">
+              <p className="mb-2 text-xs text-zenith-muted">Research run: <code>{activeSavedSearchRunId}</code></p>
+              <StreamingResponse key={activeSavedSearchRunId} runId={activeSavedSearchRunId} onResult={setSavedSearchRunResult} />
+              {savedSearchRunResult && <div className="mt-3 rounded-lg border border-zenith-border bg-white p-3" aria-live="polite">
+                <h4 className="text-sm font-semibold text-ink-900">Search results ({savedSearchRunResult.papers.length})</h4>
+                <ul className="mt-2 space-y-2">{savedSearchRunResult.papers.slice(0, 10).map((paper) => <li key={paper.id}><Link href={`/paper/${encodeURIComponent(paper.id)}` as Route} className="text-sm font-medium text-zenith-secondary underline underline-offset-2">{paper.title}</Link></li>)}</ul>
+              </div>}
+            </div>}
+            {!savedSearchesQuery.isLoading && !savedSearchesQuery.isError && (savedSearchesQuery.data ?? []).filter((search) => search.project_id === projectId).length === 0 && <p className="mt-4 text-sm text-zenith-muted">No saved searches for this project yet.</p>}
+            <ul className="mt-4 space-y-3">
+              {(savedSearchesQuery.data ?? []).filter((search) => search.project_id === projectId).map((search: SavedSearch) => {
+                const canManage = canWrite || search.created_by === currentUserId;
+                return <li key={search.id} className="rounded-xl border border-zenith-border bg-white p-3">
+                  {editingSavedSearchId === search.id ? <form onSubmit={(event) => { event.preventDefault(); if (editingSavedSearchName.trim() && editingSavedSearchQuery.trim()) updateSavedSearchMutation.mutate({ id: search.id, name: editingSavedSearchName, query: editingSavedSearchQuery, model: editingSavedSearchModel }); }} className="space-y-2">
+                    <label htmlFor={`saved-search-name-${search.id}`} className="sr-only">Edit saved search name</label>
+                    <input id={`saved-search-name-${search.id}`} value={editingSavedSearchName} onChange={(event) => setEditingSavedSearchName(event.target.value)} maxLength={120} required className="w-full rounded-lg border border-zenith-border px-3 py-2 text-sm" />
+                    <label htmlFor={`saved-search-query-${search.id}`} className="sr-only">Edit saved search query</label>
+                    <textarea id={`saved-search-query-${search.id}`} value={editingSavedSearchQuery} onChange={(event) => setEditingSavedSearchQuery(event.target.value)} maxLength={500} rows={2} required className="w-full rounded-lg border border-zenith-border px-3 py-2 text-sm" />
+                    <div className="flex justify-end gap-3"><button type="button" onClick={() => setEditingSavedSearchId(null)} className="text-xs text-zenith-muted underline">Cancel</button><button type="submit" disabled={updateSavedSearchMutation.isPending || !editingSavedSearchName.trim() || !editingSavedSearchQuery.trim()} className="text-xs font-semibold text-zenith-secondary underline disabled:opacity-50">Save changes</button></div>
+                  </form> : <>
+                    <div className="flex items-start justify-between gap-2"><p className="text-sm font-semibold text-ink-900">{search.name}</p><span className="shrink-0 rounded-full bg-zenith-surface px-2 py-1 text-[10px] text-zenith-muted">Project search</span></div>
+                    <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-zenith-body">{search.query}</p>
+                    {search.model && <p className="mt-1 font-mono text-[10px] text-zenith-muted">Model: {search.model}</p>}
+                    <div className="mt-3 flex flex-wrap justify-end gap-3">
+                      <button type="button" onClick={() => runSavedSearchMutation.mutate(search.id)} disabled={runSavedSearchMutation.isPending} className="text-xs font-semibold text-zenith-secondary underline disabled:opacity-50">{runSavedSearchMutation.isPending ? 'Starting…' : 'Run search'}</button>
+                      {canManage && <><button type="button" onClick={() => { setEditingSavedSearchId(search.id); setEditingSavedSearchName(search.name); setEditingSavedSearchQuery(search.query); setEditingSavedSearchModel(search.model); updateSavedSearchMutation.reset(); }} className="text-xs text-zenith-muted underline">Edit</button><button type="button" onClick={() => deleteSavedSearchMutation.mutate(search.id)} disabled={deleteSavedSearchMutation.isPending} className="text-xs text-red-700 underline disabled:opacity-50">Delete</button></>}
+                    </div>
+                  </>}
+                </li>;
+              })}
+            </ul>
+          </div>
+
+          <div className="mt-6 border-t border-zenith-border pt-5" aria-labelledby="project-annotations-heading">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zenith-secondary">Source-linked</p>
+            <h3 id="project-annotations-heading" className="mt-1 font-serif text-lg text-ink-900">Annotations</h3>
+            <p className="mt-1 text-xs leading-5 text-zenith-muted">Annotations keep the exact quote and character offsets from an attached paper abstract or extracted PDF page.</p>
+
+            {annotationAnchor && canWrite && (
+              <form id="annotation-composer" onSubmit={handleAnnotationSubmit} className="mt-4 space-y-3 rounded-xl border border-zenith-secondary/40 bg-zenith-surface/60 p-4" aria-label="Add source annotation">
+                <div>
+                  <p className="text-xs font-semibold text-ink-900">{annotationAnchor.label}</p>
+                  <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{annotationAnchor.quote}”</blockquote>
+                  <p className="mt-2 font-mono text-[10px] text-zenith-muted">Offsets {annotationAnchor.start_offset}–{annotationAnchor.end_offset}</p>
+                </div>
+                <label htmlFor="annotation-content" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Your annotation</label>
+                <textarea id="annotation-content" value={annotationDraft} onChange={(event) => setAnnotationDraft(event.target.value)} maxLength={5000} rows={3} placeholder="Add a comment about this evidence…" required className="w-full rounded-xl border border-zenith-border bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-zenith-secondary focus:outline-none focus:ring-2 focus:ring-zenith-secondary/20" />
+                {createAnnotation.isError && <p role="alert" className="text-sm text-red-700">{createAnnotation.error instanceof Error ? createAnnotation.error.message : 'Could not add annotation.'}</p>}
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => { setAnnotationAnchor(null); setAnnotationDraft(''); createAnnotation.reset(); }} className="rounded-lg border border-zenith-border px-3 py-2 text-xs font-medium text-zenith-body hover:border-ink-900">Cancel</button>
+                  <button type="submit" disabled={createAnnotation.isPending || !annotationDraft.trim()} className="rounded-lg bg-ink-900 px-3 py-2 text-xs font-semibold text-white hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-50">{createAnnotation.isPending ? 'Saving…' : 'Save annotation'}</button>
+                </div>
+              </form>
+            )}
+
+            {annotationsQuery.isLoading && <p role="status" className="mt-4 text-sm text-zenith-muted">Loading annotations…</p>}
+            {annotationsQuery.isError && <p role="alert" className="mt-4 text-sm text-red-700">Could not load annotations.</p>}
+            {!annotationsQuery.isLoading && !annotationsQuery.isError && (annotationsQuery.data ?? []).length === 0 && <p className="mt-4 text-sm text-zenith-muted">No source annotations yet. Annotate an evidence quote from your research results.</p>}
+            <ul className="mt-4 space-y-3">
+              {(annotationsQuery.data ?? []).map((annotation) => (
+                <li key={annotation.id} className="rounded-xl border border-zenith-border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="text-xs font-semibold text-ink-900">{annotation.source_label ?? annotation.document_id ?? annotation.paper_source_id ?? 'Source'}{annotation.source_type === 'pdf_page' && annotation.page_number ? ` · page ${annotation.page_number}` : ' · abstract'}</p>
+                    {annotation.is_stale && <span role="status" className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-900">Source changed · quote may be stale</span>}
+                  </div>
+                  <blockquote className="mt-2 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{annotation.quote}”</blockquote>
+                  <p className="mt-1 font-mono text-[10px] text-zenith-muted">{annotation.source_type === 'pdf_page' ? `[${annotation.document_id}:page:${annotation.page_number}] · page` : 'Abstract'} offsets {annotation.start_offset}–{annotation.end_offset}</p>
+
+                  {editingAnnotationId === annotation.id ? (
+                    <form onSubmit={(event) => handleAnnotationEdit(event, annotation.id)} className="mt-3 space-y-2">
+                      <label htmlFor={`annotation-edit-${annotation.id}`} className="sr-only">Edit annotation</label>
+                      <textarea id={`annotation-edit-${annotation.id}`} value={editingAnnotationDraft} onChange={(event) => setEditingAnnotationDraft(event.target.value)} maxLength={5000} rows={3} required className="w-full rounded-lg border border-zenith-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-zenith-secondary focus:outline-none focus:ring-2 focus:ring-zenith-secondary/20" />
+                      {updateAnnotation.isError && <p role="alert" className="text-xs text-red-700">{updateAnnotation.error instanceof Error ? updateAnnotation.error.message : 'Could not update annotation.'}</p>}
+                      <div className="flex justify-end gap-2">
+                        <button type="button" onClick={() => { setEditingAnnotationId(null); setEditingAnnotationDraft(''); }} className="rounded-lg border border-zenith-border px-3 py-1.5 text-xs font-medium text-zenith-body">Cancel</button>
+                        <button type="submit" disabled={updateAnnotation.isPending || !editingAnnotationDraft.trim()} className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{updateAnnotation.isPending ? 'Saving…' : 'Save changes'}</button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-800">{annotation.content}</p>
+                      <time className="mt-2 block font-mono text-[10px] text-zenith-muted" dateTime={annotation.created_at}>{new Date(annotation.created_at).toLocaleString()}</time>
+                      {canWrite && <div className="mt-3 flex justify-end gap-3">
+                        <button type="button" onClick={() => beginAnnotationEdit(annotation)} className="text-xs font-medium text-zenith-secondary underline underline-offset-2" aria-label={`Edit annotation for ${annotation.source_label ?? annotation.document_id ?? annotation.paper_source_id ?? 'Source'}`}>Edit</button>
+                        <button type="button" onClick={() => removeAnnotation.mutate(annotation.id)} disabled={removeAnnotation.isPending} className="text-xs font-medium text-red-700 underline underline-offset-2 disabled:opacity-50" aria-label={`Delete annotation for ${annotation.source_label ?? annotation.document_id ?? annotation.paper_source_id ?? 'Source'}`}>Delete</button>
+                      </div>}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {removeAnnotation.isError && <p role="alert" className="mt-3 text-sm text-red-700">{removeAnnotation.error instanceof Error ? removeAnnotation.error.message : 'Could not delete annotation.'}</p>}
           </div>
         </section>
         </div>

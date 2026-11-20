@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from config import Settings
-from agents.research_types import SynthesisClaim, build_comparison, classify_task
+from agents.research_types import SynthesisClaim, build_comparison, build_pdf_comparison, classify_task
 from routers.research import (
     ProjectEvidenceMapRequest,
     ResearchRequest,
@@ -233,6 +233,62 @@ def test_comparison_does_not_truncate_or_infer_unmatched_fields():
     assert row.datasets is None
     assert row.metrics is None
     assert row.limitations is None
+
+
+def test_pdf_comparison_keeps_exact_dimension_citations_and_separate_document_identity():
+    sentence = "Performance was evaluated on the Harbor benchmark."
+    evidence = {
+        "document_id": "doc-1",
+        "filename": "study.pdf",
+        "page_number": 7,
+        "citation_id": "doc-1:page:7",
+        "sentence": sentence,
+        "start_offset": 23,
+        "end_offset": 23 + len(sentence),
+    }
+
+    rows = build_pdf_comparison([evidence])
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.document_id == "doc-1"
+    assert row.filename == "study.pdf"
+    assert row.datasets is not None
+    assert row.datasets.sentence == sentence
+    assert row.datasets.citation_id == "doc-1:page:7"
+    assert row.datasets.page_number == 7
+    assert row.datasets.start_offset == 23
+    assert row.datasets.end_offset == 23 + len(sentence)
+    assert row.methods is None
+    assert row.problem is None
+
+
+def test_pdf_comparison_groups_by_document_without_claiming_paper_association():
+    rows = build_pdf_comparison([
+        {
+            "document_id": "doc-1",
+            "filename": "study.pdf",
+            "page_number": 2,
+            "citation_id": "doc-1:page:2",
+            "sentence": "We propose a graph retrieval approach.",
+            "start_offset": 0,
+            "end_offset": 38,
+        },
+        {
+            "document_id": "doc-1",
+            "filename": "study.pdf",
+            "page_number": 3,
+            "citation_id": "doc-1:page:3",
+            "sentence": "However, limitations remain for multilingual inputs.",
+            "start_offset": 5,
+            "end_offset": 56,
+        },
+    ])
+
+    assert len(rows) == 1
+    assert rows[0].methods is not None
+    assert rows[0].limitations is not None
+    assert not hasattr(rows[0], "paper_id")
 
 
 def test_claim_selector_excludes_instruction_text_and_unrelated_entities():
@@ -464,6 +520,7 @@ async def test_project_comparison_uses_only_attached_papers():
 
     assert [row.paper_id for row in result.rows] == ["p1"]
     assert result.pdf_evidence == []
+    assert result.pdf_comparisons == []
 
 
 @pytest.mark.asyncio
@@ -494,6 +551,14 @@ async def test_project_comparison_includes_exact_pdf_evidence_after_authorizatio
     assert evidence.start_offset == page_text.index(evidence.sentence)
     assert evidence.end_offset == evidence.start_offset + len(evidence.sentence)
     assert page_text[evidence.start_offset:evidence.end_offset] == evidence.sentence
+    assert len(result.pdf_comparisons) == 1
+    pdf_row = result.pdf_comparisons[0]
+    assert pdf_row.document_id == "doc-1"
+    assert pdf_row.datasets is not None
+    assert pdf_row.datasets.sentence == evidence.sentence
+    assert pdf_row.datasets.citation_id == evidence.citation_id
+    assert pdf_row.datasets.page_number == evidence.page_number
+    assert page_text[pdf_row.datasets.start_offset:pdf_row.datasets.end_offset] == pdf_row.datasets.sentence
     assert ("project_documents", 0, 9) in supabase.range_calls
     assert ("project_document_pages", 0, 499) in supabase.range_calls
 
@@ -637,8 +702,9 @@ async def test_project_synthesis_uses_only_attached_public_abstract_spans(monkey
         budget_calls.append((user_id, daily_limit, namespace))
         return True
 
-    async def synthesize(query, evidence):
+    async def synthesize(query, evidence, **kwargs):
         service_calls.append((query, evidence))
+        assert kwargs["user_id"] == "member"
         return [SynthesisClaim(
             text="The studies report different recall outcomes.",
             status="conflicting",

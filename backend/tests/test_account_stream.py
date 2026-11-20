@@ -4,6 +4,7 @@ import os
 import jwt
 import pytest
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 
 from main import app
 from tests.asgi_client import ASGITestClient
@@ -30,6 +31,27 @@ def test_account_endpoints_require_auth():
 
 def test_stream_requires_session_token():
     assert client.get("/api/stream/some-run").status_code == 401
+
+
+def test_stream_rejects_query_token_without_bearer_header():
+    assert client.get("/api/stream/some-run?token=anything").status_code == 401
+
+
+@pytest.mark.parametrize("value", ["", "-1", "+1", "1.0", " 1", "١", "x" * 5000])
+def test_last_event_id_rejects_malformed_or_negative_values(value):
+    from routers.stream import _parse_last_event_id
+
+    with pytest.raises(HTTPException) as error:
+        _parse_last_event_id(value)
+
+    assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, 0), ("0", 0), ("17", 17)])
+def test_last_event_id_accepts_nonnegative_ascii_integer(value, expected):
+    from routers.stream import _parse_last_event_id
+
+    assert _parse_last_event_id(value) == expected
 
 
 @needs_supabase
@@ -80,6 +102,55 @@ async def test_stream_denies_ownerless_legacy_run(monkeypatch):
     monkeypatch.setattr(stream, "_validate_sse_session", lambda _token: "unrelated-user")
 
     with pytest.raises(HTTPException) as error:
-        await stream.stream("orphan", request=object(), token="valid-session")
+        await stream.stream(
+            "orphan",
+            request=object(),
+            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-session"),
+            last_event_id=None,
+        )
 
     assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_event_generator_replays_only_after_last_event_id(monkeypatch):
+    from routers import stream
+
+    replay = [
+        {"sequence": 1, "event": "agent_step", "data": {"step": 1}},
+        {"sequence": 2, "event": "agent_step", "data": {"step": 2}},
+        {"sequence": 3, "event": "result", "data": {"papers": []}},
+    ]
+
+    async def get_events(_run_id):
+        return replay
+
+    monkeypatch.setattr(stream.run_store, "get_events", get_events)
+    events = [
+        event async for event in stream.event_generator("run-1", "query", "user-1", None, 1)
+    ]
+
+    assert [event["id"] for event in events] == ["2", "3"]
+
+
+@pytest.mark.asyncio
+async def test_event_generator_does_not_repeat_terminal_event_already_in_cursor(monkeypatch):
+    from routers import stream
+
+    async def get_events(_run_id):
+        return [
+            {"sequence": 1, "event": "agent_step", "data": {"step": 1}},
+            {"sequence": 2, "event": "result", "data": {"papers": []}},
+        ]
+
+    async def unexpected_state_read(_run_id):
+        pytest.fail("terminal event already covered by cursor must close without another result")
+
+    monkeypatch.setattr(stream.run_store, "get_events", get_events)
+    monkeypatch.setattr(stream.run_store, "get", unexpected_state_read)
+
+    events = [
+        event async for event in stream.event_generator("run-1", "query", "user-1", None, 2)
+    ]
+
+    assert events == []

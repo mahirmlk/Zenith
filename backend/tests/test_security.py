@@ -79,7 +79,7 @@ def test_model_registry_rejects_unknown():
 
 def test_model_registry_rejects_wrong_agent():
     with pytest.raises(ValueError):
-        validate_model("deepseek/deepseek-r1", "memory")
+        validate_model("anthropic/claude-sonnet-5.5", "memory")
 
 
 def test_model_registry_allows_known():

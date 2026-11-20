@@ -3,8 +3,8 @@
 Only exact public paper abstract sentences are sent to providers. Project PDF
 page text is never included in this workflow (see docs/security/DATA_HANDLING.md).
 """
-import asyncio
 import json
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,7 +12,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agents.research_types import SynthesisClaim, SynthesisEvidenceItem
-from services.llm_router import get_llm
+from services.llm_router import AGENT_MODEL_MAP, get_llm
+from services.spend_meter import BillingContext, invoke_metered
 
 _PROMPT_DIR = Path(__file__).resolve().parents[1] / "agents" / "prompts"
 _MAX_CLAIMS = 5
@@ -73,10 +74,22 @@ def _parse_object(content: object, model: type[BaseModel]) -> BaseModel:
         raise SynthesisOutputError("Model returned an invalid response") from exc
 
 
-async def _invoke(messages: list[Any]) -> str:
+async def _invoke(messages: list[Any], billing: BillingContext, stage: str) -> str:
     try:
         llm = get_llm(agent="summary_fast", temperature=0.0, max_tokens=_MAX_OUTPUT_TOKENS)
-        response = await asyncio.wait_for(llm.ainvoke(messages), timeout=_CALL_TIMEOUT_SECONDS)
+        response = await invoke_metered(
+            llm,
+            messages,
+            model=AGENT_MODEL_MAP["summary_fast"],
+            max_output_tokens=_MAX_OUTPUT_TOKENS,
+            context=BillingContext(
+                billing.subject_id,
+                billing.run_id,
+                f"{billing.operation}:{stage}",
+                operation_id=billing.operation_id,
+            ),
+            timeout_seconds=_CALL_TIMEOUT_SECONDS,
+        )
     except Exception as exc:
         raise SynthesisProviderError("Research synthesis provider unavailable") from exc
     content = getattr(response, "content", None)
@@ -99,6 +112,10 @@ def _source_payload(evidence: list[SynthesisEvidenceItem]) -> list[dict[str, str
 async def synthesize_claims(
     query: str,
     evidence: list[SynthesisEvidenceItem],
+    *,
+    user_id: str,
+    run_id: str | None = None,
+    operation_id: str | None = None,
 ) -> list[SynthesisClaim]:
     """Synthesize at most five claims, then review support/conflict separately.
 
@@ -112,6 +129,14 @@ async def synthesize_claims(
     ]
     if len({item.paper_id for item in bounded_evidence}) < 2:
         return []
+    if not user_id:
+        raise SynthesisProviderError("Research synthesis billing identity unavailable")
+    billing = BillingContext(
+        subject_id=user_id,
+        run_id=run_id,
+        operation="research_synthesis",
+        operation_id=operation_id or str(uuid.uuid4()),
+    )
     evidence_by_id = {item.evidence_id: item for item in bounded_evidence}
     generation_input = json.dumps(
         {"research_question": query[:500], "evidence": _source_payload(bounded_evidence)},
@@ -120,7 +145,7 @@ async def synthesize_claims(
     generation_content = await _invoke([
         SystemMessage(content=_prompt("cross_paper_synthesis.txt")),
         HumanMessage(content=generation_input),
-    ])
+    ], billing, "draft")
     generated = _parse_object(generation_content, _GenerationOutput)
     if not isinstance(generated, _GenerationOutput):
         raise SynthesisOutputError("Model returned an invalid response")
@@ -150,7 +175,7 @@ async def synthesize_claims(
     verification_content = await _invoke([
         SystemMessage(content=_prompt("claim_verification.txt")),
         HumanMessage(content=verification_input),
-    ])
+    ], billing, "verification")
     verification = _parse_object(verification_content, _VerificationOutput)
     if not isinstance(verification, _VerificationOutput):
         raise SynthesisOutputError("Model returned an invalid response")

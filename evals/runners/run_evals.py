@@ -10,14 +10,15 @@ import re
 import sys
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DATASET = ROOT / "evals" / "datasets" / "grounded_qa_v3.jsonl"
 DATASET_VERSION = "grounded_qa_v3"
 PDF_DATASET = ROOT / "evals" / "datasets" / "pdf_evidence_v1.jsonl"
 PDF_DATASET_VERSION = "pdf_evidence_v1"
-SYNTHESIS_DATASET = ROOT / "evals" / "datasets" / "cross_paper_synthesis_v1.jsonl"
-SYNTHESIS_DATASET_VERSION = "cross_paper_synthesis_v1"
+SYNTHESIS_DATASET = ROOT / "evals" / "datasets" / "cross_paper_synthesis_v2.jsonl"
+SYNTHESIS_DATASET_VERSION = "cross_paper_synthesis_v2"
 PLAN_DATASET = ROOT / "evals" / "datasets" / "research_plan_v1.jsonl"
 PLAN_DATASET_VERSION = "research_plan_v1"
 TOP_K = 5
@@ -42,7 +43,7 @@ def _claims_by_citation(claims: list[str]) -> list[tuple[str, str]]:
     return parsed
 
 
-def evaluate_case(case: dict) -> dict:
+def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     corpus = case.get("corpus", [])
     ranked = hybrid_rank(case["question"], corpus)[:TOP_K]
     claims = _extractive_claims(case["question"], ranked)
@@ -113,7 +114,7 @@ def evaluate_case(case: dict) -> dict:
     }
 
 
-def evaluate_pdf_case(case: dict) -> dict:
+def evaluate_pdf_case(case: dict[str, Any]) -> dict[str, Any]:
     evidence = _extractive_pdf_evidence(
         case["query"],
         case.get("documents", []),
@@ -155,27 +156,38 @@ def evaluate_pdf_case(case: dict) -> dict:
     }
 
 
-async def evaluate_synthesis_case(case: dict) -> dict:
+async def evaluate_synthesis_case(case: dict[str, Any]) -> dict[str, Any]:
     class FixtureLLM:
         def __init__(self, responses: list[str]) -> None:
             self.responses = list(responses)
 
-        async def ainvoke(self, _messages):
+        async def ainvoke(self, _messages: Any) -> Any:
             return SimpleNamespace(content=self.responses.pop(0))
 
     evidence = [SynthesisEvidenceItem.model_validate(item) for item in case["evidence"]]
     llm = FixtureLLM(case["provider_responses"])
-    original_get_llm = synthesis.get_llm
-    synthesis.get_llm = lambda **_kwargs: llm
+    original_get_llm = getattr(synthesis, "get_llm")
+    original_invoke_metered = getattr(synthesis, "invoke_metered")
+
+    async def invoke_fixture(provider: Any, _messages: Any, **_kwargs: Any) -> Any:
+        return await provider.ainvoke(_messages)
+
+    # These are module-local dependencies imported by synthesis.py. Use
+    # setattr so the fixture can replace them without widening production types.
+    setattr(synthesis, "get_llm", lambda **_kwargs: llm)
+    setattr(synthesis, "invoke_metered", invoke_fixture)
     try:
         try:
-            claims = await synthesis.synthesize_claims(case["query"], evidence)
+            claims = await synthesis.synthesize_claims(
+                case["query"], evidence, user_id="eval-fixture-user"
+            )
             invalid_output_rejected = False
         except synthesis.SynthesisOutputError:
             claims = []
             invalid_output_rejected = True
     finally:
-        synthesis.get_llm = original_get_llm
+        setattr(synthesis, "get_llm", original_get_llm)
+        setattr(synthesis, "invoke_metered", original_invoke_metered)
 
     expected = case["expected"]
     statuses = [claim.status for claim in claims]
@@ -194,7 +206,7 @@ async def evaluate_synthesis_case(case: dict) -> dict:
     return {"id": case["id"], "passed": all(checks.values()), "checks": checks, "statuses": statuses}
 
 
-def evaluate_plan_case(case: dict) -> dict:
+def evaluate_plan_case(case: dict[str, Any]) -> dict[str, Any]:
     plan = build_research_plan(
         case["query"],
         source_scope=case["scope"],
@@ -243,8 +255,8 @@ def main() -> int:
     if len(pdf_cases) < 5:
         print(f"FAIL {PDF_DATASET_VERSION}: expected at least 5 cases, found {len(pdf_cases)}")
         return 1
-    if len(synthesis_cases) < 3:
-        print(f"FAIL {SYNTHESIS_DATASET_VERSION}: expected at least 3 cases, found {len(synthesis_cases)}")
+    if len(synthesis_cases) < 6:
+        print(f"FAIL {SYNTHESIS_DATASET_VERSION}: expected at least 6 cases, found {len(synthesis_cases)}")
         return 1
     if len(plan_cases) < 5:
         print(f"FAIL {PLAN_DATASET_VERSION}: expected at least 5 cases, found {len(plan_cases)}")

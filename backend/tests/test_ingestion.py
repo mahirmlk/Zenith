@@ -8,6 +8,7 @@ from services.ingestion import (
     _load_existing_paper_rows,
     _mark_preprint_version_changes,
     _notify_watchlists,
+    _project_relevance,
     _watchlist_reason,
 )
 
@@ -27,6 +28,18 @@ class FakeQuery:
 
     def eq(self, key, value):
         self.filters[key] = value
+        return self
+
+    def is_(self, key, value):
+        self.filters[f"is:{key}"] = value
+        return self
+
+    def maybe_single(self):
+        self.single = True
+        return self
+
+    def range(self, start, end):
+        self.bounds = (start, end)
         return self
 
     def in_(self, key, values):
@@ -56,7 +69,23 @@ class FakeQuery:
                 if key.startswith("in:"):
                     column = key.split(":", 1)[1]
                     rows = [row for row in rows if row.get(column) in values]
+            if getattr(self, "bounds", None):
+                rows = rows[self.bounds[0] : self.bounds[1] + 1]
             return SimpleNamespace(data=rows)
+        if self.table in {"projects", "project_members", "project_sources"} and self.action == "select":
+            rows = getattr(self.db, self.table)
+            for key, value in self.filters.items():
+                if key.startswith("is:"):
+                    column = key.split(":", 1)[1]
+                    rows = [row for row in rows if row.get(column) is None]
+                elif key.startswith("in:"):
+                    column = key.split(":", 1)[1]
+                    rows = [row for row in rows if row.get(column) in value]
+                else:
+                    rows = [row for row in rows if row.get(key) == value]
+            if getattr(self, "bounds", None):
+                rows = rows[self.bounds[0] : self.bounds[1] + 1]
+            return SimpleNamespace(data=(rows[0] if rows else None) if getattr(self, "single", False) else rows)
         if self.table == "watchlists" and self.action == "update":
             if self.db.fail_cursor_update:
                 self.db.fail_cursor_update = False
@@ -91,6 +120,9 @@ class FakeSupabase:
         self.notifications = []
         self.provider_papers = []
         self.paper_rows = []
+        self.projects = []
+        self.project_members = []
+        self.project_sources = []
         self.fail_cursor_update = fail_cursor_update
 
     def table(self, name):
@@ -127,6 +159,25 @@ def test_watchlist_reason_explains_auditable_match_basis(
     assert reason_code == expected_code
     assert expected_phrase in reason_text
     assert len(reason_text) <= 500
+
+
+def test_project_relevance_is_a_bounded_lexical_hint_with_explicit_uncertainty():
+    code, text = _project_relevance(
+        "Language modeling",
+        ["Transformer language alignment methods"],
+        {"title": "Transformer Models", "abstract": "This paper studies transformer language models."},
+    )
+
+    assert code == "project_term_overlap"
+    assert "language, transformer" in text
+    assert "not an assessment of scientific importance" in text
+    assert len(text) <= 500
+
+
+def test_project_relevance_abstains_without_two_distinctive_shared_terms():
+    assert _project_relevance(
+        "Language modeling", [], {"title": "Language approaches", "abstract": "A broad analysis."}
+    ) == (None, None)
 
 
 @pytest.mark.asyncio
@@ -186,6 +237,44 @@ async def test_project_watchlist_notification_preserves_project_context():
     await _notify_watchlists(db, papers, now=now)
 
     assert db.notifications[0]["project_id"] == "project-1"
+
+
+@pytest.mark.asyncio
+async def test_project_watchlist_explains_only_bounded_observable_text_overlap():
+    now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "watch-project", "user_id": "u1", "query": "transformer",
+        "cadence": "daily", "enabled": True, "project_id": "project-1",
+    }])
+    db.projects = [{"id": "project-1", "owner_id": "u1", "title": "Language modeling"}]
+    db.project_sources = [{"project_id": "project-1", "paper_id": "source-paper"}]
+    db.paper_rows = [{"id": "source-paper", "title": "Transformer language alignment"}]
+
+    await _notify_watchlists(db, [make_paper("paper-1", "Transformer Models", now - timedelta(hours=1))], now=now)
+
+    notification = db.notifications[0]
+    assert notification["project_relevance_code"] == "project_term_overlap"
+    assert "language, transformer" in notification["project_relevance_text"]
+    assert "not an assessment of scientific importance" in notification["project_relevance_text"]
+    assert len(notification["project_relevance_text"]) <= 500
+
+
+@pytest.mark.asyncio
+async def test_revoked_project_member_does_not_receive_project_text_in_watch_explanation():
+    now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+    db = FakeSupabase([{
+        "id": "watch-project", "user_id": "u1", "query": "transformer",
+        "cadence": "daily", "enabled": True, "project_id": "project-1",
+    }])
+    db.projects = [{"id": "project-1", "owner_id": "owner", "title": "Private language modeling"}]
+    db.project_members = [{"project_id": "project-1", "user_id": "someone-else"}]
+    db.project_sources = [{"project_id": "project-1", "paper_id": "source-paper"}]
+    db.paper_rows = [{"id": "source-paper", "title": "Transformer language alignment"}]
+
+    await _notify_watchlists(db, [make_paper("paper-1", "Transformer Models", now - timedelta(hours=1))], now=now)
+
+    assert db.notifications[0]["project_relevance_code"] is None
+    assert db.notifications[0]["project_relevance_text"] is None
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ _worker_task: asyncio.Task[None] | None = None
 _WORKER_ID = str(uuid.uuid4())
 _POLL_SECONDS = 5
 _LEASE_SECONDS = 600
+_LEASE_RENEW_INTERVAL_SECONDS = _LEASE_SECONDS // 3
 _PRUNE_INTERVAL_SECONDS = 86_400
 
 
@@ -91,7 +92,7 @@ async def _delete_rows(supabase: Any, job: dict[str, Any]) -> None:
     current_step = "memories"
     try:
         if current_step not in steps:
-            if mem0_client.is_configured():
+            if mem0_client.has_credentials():
                 await mem0_client.delete_user_memories(user_id)
             await _mark_step(supabase, str(job["id"]), current_step)
             steps.add(current_step)
@@ -129,6 +130,14 @@ async def _delete_rows(supabase: Any, job: dict[str, Any]) -> None:
             await _mark_step(supabase, str(job["id"]), current_step)
             steps.add(current_step)
 
+        current_step = "model_spend"
+        if current_step not in steps:
+            from services.spend_meter import anonymize_subject
+
+            await anonymize_subject(user_id)
+            await _mark_step(supabase, str(job["id"]), current_step)
+            steps.add(current_step)
+
         current_step = "user_rows"
         if current_step not in steps:
             for table, column in (
@@ -143,6 +152,10 @@ async def _delete_rows(supabase: Any, job: dict[str, Any]) -> None:
                 ("notification_email_unsubscribe_tokens", "user_id"),
                 ("project_members", "user_id"),
                 ("notes", "created_by"),
+                ("project_annotations", "created_by"),
+                ("project_brief_versions", "created_by"),
+                ("project_briefs", "created_by"),
+                ("saved_searches", "created_by"),
                 ("project_sources", "created_by"),
                 ("project_documents", "created_by"),
                 ("projects", "owner_id"),
@@ -197,6 +210,44 @@ async def _release_job(
     ).execute()
 
 
+async def _renew_lease_loop(supabase: Any, job: dict[str, Any]) -> None:
+    job_id = str(job["id"])
+    while True:
+        await asyncio.sleep(_LEASE_RENEW_INTERVAL_SECONDS)
+        renewed = await _rpc_bool(
+            supabase,
+            "renew_account_deletion_lease",
+            {
+                "p_job_id": job_id,
+                "p_lease_owner": _WORKER_ID,
+                "p_lease_seconds": _LEASE_SECONDS,
+            },
+        )
+        if not renewed:
+            raise RuntimeError("deletion_lease_lost")
+
+
+async def _process_with_lease_heartbeat(supabase: Any, job: dict[str, Any]) -> None:
+    work = asyncio.create_task(_delete_rows(supabase, job))
+    heartbeat = asyncio.create_task(_renew_lease_loop(supabase, job))
+    try:
+        done, _ = await asyncio.wait(
+            {work, heartbeat}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if heartbeat in done:
+            heartbeat.result()
+            raise RuntimeError("deletion_lease_lost")
+        await work
+    except BaseException:
+        if not work.done():
+            work.cancel()
+        await asyncio.gather(work, return_exceptions=True)
+        raise
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+
+
 async def process_one_account_deletion() -> bool:
     """Claim and process one durable job, returning whether one was claimed."""
     supabase = await get_supabase()
@@ -207,7 +258,7 @@ async def process_one_account_deletion() -> bool:
     rows = _rows(result.data)
     if not rows:
         return False
-    await _delete_rows(supabase, rows[0])
+    await _process_with_lease_heartbeat(supabase, rows[0])
     return True
 
 

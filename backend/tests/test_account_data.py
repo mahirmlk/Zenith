@@ -37,6 +37,10 @@ class FakeQuery:
         self.filters[key] = value
         return self
 
+    def is_(self, key: str, value: Any) -> "FakeQuery":
+        self.filters[key] = None if value == "null" else value
+        return self
+
     def in_(self, key: str, values: list[Any]) -> "FakeQuery":
         self.in_filters[key] = list(values)
         return self
@@ -106,6 +110,28 @@ def _export_tables() -> dict[str, list[dict[str, Any]]]:
             {"project_id": "shared", "paper_id": "p2", "created_by": "u1"},
             {"project_id": "other", "paper_id": "p3"},
         ],
+        "project_annotations": [
+            {"id": "a-owned", "project_id": "owned", "created_by": "u2", "content": "Owned annotation"},
+            {"id": "a-shared", "project_id": "shared", "created_by": "u1", "content": "My annotation"},
+            {"id": "a-shared-other", "project_id": "shared", "created_by": "u2", "content": "Their annotation"},
+        ],
+        "saved_searches": [
+            {"id": "ss-personal", "created_by": "u1", "project_id": None, "query": "personal"},
+            {"id": "ss-owned", "created_by": "u2", "project_id": "owned", "query": "owned"},
+            {"id": "ss-shared", "created_by": "u1", "project_id": "shared", "query": "mine"},
+            {"id": "ss-shared-other", "created_by": "u2", "project_id": "shared", "query": "theirs"},
+        ],
+        "project_briefs": [
+            {"id": "brief-owned", "project_id": "owned", "created_by": "u2", "current_version": 2},
+            {"id": "brief-shared", "project_id": "shared", "created_by": "u2", "current_version": 2},
+            {"id": "brief-other", "project_id": "other", "created_by": "u3", "current_version": 1},
+        ],
+        "project_brief_versions": [
+            {"id": "bv-owned", "brief_id": "brief-owned", "created_by": "u2", "version": 1},
+            {"id": "bv-shared-mine", "brief_id": "brief-shared", "created_by": "u1", "version": 1},
+            {"id": "bv-shared-other", "brief_id": "brief-shared", "created_by": "u2", "version": 2},
+            {"id": "bv-other", "brief_id": "brief-other", "created_by": "u3", "version": 1},
+        ],
         "project_documents": [
             {"id": "owned-doc", "project_id": "owned", "created_by": "u2", "filename": "owned.pdf"},
             {"id": "shared-doc", "project_id": "shared", "created_by": "u1", "filename": "mine.pdf"},
@@ -144,6 +170,10 @@ async def test_export_includes_caller_data_and_accessible_project_content(monkey
     assert {row["id"] for row in result["projects"]} == {"owned", "shared"}
     assert {row["content"] for row in result["project_notes"]} == {"owned note", "shared note"}
     assert {row["paper_id"] for row in result["project_sources"]} == {"p1", "p2"}
+    assert {row["id"] for row in result["project_annotations"]} == {"a-owned", "a-shared"}
+    assert {row["id"] for row in result["saved_searches"]} == {"ss-personal", "ss-owned", "ss-shared"}
+    assert {row["id"] for row in result["project_briefs"]} == {"brief-owned", "brief-shared"}
+    assert {row["id"] for row in result["project_brief_versions"]} == {"bv-owned", "bv-shared-mine"}
     assert {row["id"] for row in result["project_documents"]} == {"owned-doc", "shared-doc"}
     assert {row["document_id"] for row in result["project_document_pages"]} == {"owned-doc", "shared-doc"}
     assert {row["text"] for row in result["project_document_pages"]} == {
@@ -153,6 +183,22 @@ async def test_export_includes_caller_data_and_accessible_project_content(monkey
     assert result["run_events"] == [{"run_id": "r1", "safe_payload": {"x": 1}}]
     assert result["memories"] == [{"memory": "prefers ML"}]
     assert result["memory_export_status"] == "exported"
+
+
+@pytest.mark.asyncio
+async def test_export_skips_mem0_when_external_spend_limit_is_unconfirmed(monkeypatch):
+    db = FakeSupabase(_export_tables())
+    monkeypatch.setattr(account.mem0_client, "is_configured", lambda: False)
+    monkeypatch.setattr(account.mem0_client, "has_credentials", lambda: True)
+
+    async def memories(_user_id: str) -> list[dict[str, Any]]:
+        raise AssertionError("Mem0 usage was attempted without spend-limit confirmation")
+
+    monkeypatch.setattr(account.mem0_client, "get_user_profile", memories)
+    result = await account.export_account(object(), {"user_id": "u1", "email": "u1@example.com"}, db)
+
+    assert result["memory_export_status"] == "withheld: provider spend limit unconfirmed"
+    assert result["memories"] == []
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,41 @@ async def test_run_orchestrator_basic(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_orchestrator_preserves_summary_provenance(monkeypatch):
+    async def callback(_step: AgentStep):
+        return None
+
+    async def invoke(_graph, _initial_state, _config):
+        return {
+            "failed_agents": [],
+            "ranked_papers": [{
+                "id": "p1",
+                "title": "Paper",
+                "abstract": "Abstract",
+                "authors": [],
+                "url": "https://example.test/paper",
+                "summary_tldr": "Abstract preview",
+                "summary_contributions": [],
+                "summary_status": "abstract_preview",
+                "summary_fallback_reason": "spend_limit",
+                "difficulty": None,
+            }],
+        }
+
+    async def update(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(orchestrator, "_get_graph", lambda: object())
+    monkeypatch.setattr(orchestrator, "_invoke_or_resume", invoke)
+    monkeypatch.setattr(orchestrator.run_store, "update", update)
+
+    result = await run_orchestrator("provenance-run", "query", callback)
+
+    assert result.papers[0].summary_status == "abstract_preview"
+    assert result.papers[0].summary_fallback_reason == "spend_limit"
+
+
+@pytest.mark.asyncio
 async def test_graph_exception_does_not_become_success(monkeypatch):
     steps = []
 

@@ -85,7 +85,7 @@ def test_only_https_github_candidates_are_returned_as_unverified():
             "stars": 4,
             "verified": False,
             "verification_status": "unverified paper association",
-            "source": "Papers with Code",
+            "source": "GitHub repository search",
         }
     ]
 

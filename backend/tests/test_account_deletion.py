@@ -1,6 +1,8 @@
 """Failure-injection coverage for durable account deletion jobs."""
 from __future__ import annotations
 
+import asyncio
+
 from types import SimpleNamespace
 from typing import Any
 
@@ -81,13 +83,15 @@ class FakeRpc:
             if step not in job["completed_steps"]:
                 job["completed_steps"].append(step)
             return SimpleNamespace(data=True)
+        if self.name == "renew_account_deletion_lease":
+            return SimpleNamespace(data=not self.db.lose_lease)
         if self.name == "release_account_deletion_job":
             job["status"] = "pending"
             job["last_error_code"] = self.params["p_error_code"]
             job["lease_owner"] = None
             return SimpleNamespace(data=True)
         if self.name == "finish_account_deletion_job":
-            if len(job["completed_steps"]) != 8:
+            if len(job["completed_steps"]) != 9:
                 return SimpleNamespace(data=False)
             job["status"] = "complete"
             job["lease_owner"] = None
@@ -110,6 +114,7 @@ class FakeSupabase:
         self.deleted_auth_users: set[str] = set()
         self.auth = SimpleNamespace(admin=SimpleNamespace(delete_user=self.delete_user))
         self.fail_mark_steps: set[str] = set()
+        self.lose_lease = False
 
     def table(self, name: str) -> FakeQuery:
         return FakeQuery(self, name)
@@ -142,7 +147,12 @@ async def _setup(monkeypatch, db: FakeSupabase, store: FakeStore):
     monkeypatch.setattr(account_deletion, "get_run_store", get_store)
     monkeypatch.setattr(account_deletion, "remove_runs", remove_runs)
     monkeypatch.setattr("agents.orchestrator.delete_checkpoints_for_runs", delete_checkpoints)
-    monkeypatch.setattr(account_deletion.mem0_client, "is_configured", lambda: False)
+    monkeypatch.setattr(account_deletion.mem0_client, "has_credentials", lambda: False)
+    monkeypatch.setattr("services.spend_meter.anonymize_subject", lambda _user_id: _noop())
+
+
+async def _noop() -> None:
+    return None
 
 
 @pytest.mark.asyncio
@@ -150,7 +160,7 @@ async def test_deletion_resumes_after_a_transient_external_cleanup_failure(monke
     db = FakeSupabase()
     store = FakeStore()
     await _setup(monkeypatch, db, store)
-    monkeypatch.setattr(account_deletion.mem0_client, "is_configured", lambda: True)
+    monkeypatch.setattr(account_deletion.mem0_client, "has_credentials", lambda: True)
     calls = 0
 
     async def fail_once(_user_id: str) -> None:
@@ -169,7 +179,8 @@ async def test_deletion_resumes_after_a_transient_external_cleanup_failure(monke
 
     assert await account_deletion.process_one_account_deletion()
     assert db.job["status"] == "complete"
-    assert len(db.job["completed_steps"]) == 8
+    assert "model_spend" in db.job["completed_steps"]
+    assert len(db.job["completed_steps"]) == 9
     assert db.deleted_auth_users == {"u1"}
     assert calls == 2
 
@@ -216,3 +227,27 @@ async def test_worker_treats_auth_deletion_404_as_success_after_restart(monkeypa
     await account_deletion.process_one_account_deletion()
     assert db.job["status"] == "complete"
     assert db.deleted_auth_users == {"u1"}
+
+
+@pytest.mark.asyncio
+async def test_worker_stops_cleanup_when_lease_renewal_fails(monkeypatch):
+    db = FakeSupabase()
+    db.lose_lease = True
+    store = FakeStore()
+    await _setup(monkeypatch, db, store)
+    monkeypatch.setattr(account_deletion, "_LEASE_RENEW_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(account_deletion.mem0_client, "has_credentials", lambda: True)
+    started = asyncio.Event()
+
+    async def blocked_memory_cleanup(_user_id: str) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(account_deletion.mem0_client, "delete_user_memories", blocked_memory_cleanup)
+    with pytest.raises(RuntimeError, match="deletion_lease_lost"):
+        await account_deletion.process_one_account_deletion()
+
+    assert started.is_set()
+    assert db.job["status"] == "pending"
+    assert db.job["completed_steps"] == ["cancel_runs"]
+    assert db.deleted_auth_users == set()

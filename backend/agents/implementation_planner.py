@@ -141,7 +141,9 @@ def _safe_repository_url(value: object) -> str | None:
     return f"https://github.com/{parts[0]}/{repo}"
 
 
-def _candidate_repositories(repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _candidate_repositories(
+    repos: list[dict[str, Any]], source: str = "GitHub repository search"
+) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
     for repo in repos[:10]:
@@ -157,7 +159,7 @@ def _candidate_repositories(repos: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "stars": stars,
                 "verified": False,
                 "verification_status": "unverified paper association",
-                "source": "Papers with Code",
+                "source": source,
             }
         )
     return candidates
@@ -172,6 +174,7 @@ def make_plan(
     repos: list[dict[str, Any]] | None = None,
     *,
     repository_lookup_status: Literal["available", "no_results", "unavailable"] | None = None,
+    repository_source: str = "GitHub repository search",
 ) -> ImplementationPlan:
     """Extract reproducibility facts only from exact abstract sentences.
 
@@ -208,7 +211,7 @@ def make_plan(
                 )
 
     repos = repos or []
-    candidates = _candidate_repositories(repos)
+    candidates = _candidate_repositories(repos, repository_source)
     if repository_lookup_status is None:
         lookup_status: Literal["available", "no_results", "unavailable"] = (
             "available" if candidates else "no_results"

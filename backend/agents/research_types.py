@@ -92,10 +92,33 @@ class ComparisonRow(BaseModel):
 
 
 class ResearchComparisonResponse(BaseModel):
-    """Heuristic abstract comparison plus separately cited project PDF spans."""
+    """Heuristic abstract comparison and separately attributed project PDF sources."""
 
     rows: list[ComparisonRow] = Field(default_factory=list)
     pdf_evidence: list[PdfEvidenceItem] = Field(default_factory=list)
+    pdf_comparisons: list["PdfComparisonRow"] = Field(default_factory=list)
+
+
+class PdfComparisonEvidence(BaseModel):
+    """Exact, page-local evidence supporting one project-PDF comparison field."""
+
+    sentence: str
+    citation_id: str
+    page_number: int = Field(ge=1)
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
+
+
+class PdfComparisonRow(BaseModel):
+    """A project PDF source kept distinct from paper rows without a known relation."""
+
+    document_id: str
+    filename: str
+    problem: PdfComparisonEvidence | None = None
+    methods: PdfComparisonEvidence | None = None
+    datasets: PdfComparisonEvidence | None = None
+    metrics: PdfComparisonEvidence | None = None
+    limitations: PdfComparisonEvidence | None = None
 
 
 class SynthesisEvidenceItem(BaseModel):
@@ -133,6 +156,7 @@ class ResearchCapabilities(BaseModel):
 
     research_synthesis_enabled: bool = False
     research_plan_execution_enabled: bool = False
+    public_paper_evidence_enabled: bool = False
 
 
 class ResearchPlanStepOutcome(BaseModel):
@@ -151,6 +175,7 @@ class ResearchPlanEvidence(BaseModel):
     paper_id: str | None = None
     document_id: str | None = None
     page_number: int | None = None
+    filename: str | None = None
     title: str | None = None
     sentence: str
     start_offset: int = Field(ge=0)
@@ -167,6 +192,7 @@ class ResearchPlanExecutionResult(BaseModel):
     evidence: list[ResearchPlanEvidence] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
     comparison: list["ComparisonRow"] = Field(default_factory=list)
+    pdf_comparisons: list[PdfComparisonRow] = Field(default_factory=list)
     synthesis: list["SynthesisClaim"] = Field(default_factory=list)
     cost_tracking_available: Literal[False] = False
     estimated_cost_usd: None = None
@@ -196,20 +222,21 @@ def classify_task(query: str) -> ResearchPlan:
     return ResearchPlan(query=query, task_type=task)
 
 
+COMPARISON_DIMENSION_SIGNALS: dict[str, re.Pattern[str]] = {
+    "problem": re.compile(r"\b(problem|challenge|task|we study|we investigate|we address|aim of this work)\b", re.IGNORECASE),
+    "methods": re.compile(r"\b(method|approach|algorithm|model|framework|we propose|we present|we introduce|we develop|we use)\b", re.IGNORECASE),
+    "datasets": re.compile(r"\b(dataset|data set|benchmark|corpus|corpora)\b", re.IGNORECASE),
+    "metrics": re.compile(r"\b(accuracy|precision|recall|f1|f1-score|bleu|rouge|auc|perplexity|mean squared error|mse|metric|metrics)\b", re.IGNORECASE),
+    "limitations": re.compile(r"\b(limitation|however|future work|remain(s|ed)? a challenge|cannot|fails? to|failed to|limited by)\b", re.IGNORECASE),
+}
+
+
 def build_comparison(papers: list[dict[str, Any]]) -> list[ComparisonRow]:
     """Extract exact abstract sentences for comparison dimensions.
 
     This is a conservative heuristic, not a scientific interpretation. Missing
     dimensions stay null, and generated summaries are deliberately excluded.
     """
-    dimension_signals = {
-        "problem": re.compile(r"\b(problem|challenge|task|we study|we investigate|we address|aim of this work)\b", re.IGNORECASE),
-        "methods": re.compile(r"\b(method|approach|algorithm|model|framework|we propose|we present|we introduce|we develop|we use)\b", re.IGNORECASE),
-        "datasets": re.compile(r"\b(dataset|data set|benchmark|corpus|corpora)\b", re.IGNORECASE),
-        "metrics": re.compile(r"\b(accuracy|precision|recall|f1|f1-score|bleu|rouge|auc|perplexity|mean squared error|mse|metric|metrics)\b", re.IGNORECASE),
-        "limitations": re.compile(r"\b(limitation|however|future work|remain(s|ed)? a challenge|cannot|fails? to|failed to|limited by)\b", re.IGNORECASE),
-    }
-
     def extract_dimension(abstract: object, pattern: re.Pattern[str]) -> str | None:
         if not isinstance(abstract, str):
             return None
@@ -225,12 +252,54 @@ def build_comparison(papers: list[dict[str, Any]]) -> list[ComparisonRow]:
         rows.append(
             ComparisonRow(
                 paper_id=p.get("id", ""),
-                problem=extract_dimension(abstract, dimension_signals["problem"]),
-                methods=extract_dimension(abstract, dimension_signals["methods"]),
-                datasets=extract_dimension(abstract, dimension_signals["datasets"]),
-                metrics=extract_dimension(abstract, dimension_signals["metrics"]),
-                limitations=extract_dimension(abstract, dimension_signals["limitations"]),
+                problem=extract_dimension(abstract, COMPARISON_DIMENSION_SIGNALS["problem"]),
+                methods=extract_dimension(abstract, COMPARISON_DIMENSION_SIGNALS["methods"]),
+                datasets=extract_dimension(abstract, COMPARISON_DIMENSION_SIGNALS["datasets"]),
+                metrics=extract_dimension(abstract, COMPARISON_DIMENSION_SIGNALS["metrics"]),
+                limitations=extract_dimension(abstract, COMPARISON_DIMENSION_SIGNALS["limitations"]),
                 code_status="unverified",
             )
         )
     return rows
+
+
+def build_pdf_comparison(evidence: list[dict[str, Any]]) -> list[PdfComparisonRow]:
+    """Group selected exact PDF evidence into separate source rows.
+
+    Project documents have no paper relation, so this never merges PDF evidence
+    into a paper's comparison row.
+    """
+    by_document: dict[str, dict[str, Any]] = {}
+    for item in evidence:
+        document_id = str(item.get("document_id") or "")
+        filename = item.get("filename")
+        sentence = item.get("sentence")
+        page_number = item.get("page_number")
+        citation_id = item.get("citation_id")
+        start_offset = item.get("start_offset")
+        end_offset = item.get("end_offset")
+        if (
+            not document_id
+            or not isinstance(filename, str)
+            or not isinstance(sentence, str)
+            or not isinstance(page_number, int)
+            or not isinstance(citation_id, str)
+            or not isinstance(start_offset, int)
+            or not isinstance(end_offset, int)
+            or start_offset < 0
+            or end_offset <= start_offset
+        ):
+            continue
+        row = by_document.setdefault(
+            document_id, {"document_id": document_id, "filename": filename}
+        )
+        for dimension, pattern in COMPARISON_DIMENSION_SIGNALS.items():
+            if row.get(dimension) is None and pattern.search(sentence):
+                row[dimension] = PdfComparisonEvidence(
+                    sentence=sentence,
+                    citation_id=citation_id,
+                    page_number=page_number,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                )
+    return [PdfComparisonRow.model_validate(row) for row in by_document.values()]

@@ -24,7 +24,6 @@ dependencies = [
     "anthropic>=0.40.0",
     "google-generativeai>=0.8.0",
     "mem0ai>=0.1.0",
-    "firecrawl-py>=1.8.0",
     "arxiv>=2.1.0",
     "numpy>=2.1.0",
     "sse-starlette>=2.1.0",
@@ -33,6 +32,7 @@ dependencies = [
     "langfuse>=2.51.0",
     "sentry-sdk[fastapi]>=2.20.0",
     "python-multipart>=0.0.20",
+    "firecrawl-py>=1.8.0",
     "pypdf>=5.0.0",
     "PyMuPDF>=1.24.0,<2.0.0",
     "pytesseract>=0.3.13,<1.0.0",
@@ -52,6 +52,9 @@ dev = [
 [tool.setuptools]
 py-modules = ["main"]
 
+[tool.uv]
+required-version = "==0.12.7"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -62,6 +65,10 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 exclude = '(^|/)(tests|scripts)/'
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [[tool.mypy.overrides]]
 module = [

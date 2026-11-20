@@ -27,10 +27,14 @@ MemoryRecord = dict[str, Any]
 
 
 def _get_user_profile_sync(user_id: str) -> list[MemoryRecord]:
+    if not get_settings().mem0_provider_spend_limit_confirmed:
+        raise RuntimeError("Mem0 model usage is disabled until its provider spend limit is confirmed")
     return cast(list[MemoryRecord], _get_client().get_all(user_id=user_id))
 
 
 def _add_memory_sync(user_id: str, messages: list[MemoryRecord]) -> None:
+    if not get_settings().mem0_provider_spend_limit_confirmed:
+        raise RuntimeError("Mem0 model usage is disabled until its provider spend limit is confirmed")
     _get_client().add(messages, user_id=user_id)
 
 
@@ -43,7 +47,13 @@ async def add_memory(user_id: str, messages: list[MemoryRecord]) -> None:
 
 
 def is_configured() -> bool:
-    """Whether user memories are stored in the configured Mem0 service."""
+    """Whether model-backed Mem0 usage has explicit provider-side spend control."""
+    settings = get_settings()
+    return bool(settings.mem0_api_key and settings.mem0_provider_spend_limit_confirmed)
+
+
+def has_credentials() -> bool:
+    """Whether service operations such as deletion can reach Mem0."""
     return bool(get_settings().mem0_api_key)
 
 

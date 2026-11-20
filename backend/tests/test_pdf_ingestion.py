@@ -251,6 +251,51 @@ def test_project_pdf_upload_returns_503_when_enabled_ocr_runtime_is_missing(monk
     assert error.value.status_code == 503
 
 
+@pytest.mark.asyncio
+async def test_project_pdf_upload_closes_temporary_file_when_content_type_is_rejected():
+    upload = UploadFile(
+        filename="not-a-pdf.txt",
+        file=BytesIO(b"not a PDF"),
+        headers=Headers({"content-type": "text/plain"}),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await upload_project_pdf(
+            "project-1",
+            Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
+            upload,
+            {"user_id": "owner-1"},
+            _Database(),
+        )
+
+    assert error.value.status_code == 415
+    assert upload.file.closed
+
+
+@pytest.mark.asyncio
+async def test_project_pdf_upload_closes_temporary_file_when_read_fails(monkeypatch):
+    upload = UploadFile(
+        filename="paper.pdf",
+        file=BytesIO(_blank_pdf()),
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+
+    async def fail_read(_size: int = -1) -> bytes:
+        raise OSError("temporary upload read failed")
+
+    monkeypatch.setattr(upload, "read", fail_read)
+    with pytest.raises(OSError, match="temporary upload read failed"):
+        await upload_project_pdf(
+            "project-1",
+            Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
+            upload,
+            {"user_id": "owner-1"},
+            _Database(),
+        )
+
+    assert upload.file.closed
+
+
 @pytest.mark.parametrize("payload", [b"", b"plain text", b"%PDF-not-a-document"])
 def test_rejects_empty_or_malformed_pdf(payload: bytes):
     with pytest.raises(PdfIngestionError):

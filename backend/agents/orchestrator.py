@@ -65,7 +65,8 @@ async def _summary_node(state: OrchestratorState) -> OrchestratorState:
 
     try:
         state["enriched_papers"] = await summary_agent(
-            state["raw_papers"], cb, model_override=state.get("model")
+            state["raw_papers"], cb, model_override=state.get("model"),
+            user_id=state["user_id"], run_id=run_id,
         )
     except Exception:
         await _emit(run_id, state, AgentStep(agent="summary", status="error", message="Step failed"))
@@ -82,7 +83,8 @@ async def _memory_node(state: OrchestratorState) -> OrchestratorState:
 
     try:
         state["ranked_papers"] = await memory_agent(
-            state["enriched_papers"], state["user_id"], state["query"], cb
+            state["enriched_papers"], state["user_id"], state["query"], cb,
+            run_id=run_id,
         )
     except Exception:
         await _emit(run_id, state, AgentStep(agent="memory", status="error", message="Step failed"))
@@ -347,6 +349,8 @@ async def run_orchestrator(
                 published_at=pub_at,
                 summary_tldr=p.get("summary_tldr"),
                 summary_contributions=p.get("summary_contributions"),
+                summary_status=p.get("summary_status", "unknown"),
+                summary_fallback_reason=p.get("summary_fallback_reason"),
                 relevance_score=p.get("relevance_score"),
                 difficulty=p.get("difficulty"),
             )

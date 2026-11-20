@@ -18,39 +18,64 @@ export default function ResearchPlanExecutionPanel({ runId }: ResearchPlanExecut
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
+    let lastEventId: string | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retries = 0;
+    let terminal = false;
+    const MAX_RETRIES = 3;
 
     setEvents([]);
     setResult(null);
     setError(null);
     setRunStatus('running');
 
-    void streamSearch(runId, (event) => {
-      if (!active) return;
-      if (isExecutionResult(event)) {
-        setResult(event);
-        setRunStatus('complete');
-      } else if (isRunCancelled(event)) {
-        setRunStatus('cancelled');
-      } else if (isAgentStep(event)) {
-        setEvents((current) => [...current, event]);
-      }
-    }, (streamError) => {
-      if (active) {
-        setError(streamError.message);
-        setRunStatus('failed');
-      }
-    }).then((stop) => {
-      if (active) unsubscribe = stop;
-      else stop();
-    }).catch((streamError: unknown) => {
-      if (active) {
-        setError(streamError instanceof Error ? streamError.message : 'Could not connect to research progress.');
-        setRunStatus('failed');
-      }
-    });
+    const connect = () => {
+      unsubscribe?.();
+      unsubscribe = streamSearch(runId, {
+        onEvent: (event, eventId) => {
+          if (!active) return;
+          if (eventId) lastEventId = eventId;
+          if (isExecutionResult(event)) {
+            terminal = true;
+            setResult(event);
+            setRunStatus('complete');
+          } else if (isRunCancelled(event)) {
+            terminal = true;
+            setRunStatus('cancelled');
+          } else if (isAgentStep(event)) {
+            setEvents((current) => [...current, event]);
+          }
+        },
+        onLastEventId: (eventId) => {
+          lastEventId = eventId;
+        },
+        onTerminalError: (streamError) => {
+          if (!active) return;
+          terminal = true;
+          setError(streamError.message);
+          setRunStatus('failed');
+        },
+        onTransportError: (streamError) => {
+          if (!active || terminal) return;
+          if (retries < MAX_RETRIES) {
+            retries += 1;
+            retryTimer = setTimeout(() => {
+              retryTimer = undefined;
+              connect();
+            }, 1000 * retries);
+          } else {
+            terminal = true;
+            setError(streamError.message);
+            setRunStatus('failed');
+          }
+        },
+      }, { lastEventId });
+    };
+    connect();
 
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
       unsubscribe?.();
     };
   }, [runId]);
@@ -144,6 +169,30 @@ function ExecutionResult({ result }: { result: ResearchPlanExecutionResult }) {
         <h5 className="text-sm font-semibold text-ink-900">Comparison</h5>
         <div className="mt-2 overflow-x-auto"><table className="min-w-full border-collapse text-left text-xs"><thead><tr>{['Paper', 'Problem', 'Methods', 'Datasets', 'Metrics', 'Limitations', 'Code'].map((heading) => <th key={heading} className="border-b border-zenith-border p-2 font-semibold text-zenith-muted">{heading}</th>)}</tr></thead><tbody>{result.comparison.map((row) => <tr key={row.paper_id}>{[row.paper_id, row.problem, row.methods, row.datasets, row.metrics, row.limitations, row.code_status].map((cell, index) => <td key={index} className="border-b border-zenith-border p-2 align-top text-zenith-body">{cell || '—'}</td>)}</tr>)}</tbody></table></div>
       </div>}
+
+      {result.pdf_comparisons && result.pdf_comparisons.length > 0 && <section aria-labelledby="plan-pdf-comparisons-heading">
+        <h5 id="plan-pdf-comparisons-heading" className="text-sm font-semibold text-ink-900">Project PDF comparison fields</h5>
+        <p className="mt-1 text-xs text-zenith-muted">Each field quotes an exact matching sentence. Uploaded PDFs are separate sources and are not attributed to a paper.</p>
+        <div className="mt-2 space-y-3">{result.pdf_comparisons.map((row) => {
+          const dimensions = [
+            ['Research focus', row.problem],
+            ['Methods', row.methods],
+            ['Datasets', row.datasets],
+            ['Metrics', row.metrics],
+            ['Limitations', row.limitations],
+          ] as const;
+          return <article key={row.document_id} className="rounded-lg border border-zenith-border bg-zenith-surface/50 p-3">
+            <h6 className="text-sm font-semibold text-ink-900">{row.filename}</h6>
+            <dl className="mt-2 space-y-2">{dimensions.map(([label, evidence]) => evidence && <div key={label} className="border-t border-zenith-border pt-2">
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-zenith-muted">{label} · page {evidence.page_number}</dt>
+              <dd>
+                <blockquote className="mt-1 border-l-2 border-zenith-secondary pl-3 text-sm leading-6 text-zenith-body">“{evidence.sentence}”</blockquote>
+                <p className="mt-1 font-mono text-[10px] text-zenith-muted">[{evidence.citation_id}] · page offsets {evidence.start_offset}–{evidence.end_offset}</p>
+              </dd>
+            </div>)}</dl>
+          </article>;
+        })}</div>
+      </section>}
 
       {result.synthesis && result.synthesis.length > 0 && <section aria-labelledby="provisional-synthesis-heading" className="rounded-lg border border-amber-300 bg-amber-50 p-3">
         <h5 id="provisional-synthesis-heading" className="font-semibold text-amber-950">Provisional synthesis · model reviewed</h5>

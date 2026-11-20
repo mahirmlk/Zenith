@@ -24,6 +24,8 @@ export interface AppNotification {
   body: string | null;
   reason_code?: 'topic_term_overlap' | 'author_relation' | 'citation_relation' | 'preprint_version_updated' | null;
   reason_text?: string | null;
+  project_relevance_code?: 'project_term_overlap' | null;
+  project_relevance_text?: string | null;
   paper_id: string | null;
   project_id?: string | null;
   created_at: string;

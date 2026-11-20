@@ -13,12 +13,28 @@ def _auth_headers(monkeypatch):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _enable_metered_catalog(monkeypatch):
+    from services import llm_router, spend_meter
+
+    monkeypatch.setattr(
+        llm_router,
+        "effective_models",
+        lambda: [{"id": "anthropic/claude-sonnet-5.5", "agents": ["summary_default"]}],
+    )
+
+    async def ready():
+        return True
+
+    monkeypatch.setattr(spend_meter, "meter_ready", ready)
+
+
 def test_search_requires_auth():
     response = client.post("/api/search", json={"query": "diffusion models"})
     assert response.status_code == 401
 
 
 def test_search_papers(monkeypatch):
+    _enable_metered_catalog(monkeypatch)
     response = client.post(
         "/api/search", json={"query": "diffusion models"}, headers=_auth_headers(monkeypatch)
     )
@@ -38,6 +54,8 @@ def test_search_rejects_run_if_deletion_wins_admission_race(monkeypatch):
     from routers import search as search_router
     from services import budget
     from services.run_store import AccountDeletionInProgressError
+
+    _enable_metered_catalog(monkeypatch)
 
     refunded = []
 

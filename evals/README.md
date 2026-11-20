@@ -15,10 +15,11 @@ citation order, verbatim page spans and offsets, expected abstention, and
 absence of forbidden instruction-like text; all four PDF metrics must equal
 1.000.
 
-`cross_paper_synthesis_v1` adds three mocked-provider cases to check conflict
-labeling, weak-support downgrade, citation-anchor rejection, and bounded calls.
-These fixtures test service contracts only; they do not evaluate live provider
-behavior or scientific correctness.
+`cross_paper_synthesis_v2` contains six mocked-provider contract cases: conflict
+labeling, weak-support downgrade, fabricated generation anchors, unknown verifier
+evidence IDs, incomplete assessments, and unsupported verifier claims downgraded
+to uncertain. These fixtures test service contracts only; they do not evaluate
+live provider behavior or scientific correctness.
 
 `research_plan_v1` adds five deterministic preview cases covering task
 classification, phrase-boundary false positives, source scope, bounded

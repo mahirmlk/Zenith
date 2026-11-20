@@ -23,12 +23,39 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
     """Apply per-endpoint rate limits using slowapi decorators."""
     from fastapi.routing import APIRoute
 
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    routes: list[APIRoute] = []
+    seen: set[int] = set()
 
+    def collect(candidates: list[object]) -> None:
+        for candidate in candidates:
+            if isinstance(candidate, APIRoute):
+                if id(candidate) not in seen:
+                    routes.append(candidate)
+                    seen.add(id(candidate))
+                continue
+            # FastAPI defers included-router expansion in newer releases.
+            # Recursively walk original routers, or endpoint limits silently
+            # disappear when routers include routers.
+            original_router = getattr(candidate, "original_router", None)
+            if original_router is not None:
+                collect(list(getattr(original_router, "routes", [])))
+
+    collect(list(app.routes))
+
+    for route in routes:
         if route.path == "/api/search":
             route.endpoint = limiter.limit("10/minute")(route.endpoint)
+        elif route.path == "/api/papers/{paper_id}/public-evidence":
+            route.endpoint = limiter.limit("3/minute")(route.endpoint)
+        elif route.path == "/api/saved-searches/{saved_search_id}/run":
+            route.endpoint = limiter.limit("5/minute")(route.endpoint)
+        elif route.path in {"/api/saved-searches", "/api/saved-searches/{saved_search_id}"}:
+            if route.methods and route.methods.intersection({"POST", "PATCH", "DELETE"}):
+                route.endpoint = limiter.limit("20/minute")(route.endpoint)
+        elif route.path == "/api/papers/{paper_id}/code":
+            # GitHub's anonymous repository-search quota is shared by our
+            # outbound IP, so keep paper-to-code lookups well below it.
+            route.endpoint = limiter.limit("5/minute")(route.endpoint)
         elif route.path == "/api/notifications/preferences":
             route.endpoint = limiter.limit("10/minute")(route.endpoint)
         elif route.path == "/api/notifications/unsubscribe":
@@ -44,6 +71,20 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
             and "POST" in route.methods
         ):
             route.endpoint = limiter.limit("3/minute")(route.endpoint)
+        elif (
+            route.path.startswith("/api/projects/")
+            and "/annotations" in route.path
+            and route.methods
+            and route.methods.intersection({"POST", "PATCH", "DELETE"})
+        ):
+            route.endpoint = limiter.limit("20/minute")(route.endpoint)
+        elif (
+            route.path.startswith("/api/projects/")
+            and "/briefs" in route.path
+            and route.methods
+            and "POST" in route.methods
+        ):
+            route.endpoint = limiter.limit("20/minute")(route.endpoint)
         elif route.path.startswith("/api/stream/"):
             route.endpoint = limiter.limit("20/minute")(route.endpoint)
         elif route.path == "/api/health":
@@ -69,4 +110,4 @@ def apply_rate_limits(app):  # type: ignore[no-untyped-def]
         elif route.path.startswith("/api/account"):
             route.endpoint = limiter.limit("10/minute")(route.endpoint)
         elif route.path.startswith("/api/implementations"):
-            route.endpoint = limiter.limit("10/minute")(route.endpoint)
+            route.endpoint = limiter.limit("3/minute")(route.endpoint)
