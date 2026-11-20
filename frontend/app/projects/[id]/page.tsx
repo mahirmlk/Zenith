@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
@@ -336,6 +336,7 @@ export default function ProjectWorkspacePage() {
   const [researchResults, setResearchResults] = useState<ResearchResponse | null>(null);
   const [executionRunId, setExecutionRunId] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -426,6 +427,7 @@ export default function ProjectWorkspacePage() {
     },
     onSuccess: async (document) => {
       setPdfFile(null);
+      if (pdfInputRef.current) pdfInputRef.current.value = '';
       setSelectedDocumentId(document.id);
       await queryClient.invalidateQueries({ queryKey: ['project-documents', projectId] });
       await queryClient.invalidateQueries({ queryKey: ['project-document-pages', projectId] });
@@ -1144,7 +1146,7 @@ export default function ProjectWorkspacePage() {
           {canWrite ? (
             <form onSubmit={(event) => { event.preventDefault(); if (pdfFile) uploadDocument.mutate(pdfFile); }} className="space-y-3">
               <label htmlFor="project-pdf" className="block text-xs font-semibold uppercase tracking-wide text-zenith-muted">Upload a PDF you have permission to use</label>
-              <input id="project-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)} className="block w-full text-xs text-zenith-body file:mr-3 file:rounded-lg file:border file:border-zenith-border file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-ink-900" />
+              <input ref={pdfInputRef} id="project-pdf" type="file" accept="application/pdf,.pdf" onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)} className="block w-full text-xs text-zenith-body file:mr-3 file:rounded-lg file:border file:border-zenith-border file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-ink-900" />
               <p className="text-xs leading-5 text-zenith-muted">Maximum 20 MiB and 500 pages. The original PDF is not retained. Scanned pages are OCRed only when local OCR is enabled on the backend; OCR may be less accurate and is limited to five scanned pages per upload.</p>
               {uploadDocument.isError && <p role="alert" className="text-sm text-red-700">{uploadDocument.error instanceof Error ? uploadDocument.error.message : 'Could not process this PDF.'}</p>}
               <button type="submit" disabled={!pdfFile || uploadDocument.isPending} className="w-full rounded-xl border border-ink-900 px-4 py-2.5 text-xs font-semibold text-ink-900 hover:bg-ink-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">

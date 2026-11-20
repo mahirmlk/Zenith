@@ -9,6 +9,7 @@ from services.ingestion import (
     _mark_preprint_version_changes,
     _notify_watchlists,
     _project_relevance,
+    _watchlist_matches,
     _watchlist_reason,
 )
 
@@ -136,6 +137,12 @@ def make_paper(paper_id, title, published_at):
         "abstract": "This paper studies transformer language models.",
         "published_at": published_at.isoformat(),
     }
+
+
+def test_watchlist_single_term_matches_exact_title_or_abstract_token():
+    assert _watchlist_matches("cat", {"title": "A cat study", "abstract": ""})
+    assert _watchlist_matches("cat", {"title": "Catalog of materials", "abstract": "A cat is shown."})
+    assert not _watchlist_matches("cat", {"title": "Catalog of materials", "abstract": "Concatenate the result."})
 
 
 @pytest.mark.parametrize(

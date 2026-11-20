@@ -579,6 +579,7 @@ describe('ProjectWorkspacePage', () => {
     expect(screen.getByText('[document-1:page:1]')).toBeInTheDocument();
     expect(screen.getByText('methods.pdf')).toBeInTheDocument();
     expect(screen.getByText('1 page')).toBeInTheDocument();
+    expect(screen.getByLabelText('Upload a PDF you have permission to use')).toHaveValue('');
 
     const uploadRequest = request.mock.calls.find(([input, init]) =>
       String(input).endsWith('/api/projects/project-1/documents') && init?.method === 'POST',

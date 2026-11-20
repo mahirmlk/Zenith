@@ -33,4 +33,11 @@ isolation (covered separately by backend security tests and staging checks). No
 production user data is included. `grounded_qa_v2.jsonl` remains the prior
 12-case dataset version.
 
+The watchlist smoke corpus includes an explicit single-token boundary check:
+`cat` must not match `catalog`. This is a matcher contract fixture, separate
+from the `important` relevance label. It currently exposes a substring false
+positive in `_watchlist_matches`; the watchlist evaluation is expected to fail
+until the token-boundary bug is fixed. The small corpus remains a smoke check,
+not a human-calibrated relevance benchmark.
+
 Run: `python evals/runners/run_evals.py`

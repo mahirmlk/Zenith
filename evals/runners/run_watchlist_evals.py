@@ -22,6 +22,7 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     candidates = case["candidates"]
     seen: set[str] = set()
     predicted: set[str] = set()
+    contract_mismatches: list[str] = []
     duplicate_count = 0
     for candidate in candidates:
         candidate_id = str(candidate["id"])
@@ -33,6 +34,9 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
             selected = _watchlist_matches(case["query"], candidate)
         else:
             selected = candidate.get("provider_selected") is True
+        expected_selected = candidate.get("expected_selected")
+        if expected_selected is not None and selected != expected_selected:
+            contract_mismatches.append(candidate_id)
         if selected:
             predicted.add(candidate_id)
 
@@ -47,6 +51,7 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "false_positives": predicted - important,
         "missed_important": important - predicted,
         "duplicate_candidates": duplicate_count,
+        "contract_mismatches": contract_mismatches,
     }
 
 
@@ -60,6 +65,8 @@ def main() -> int:
     failed = 0
     for case in cases:
         result = evaluate_case(case)
+        if result["contract_mismatches"]:
+            failed += 1
         status = "COMPLETE" if result["source_complete"] else "INCOMPLETE"
         if result["source_complete"]:
             bucket = totals[result["target_type"]]
@@ -72,7 +79,8 @@ def main() -> int:
             f"{status} {result['id']} type={result['target_type']} "
             f"tp={len(result['true_positives'])} fp={len(result['false_positives'])} "
             f"missed={sorted(result['missed_important'])} "
-            f"duplicates={result['duplicate_candidates']}"
+            f"duplicates={result['duplicate_candidates']} "
+            f"contract_mismatches={result['contract_mismatches']}"
         )
 
     for target_type, metrics in sorted(totals.items()):

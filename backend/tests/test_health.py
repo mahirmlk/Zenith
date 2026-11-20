@@ -38,6 +38,7 @@ async def test_readiness_returns_503_when_required_dependency_is_unreachable(mon
             "run_store": False,
             "graph_checkpointer": False,
             "account_deletion_jobs": False,
+            "model_gateway": False,
         },
     }
 
@@ -97,6 +98,7 @@ async def test_production_readiness_fails_when_run_store_schema_is_missing(monke
             "run_store": False,
             "graph_checkpointer": False,
             "account_deletion_jobs": False,
+            "model_gateway": False,
         },
     }
 
@@ -164,5 +166,35 @@ async def test_production_readiness_fails_when_graph_checkpointer_is_unavailable
             "run_store": True,
             "graph_checkpointer": False,
             "account_deletion_jobs": True,
+            "model_gateway": False,
         },
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_key", "daily_cap", "monthly_cap", "ledger_ready", "expected"),
+    [
+        ("", 100, 100, True, False),
+        ("provider-key", 0, 100, True, False),
+        ("provider-key", 100, 0, True, False),
+        ("provider-key", 100, 100, False, False),
+        ("provider-key", 100, 100, True, True),
+    ],
+)
+async def test_model_gateway_readiness_requires_key_positive_caps_and_ledger(
+    monkeypatch, provider_key, daily_cap, monthly_cap, ledger_ready, expected
+):
+    from services import spend_meter
+
+    class Settings:
+        openrouter_api_key = provider_key
+        llm_daily_spend_cap_usd_micros = daily_cap
+        llm_monthly_spend_cap_usd_micros = monthly_cap
+
+    async def ready():
+        return ledger_ready
+
+    monkeypatch.setattr(spend_meter, "meter_ready", ready)
+
+    assert await health._model_gateway_ready(Settings()) is expected

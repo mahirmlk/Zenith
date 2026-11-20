@@ -1321,6 +1321,18 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 
 **Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md).
 
+### §24.62 Final local audit fixes (2026-11-20)
+
+- [x] Fixed a watchlist token-boundary false positive where a one-word query such as `cat` matched a larger token such as `catalog`; added an adversarial dataset case and matcher regression test. The deterministic runner completes 6 cases with topic precision 0.800 and recall 1.000; author/citation fixture false positives remain visible and require live-source human calibration.
+- [x] Reset the PDF file input after a successful upload so selecting the same file again triggers a new upload; the project workspace regression test covers the flow.
+- [x] Extended account export with the caller's email preference and consent history, scoped by user and field allowlist; recipient hashes and delivery internals remain excluded. Cross-user and secret-field assertions were added.
+- [x] Production readiness now fails closed when the model gateway lacks a provider key, positive daily/monthly spend caps, or a working spend ledger. Added readiness regression cases.
+- [x] `git diff --check`, Ruff, strict mypy (86 source files), frontend lint, frontend typecheck, frontend suite (97/97), watchlist regression runner, focused backend regressions (34/34), and the full backend suite (461 passed, 6 skipped) passed through the approved desktop execution path.
+- [x] Fresh `npm run build` generated all 13 static pages and 15 routes. Both final production Docker images rebuilt successfully with test-only Compose settings; this verifies build output, not configured backend startup or staging integration.
+- [ ] Keep release status not production-ready pending current-head CI/review, migrations/RLS/restore and configured staging verification, live provider/spend/recovery/monitoring checks, and human-reviewed quality gates. Local release commits and remaining fixes are not published; see `docs/STATUS.md`.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md) for external release gates.
+
 ### §24.45 Crawl shutdown and backend app startup fixes (2026-11-15)
 
 - [x] Closed the legacy-cache bypass: `crawl_paper_cached()` now fails before cache access, `is_available()` always returns false, and the unused Firecrawl API key setting/example and SDK construction path were removed. Deployment, developer, flow, schema, and baseline-audit docs now describe the retained cache as legacy and inactive. The SDK dependency remains declared and locked because lock regeneration needs unavailable package-index artifacts; it is not imported or invoked by application code.

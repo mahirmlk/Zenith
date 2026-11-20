@@ -146,6 +146,33 @@ def _export_tables() -> dict[str, list[dict[str, Any]]]:
         ],
         "watchlists": [{"user_id": "u1", "query": "ml"}],
         "notifications": [{"user_id": "u1", "title": "new paper"}],
+        "notification_email_preferences": [
+            {
+                "user_id": "u1",
+                "email_opt_in": True,
+                "email_frequency": "weekly",
+                "timezone": "Asia/Kolkata",
+                "suppressed": False,
+                "recipient_hash": "secret-hash-u1",
+                "consented_at": "2026-01-02T03:04:05Z",
+                "updated_at": "2026-01-02T03:04:05Z",
+            },
+            {"user_id": "u2", "email_opt_in": False, "recipient_hash": "secret-hash-u2"},
+        ],
+        "notification_email_consent_events": [
+            {
+                "id": 1,
+                "user_id": "u1",
+                "action": "opt_in",
+                "source": "settings",
+                "recipient_hash": "secret-hash-u1",
+                "created_at": "2026-01-02T03:04:05Z",
+            },
+            {"id": 2, "user_id": "u2", "action": "opt_in", "recipient_hash": "secret-hash-u2"},
+        ],
+        "notification_email_outbox": [
+            {"user_id": "u1", "provider_message_id": "internal-message-id"},
+        ],
         "research_runs": [{"id": "r1", "user_id": "u1", "query": "private query"}, {"id": "r2", "user_id": "u2"}],
         "run_events": [{"run_id": "r1", "safe_payload": {"x": 1}}, {"run_id": "r2", "safe_payload": {"secret": 1}}],
     }
@@ -181,6 +208,23 @@ async def test_export_includes_caller_data_and_accessible_project_content(monkey
     }
     assert result["research_runs"] == [{"id": "r1", "user_id": "u1", "query": "private query"}]
     assert result["run_events"] == [{"run_id": "r1", "safe_payload": {"x": 1}}]
+    assert result["notification_email_preferences"] == [{
+        "email_opt_in": True,
+        "email_frequency": "weekly",
+        "timezone": "Asia/Kolkata",
+        "suppressed": False,
+        "consented_at": "2026-01-02T03:04:05Z",
+        "updated_at": "2026-01-02T03:04:05Z",
+    }]
+    assert result["notification_email_consent_events"] == [{
+        "action": "opt_in",
+        "source": "settings",
+        "created_at": "2026-01-02T03:04:05Z",
+    }]
+    assert "notification_email_outbox" not in result
+    assert "secret-hash-u1" not in str(result)
+    assert "secret-hash-u2" not in str(result)
+    assert "internal-message-id" not in str(result)
     assert result["memories"] == [{"memory": "prefers ML"}]
     assert result["memory_export_status"] == "exported"
 

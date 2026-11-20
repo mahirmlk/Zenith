@@ -21,6 +21,11 @@ def _rows(data: Any) -> list[dict[str, Any]]:
     return [row for row in data if isinstance(row, dict)]
 
 
+def _pick_fields(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    """Keep internal identifiers and service-only secrets out of portability data."""
+    return {field: row[field] for field in fields if field in row}
+
+
 async def _fetch_all(query_factory: Callable[[], Any], page_size: int = 500) -> list[dict[str, Any]]:
     """Read a filtered PostgREST collection past its default response cap."""
     rows: list[dict[str, Any]] = []
@@ -45,6 +50,18 @@ async def export_account(
     try:
         saved, prefs, owned_projects, member_rows, watches, notifications, runs = await _load_base_data(
             supabase, uid
+        )
+        email_preferences, email_consent_events = await asyncio.gather(
+            _fetch_all(
+                lambda: supabase.table("notification_email_preferences")
+                .select("*")
+                .eq("user_id", uid)
+            ),
+            _fetch_all(
+                lambda: supabase.table("notification_email_consent_events")
+                .select("*")
+                .eq("user_id", uid)
+            ),
         )
         personal_searches = await _fetch_all(
             lambda: supabase.table("saved_searches").select("*").eq("created_by", uid).is_("project_id", "null")
@@ -156,6 +173,28 @@ async def export_account(
             "project_document_pages": project_document_pages,
             "watchlists": watches,
             "notifications": notifications,
+            # These tables are service-only. Export the caller's effective
+            # email settings and consent history while withholding keyed
+            # recipient hashes and delivery-control data.
+            "notification_email_preferences": [
+                _pick_fields(
+                    row,
+                    (
+                        "email_opt_in",
+                        "email_frequency",
+                        "timezone",
+                        "suppressed",
+                        "consented_at",
+                        "unsubscribed_at",
+                        "updated_at",
+                    ),
+                )
+                for row in email_preferences
+            ],
+            "notification_email_consent_events": [
+                _pick_fields(row, ("action", "source", "created_at"))
+                for row in email_consent_events
+            ],
             "research_runs": runs,
             "run_events": run_events,
             "memories": memories,

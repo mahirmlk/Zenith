@@ -48,12 +48,11 @@ def _watchlist_matches(query: str, paper: dict[str, Any]) -> bool:
     title = str(paper.get("title") or "")
     abstract = str(paper.get("abstract") or "")
     normalized_text = " ".join(_TOKEN_RE.findall(f"{title} {abstract}".lower()))
-    if normalized_query in normalized_text:
-        return True
     terms = set(normalized_query.split())
     if not terms:
         return False
-    overlap = terms.intersection(normalized_text.split())
+    text_terms = set(normalized_text.split())
+    overlap = terms.intersection(text_terms)
     # Require at least two thirds of query terms to match. A lone query term
     # must match exactly in a title or abstract token.
     return len(overlap) == len(terms) if len(terms) == 1 else len(overlap) / len(terms) >= 2 / 3

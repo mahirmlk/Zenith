@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
-from typing import Protocol, cast
+from typing import Any, cast
+from typing import Protocol
 
 from fastapi import APIRouter, Response
 
@@ -14,6 +15,22 @@ class RedisHealthClient(Protocol):
     async def ping(self) -> bool: ...
 
     async def aclose(self) -> None: ...
+
+
+async def _model_gateway_ready(settings: Any) -> bool:
+    """Require configured model routing, positive caps, and a working ledger RPC."""
+    if not (
+        getattr(settings, "openrouter_api_key", "")
+        and getattr(settings, "llm_daily_spend_cap_usd_micros", 0) > 0
+        and getattr(settings, "llm_monthly_spend_cap_usd_micros", 0) > 0
+    ):
+        return False
+    try:
+        from services.spend_meter import meter_ready
+
+        return bool(await asyncio.wait_for(meter_ready(), timeout=3.0))
+    except Exception:
+        return False
 
 
 @router.get("")
@@ -78,6 +95,7 @@ async def readiness(response: Response) -> dict[str, object]:
         checks["run_store"] = False
         checks["graph_checkpointer"] = False
         checks["account_deletion_jobs"] = False
+        checks["model_gateway"] = await _model_gateway_ready(settings)
         try:
             from services.supabase_client import get_supabase
 
