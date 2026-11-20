@@ -1467,3 +1467,11 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Actual production configuration still needs real Auth/API origins and credentials, staging readiness checks, current-head CI, migration/RLS/rollback/restore, provider reconciliation, recovery/monitoring, and human-reviewed quality gates.
 
 **Current status remains not production-ready.** CI placeholders validate Compose structure only and cannot substitute for real deployment values.
+
+### §24.61 Latest local verification state (2026-11-20)
+
+- [x] Committed production configuration fail-fast behavior and CI validation as `66d09c6`; previous implementation and status commits are `e6715e8` and `79b6724`. The local worktree is clean. Remote branch and PR #3 remain at `63f2f18`.
+- [x] Verified the complete backend suite: 455 passed, 6 skipped. Repository-wide Ruff and strict mypy pass (86 source files); frontend remains 97/97 with lint and typecheck passing. Production Compose fails on empty required values, parses with test-only values, binds both ports to loopback, and waits for backend health. CI workflow YAML parses.
+- [ ] Current-head remote CI/review and configured staging gates remain outstanding. The three local commits are still unpublished, and the production Auth, database, Redis, and provider configuration has not been supplied or exercised.
+
+**Current status remains not production-ready.** See [docs/STATUS.md](docs/STATUS.md).
