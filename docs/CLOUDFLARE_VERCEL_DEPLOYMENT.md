@@ -96,10 +96,14 @@ production deployment:
 NEXT_PUBLIC_API_URL=https://<cloudflare-api-domain>
 NEXT_PUBLIC_SUPABASE_URL=https://<supabase-project>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
+API_URL=https://<cloudflare-api-domain>
 ```
 
-Do not add `SUPABASE_SERVICE_ROLE_KEY` or other backend credentials to Vercel.
-The frontend uses the public Supabase anon key; the API and Container hold the
+`API_URL` is the server-side backend origin used by Next.js route handlers.
+The browser calls the Cloudflare Worker directly through
+`NEXT_PUBLIC_API_URL`, including long-lived SSE streams. Do not put
+`SUPABASE_SERVICE_ROLE_KEY` or other backend credentials in Vercel. The
+frontend uses the public Supabase anon key; the API and Container hold the
 service key.
 
 In Supabase Auth, set the production Site URL to the Vercel custom domain,
