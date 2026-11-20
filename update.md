@@ -1449,3 +1449,12 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Backend container readiness remains unverified without production dependency configuration. Current-head CI, staging migration/RLS/rollback/restore, provider reconciliation, operational recovery/monitoring, and human-reviewed scientific-quality gates remain required.
 
 **Current status remains not production-ready.** This hardens the documented single-host Compose topology; it does not replace configured staging or current-head CI. See [docs/STATUS.md](docs/STATUS.md).
+
+### §24.59 Local verification commit and remote CI status (2026-11-20)
+
+- [x] Committed the 156-file shipment-readiness worktree as `e6715e81174c287a1a472bc689d55a05a9d28911` on `codex/shipment-readiness`. The local worktree is clean; `.env` remains ignored and is a zero-byte placeholder.
+- [x] Post-commit local verification: backend suite 454 passed / 6 skipped, Ruff passed, strict mypy passed on 86 source files, frontend suite 97/97 passed, production Compose config confirms both published ports use `127.0.0.1` and frontend waits for healthy backend, and frontend container root returns HTTP 200.
+- [ ] Commit is not on `origin/codex/shipment-readiness`; push awaits explicit user authorization after the automatic review rejected sending the 156-file commit to the external repository without destination-specific approval. Therefore PR #3 and current-head CI remain at `63f2f18`.
+- [ ] Production remains unverified until remote CI/review and staging Auth/Supabase/Postgres/Redis/provider checks, migrations/RLS/rollback/restore, spend reconciliation, recovery/monitoring exercises, and human-reviewed scientific quality gates pass.
+
+**Current status remains not production-ready.** Local commit and checks improve reviewability; they do not substitute for remote review or staging evidence.

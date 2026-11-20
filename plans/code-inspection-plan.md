@@ -29,11 +29,11 @@ The current worktree contains meaningful security, metering, data-provenance, an
 
 ### [P1-003] Current worktree has no current-head remote CI or review evidence
 - **Location:** `.github/workflows/ci.yml`; `docs/STATUS.md:18,41`; PR #3
-- **Finding:** PR #3 is a draft at the remote branch head, but the current worktree has uncommitted code and documentation changes not covered by that SHA. CI run #56 failed one backend migration-path test; its focused local fix passes, but has no remote result. Earlier workflow starts were blocked by account billing/spending limits.
-- **Evidence:** Local HEAD and `origin/codex/shipment-readiness` both resolve to `63f2f18`; the worktree has uncommitted changes. CI run #56 reported 319 passed, 6 skipped, and one failed backend migration test; frontend and Docker jobs passed.
+- **Finding:** PR #3 is a draft at the remote branch head, but local commit `e6715e8` containing the reviewed worktree changes is not yet published to that branch. CI run #56 failed one backend migration-path test; its focused local fix passes, but has no remote result. Earlier workflow starts were blocked by account billing/spending limits.
+- **Evidence:** Local HEAD is `e6715e8`; `origin/codex/shipment-readiness` remains at `63f2f18`. CI run #56 reported 319 passed, 6 skipped, and one failed backend migration test; frontend and Docker jobs passed. Current local suite and static checks pass, but no remote run covers `e6715e8`.
 - **Recommended Fix Strategy:** Resolve GitHub Actions billing, publish the reviewed feature branch through the repository's approved workflow, run required PR checks on that exact SHA, complete human review, and merge without deployment until staging gates pass.
 - **Estimated Effort:** M
-- **Affected Files:** `.github/workflows/ci.yml`, `docs/STATUS.md`, all uncommitted feature files
+- **Affected Files:** `.github/workflows/ci.yml`, `docs/STATUS.md`, commit `e6715e8`
 
 ### [P1-004] Runtime configuration is not verified for production
 - **Location:** `.env.example`; `frontend/Dockerfile:12-25`; `docker-compose.prod.yml`
