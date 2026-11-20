@@ -74,5 +74,16 @@ jobs:
       # need no production secrets, so supply an empty file on clean CI runners.
       - name: Create secret-free Compose env file
         run: touch .env
+      - name: Validate production Compose configuration
+        env:
+          APP_URL: https://app.example.invalid
+          DATABASE_URL: postgresql://ci:ci@example.invalid:5432/zenith
+          NEXT_PUBLIC_API_URL: https://api.example.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://project.example.invalid
+          REDIS_URL: redis://redis.example.invalid:6379/0
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
+          SUPABASE_URL: https://project.example.invalid
+        run: docker compose -f docker-compose.prod.yml config --quiet
       - name: Build Docker images
         run: docker compose build

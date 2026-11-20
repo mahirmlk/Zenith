@@ -130,6 +130,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 The production compose file:
 - Publishes the frontend on `127.0.0.1:3000` and backend on `127.0.0.1:8000` for the host nginx reverse proxy; direct public access to the app containers is blocked
+- Fails configuration if required build-time API/Auth settings, `APP_URL`, server Supabase credentials, Redis, or Postgres are blank
 - Passes all environment variables explicitly (not just via `env_file`)
 - Includes backend readiness and frontend HTTP health checks; the frontend starts only after the backend is healthy
 - Sets memory limits on the backend container (2 GB)

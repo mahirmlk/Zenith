@@ -1458,3 +1458,12 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Production remains unverified until remote CI/review and staging Auth/Supabase/Postgres/Redis/provider checks, migrations/RLS/rollback/restore, spend reconciliation, recovery/monitoring exercises, and human-reviewed scientific quality gates pass.
 
 **Current status remains not production-ready.** Local commit and checks improve reviewability; they do not substitute for remote review or staging evidence.
+
+### §24.60 Production configuration fails closed (2026-11-20)
+
+- [x] Production Compose now requires build-time frontend API/Auth settings and runtime `APP_URL`, server Supabase URL/service key, Redis, and Postgres checkpointer URL. Missing or explicitly empty required values stop Compose interpolation before image build or startup, preventing a superficially healthy frontend with unusable API/Auth configuration.
+- [x] Added a backend regression assertion for required production variables and a CI-only Compose configuration check using reserved `.invalid` hostnames and placeholder values. Parsed production Compose with test values; verified empty required values fail with a configuration error. CI workflow YAML parses successfully.
+- [x] Full backend suite passes 455 tests with 6 skipped; repository-wide Ruff and strict mypy pass (86 source files). Frontend suite passes 97 tests with lint/typecheck, and CI workflow YAML parses. The earlier production images remain valid because this change affects Compose interpolation only.
+- [ ] Actual production configuration still needs real Auth/API origins and credentials, staging readiness checks, current-head CI, migration/RLS/rollback/restore, provider reconciliation, recovery/monitoring, and human-reviewed quality gates.
+
+**Current status remains not production-ready.** CI placeholders validate Compose structure only and cannot substitute for real deployment values.

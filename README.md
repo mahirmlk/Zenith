@@ -168,7 +168,7 @@ One author-provider outage fixture was marked incomplete and excluded from the r
 
 | Check | Recorded result (2026-11-15) | Coverage / qualification |
 |---|---:|---|
-| Backend tests | 454 passed, 6 skipped | Full local suite, including async routes and migration, authorization, recovery, deployment-config, and project feature tests; provider credentials were cleared. |
+| Backend tests | 455 passed, 6 skipped | Full local suite, including async routes and migration, authorization, recovery, deployment-config, and project feature tests; provider credentials were cleared. |
 | Frontend tests | 97 tests across 14 files | Component, page, API normalization, invitations, project briefs, and streaming tests. |
 | Frontend lint and typecheck | Passed | Local ESLint and TypeScript checks. |
 | Backend Ruff and strict mypy | Passed | Repository-wide Ruff and strict mypy across 86 source files. |
@@ -395,7 +395,7 @@ GitHub Actions are configured for lint, typecheck, tests, evaluation smoke, and 
 
 | Area | Local implementation / evidence | Remaining release check |
 |---|---|---|
-| Backend and frontend | Backend: 454 tests passed, 6 skipped; Ruff and strict mypy pass. Frontend: 97 tests passed, lint and typecheck pass. The production build generated 13 static pages and 15 routes. | Obtain green CI on a reviewed remote revision and verify the backend image against configured production services. |
+| Backend and frontend | Backend: 455 tests passed, 6 skipped; Ruff and strict mypy pass. Frontend: 97 tests passed, lint and typecheck pass. The production build generated 13 static pages and 15 routes. | Obtain green CI on a reviewed remote revision and verify the backend image against configured production services. |
 | Database and tenant isolation | Migrations `0001–0033`, ownership checks, role checks, and static migration tests exist locally. | Apply and verify migrations in staging, exercise owner/member/editor/viewer/outsider/anonymous access, and verify rollback and backup restore. |
 | Providers and spend | Provider routing, retries, timeouts, spend reservation/settlement, and fallback paths are implemented locally. | Validate provider calls, invoice reconciliation, concurrent spend behavior, rate limits, and failure recovery against staging services. |
 | Queue and recovery | Redis queue/leases and Postgres run/checkpoint code are implemented. | Exercise restarts, lease loss, cancellation, replay, checkpoint resumption, and retention against shared deployed infrastructure. |

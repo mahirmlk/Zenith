@@ -17,3 +17,19 @@ def test_frontend_waits_for_backend_readiness() -> None:
 
     assert "condition: service_healthy" in frontend
     assert "http://localhost:8000/api/ready" in compose
+
+
+def test_production_compose_requires_essential_frontend_and_runtime_settings() -> None:
+    compose = (REPO_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+
+    for variable in (
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "APP_URL",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "REDIS_URL",
+        "DATABASE_URL",
+    ):
+        assert f"${{{variable}:?" in compose
