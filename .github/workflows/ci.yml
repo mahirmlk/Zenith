@@ -64,7 +64,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
-      - run: npm run build
+      - name: Build with secret-free public test values
+        env:
+          NEXT_PUBLIC_API_URL: https://api.example.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://project.example.invalid
+        run: npm run build
 
   docker:
     runs-on: ubuntu-latest

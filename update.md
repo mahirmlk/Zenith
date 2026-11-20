@@ -1497,3 +1497,12 @@ This follow-up does not change the shipment status in `docs/STATUS.md`: migratio
 - [ ] Current-head CI and PR review remain outstanding because the local branch is unpublished; staging migrations/RLS, tenant isolation, provider billing, recovery, backup restore, monitoring, SMTP/OCR/provider behavior, and human-calibrated research quality still lack live evidence. Keep the release marked not production-ready until these gates pass.
 
 **Current status remains not production-ready.** The current reviewable local branch has eight commits beyond the remote PR head; see [docs/STATUS.md](docs/STATUS.md).
+
+### §24.64 Frontend production configuration fail-closed (2026-11-20)
+
+- [x] Production frontend builds now require a valid HTTPS `NEXT_PUBLIC_API_URL`, valid HTTPS `NEXT_PUBLIC_SUPABASE_URL`, and nonempty `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Missing values or credential-bearing/non-HTTPS URLs fail during Next config loading before compilation, preventing deployment with a placeholder Supabase client or localhost API fallback.
+- [x] CI uses reserved `.invalid` HTTPS values only for the frontend production-build step. Lint, typecheck, and Vitest run without those replacements so API client behavior in tests stays representative.
+- [x] Validation: config regression tests 7/7; frontend suite 104/104 across 15 files; lint and typecheck pass. A missing-config build fails before compile; a build with test-only HTTPS values succeeds and produces 13 static pages / 15 routes.
+- [ ] Production Auth/API values still need to be configured in the actual deployment system and verified in staging. Current-head CI, staging migrations/RLS, live providers/recovery/monitoring, and the remaining human-reviewed product-quality gates remain open.
+
+**Current status remains not production-ready.** The audit changes add one local commit beyond the remote PR head after verification; see [docs/STATUS.md](docs/STATUS.md).
